@@ -354,7 +354,10 @@ export default class SnapTess extends Extension {
             !this.windows(w.get_monitor()).includes(w)) {
             this.border.hide(); return;
         }
-        this.border.set_style(this.swapMode ? 'border-color: #ff808b;' : '');
+        const borderColor = this.swapMode ? '#ff808b' : '#8ce8c3';
+        this.border.set_style(
+            `background-color: transparent; background-image: none; border: 2px solid ${borderColor}; border-radius: 12px; box-shadow: none;`,
+        );
         this.showRect(this.border, record.tileRect ?? w.get_frame_rect());
     }
     focusChanged() { this.updateBorder(); }
