@@ -47,8 +47,21 @@ export async function run() {
     assert(stubbornRecord.visualScale<0.999,'late oversized frame is compositor-scaled');
     assert(stubbornFrame.width*stubbornRecord.visualScale<=stubbornTarget.width+1 &&
         stubbornFrame.height*stubbornRecord.visualScale<=stubbornTarget.height+1,'scaled stubborn window fits its tile');
+    const stubbornActor=app.windowActor(stubborn);
+    let [actorScaleX,actorScaleY]=stubbornActor.get_scale();
+    assert(Math.abs(actorScaleX-stubbornRecord.visualScale)<0.01 && Math.abs(actorScaleY-stubbornRecord.visualScale)<0.01,
+        'final window actor keeps the stubborn-window scale');
+    stubbornActor.set_scale(1,1);
+    stubbornActor.emit('effects-completed');
+    await pause();
+    [actorScaleX,actorScaleY]=stubbornActor.get_scale();
+    assert(actorScaleX<0.999 && actorScaleY<0.999,'effects completion reapplies stubborn-window scale');
+    assert(Math.abs(actorScaleX-stubbornRecord.visualScale)<0.01 && Math.abs(actorScaleY-stubbornRecord.visualScale)<0.01,
+        'reapplied scale matches the measured stubborn-window fit');
     app.place(stubborn,stubbornTarget); await pause();
     assert(stubbornRecord.visualScale>0.999,'normal tile size restores unit scale');
+    [actorScaleX,actorScaleY]=stubbornActor.get_scale();
+    assert(actorScaleX>0.999 && actorScaleY>0.999,'normal tile size restores the actor transform');
     const before=windows.slice(1).map(w=>geometry(w));
     windows[0].maximize(); await pause();
     assert(windows.slice(1).every((w,i)=>geometry(w)===before[i]),'maximize freezes other windows');
