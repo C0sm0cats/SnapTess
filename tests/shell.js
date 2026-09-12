@@ -18,8 +18,13 @@ export async function run() {
     const entry=Main.extensionManager.lookup('snaptess@c0sm0cats.github.io');
     assert(entry?.stateObj, `extension loaded (${JSON.stringify(entry?.errors)})`);
     const loader=entry.stateObj;
+    const hotRoot=Gio.File.new_for_path(GLib.build_filenamev([
+        GLib.get_user_runtime_dir(),
+        'snaptess-hot-reload',
+    ]));
     const app=await waitRuntime(loader);
     assert(app,'runtime loaded');
+    assert(hotRoot.query_exists(null),'hot reload staging exists while enabled');
     assert(!app.running,'starts without moving windows');
     for(let i=0;i<4;i++) await Scripting.createTestWindow({width:320,height:240});
     await Scripting.waitTestWindows(); await pause();
@@ -91,12 +96,15 @@ export async function run() {
     const firstRuntimeClass=app.constructor;
     await Main.extensionManager.disableExtension(loader.uuid); await pause();
     assert(!Main.panel.statusArea[loader.uuid],'disable removes indicator');
+    assert(!hotRoot.query_exists(null),'disable removes hot reload staging');
     await Main.extensionManager.enableExtension(loader.uuid); await pause();
     const reloadedEntry=Main.extensionManager.lookup(loader.uuid);
     const reloaded=await waitRuntime(reloadedEntry.stateObj);
     assert(reloaded,'runtime reloads after disable/enable');
+    assert(hotRoot.query_exists(null),'re-enable recreates hot reload staging');
     assert(reloaded.constructor!==firstRuntimeClass,'reload bypasses the GJS module cache');
     await Main.extensionManager.disableExtension(loader.uuid); await pause();
+    assert(!hotRoot.query_exists(null),'final disable removes hot reload staging');
     await Scripting.destroyTestWindows();
     const launcher=new Gio.SubprocessLauncher({flags:Gio.SubprocessFlags.NONE});
     launcher.setenv('WAYLAND_DISPLAY','gnome-shell-test-display',true);
