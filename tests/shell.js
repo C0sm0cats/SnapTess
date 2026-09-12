@@ -67,9 +67,20 @@ export async function run() {
     [actorScaleX,actorScaleY]=stubbornActor.get_scale();
     assert(actorScaleX>0.999 && actorScaleY>0.999,'normal tile size restores the actor transform');
     const before=windows.slice(1).map(w=>geometry(w));
+    const restoreTarget={...app.records.get(windows[0]).tileRect};
     windows[0].maximize(); await pause();
     assert(windows.slice(1).every((w,i)=>geometry(w)===before[i]),'maximize freezes other windows');
-    windows[0].unmaximize(); await pause();
+    windows[0].unmaximize();
+    await Scripting.sleep(90);
+    const restoreActor=app.windowActor(windows[0]);
+    restoreActor.emit('effects-completed');
+    await Scripting.sleep(90);
+    windows[0].move_resize_frame(false,restoreTarget.x+80,restoreTarget.y+55,restoreTarget.width,restoreTarget.height);
+    await Scripting.sleep(520);
+    const restoredFrame=windows[0].get_frame_rect();
+    assert(Math.abs(restoredFrame.x-restoreTarget.x)<=1 && Math.abs(restoredFrame.y-restoreTarget.y)<=1 &&
+        Math.abs(restoredFrame.width-restoreTarget.width)<=1 && Math.abs(restoredFrame.height-restoreTarget.height)<=1,
+        'late app geometry restore after maximize exit is pulled back into its tile');
     windows[0].minimize(); await pause();
     assert(app.groups.get(app.key(0)).filter(Boolean).length===3,'minimize compacts');
     windows[0].unminimize(); await pause();
