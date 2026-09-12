@@ -38,6 +38,17 @@ export async function run() {
         const a=rects[i],b=rects[j];
         assert(a.x+a.width<=b.x || b.x+b.width<=a.x || a.y+a.height<=b.y || b.y+b.height<=a.y,'non-overlapping native frames');
     }
+    const stubborn=windows[0], stubbornRecord=app.records.get(stubborn);
+    const stubbornTarget={...stubbornRecord.tileRect};
+    stubborn.move_resize_frame(false,stubbornTarget.x,stubbornTarget.y,stubbornTarget.width+180,stubbornTarget.height+140);
+    await pause();
+    const stubbornFrame=stubborn.get_frame_rect();
+    assert(stubbornFrame.width>stubbornTarget.width || stubbornFrame.height>stubbornTarget.height,'simulated stubborn window grows beyond its tile');
+    assert(stubbornRecord.visualScale<0.999,'late oversized frame is compositor-scaled');
+    assert(stubbornFrame.width*stubbornRecord.visualScale<=stubbornTarget.width+1 &&
+        stubbornFrame.height*stubbornRecord.visualScale<=stubbornTarget.height+1,'scaled stubborn window fits its tile');
+    app.place(stubborn,stubbornTarget); await pause();
+    assert(stubbornRecord.visualScale>0.999,'normal tile size restores unit scale');
     const before=windows.slice(1).map(w=>geometry(w));
     windows[0].maximize(); await pause();
     assert(windows.slice(1).every((w,i)=>geometry(w)===before[i]),'maximize freezes other windows');
