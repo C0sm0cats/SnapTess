@@ -18,6 +18,7 @@ jobs:
           node --check lib/studio.js
       - run: sudo apt-get update && sudo apt-get install -y libglib2.0-bin gnome-shell
       - run: ./scripts/build.sh
+      - run: ./scripts/test-shell.sh
       - uses: actions/upload-artifact@v4
         with:
           name: snaptess-extension
