@@ -45,8 +45,12 @@ export async function run() {
     const stubbornFrame=stubborn.get_frame_rect();
     assert(stubbornFrame.width>stubbornTarget.width || stubbornFrame.height>stubbornTarget.height,'simulated stubborn window grows beyond its tile');
     assert(stubbornRecord.visualScale<0.999,'late oversized frame is compositor-scaled');
-    assert(stubbornFrame.width*stubbornRecord.visualScale<=stubbornTarget.width+1 &&
-        stubbornFrame.height*stubbornRecord.visualScale<=stubbornTarget.height+1,'scaled stubborn window fits its tile');
+    const visualWidth=stubbornFrame.width*stubbornRecord.visualScale;
+    const visualHeight=stubbornFrame.height*stubbornRecord.visualScale;
+    assert(Math.abs(visualWidth-stubbornTarget.width)<=2 && Math.abs(visualHeight-stubbornTarget.height)<=2,
+        'scaled stubborn window fills its tile on both axes so gaps stay even');
+    assert(Math.abs(stubbornFrame.x-stubbornTarget.x)<=1 && Math.abs(stubbornFrame.y-stubbornTarget.y)<=1,
+        'stubborn backing frame stays anchored to its tile');
     const stubbornActor=app.windowActor(stubborn);
     let [actorScaleX,actorScaleY]=stubbornActor.get_scale();
     assert(Math.abs(actorScaleX-stubbornRecord.visualScale)<0.01 && Math.abs(actorScaleY-stubbornRecord.visualScale)<0.01,
