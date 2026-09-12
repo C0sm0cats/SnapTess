@@ -1,0 +1,23 @@
+name: Checks
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  test-and-package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm test
+      - run: |
+          node --check extension.js
+          node --check prefs.js
+          node --check lib/studio.js
+      - run: sudo apt-get update && sudo apt-get install -y libglib2.0-bin gnome-shell
+      - run: ./scripts/build.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: snaptess-extension
+          path: dist/*.zip

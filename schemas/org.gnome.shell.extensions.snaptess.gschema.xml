@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<schemalist>
+<schema id="org.gnome.shell.extensions.snaptess" path="/org/gnome/shell/extensions/snaptess/">
+<key name="gap" type="i"><default>12</default><summary>Space between windows</summary>
+<range min="0" max="64"/>
+</key>
+<key name="padding" type="i"><default>12</default><summary>Space at screen edges</summary>
+<range min="0" max="64"/>
+</key>
+<key name="master-ratio" type="d"><default>0.6</default><summary>Width of the focus column</summary>
+<range min="0.25" max="0.75"/>
+</key>
+<key name="animations" type="b"><default>true</default><summary>Animate placement guides</summary>
+</key>
+<key name="active-border" type="b"><default>true</default><summary>Highlight the focused tiled window</summary>
+</key>
+<key name="compact-minimize" type="b"><default>true</default><summary>Compact when a window is minimized</summary>
+</key>
+<key name="compact-close" type="b"><default>true</default><summary>Compact when a window closes</summary>
+</key>
+<key name="profiles" type="s"><default>'{}'</default><summary>Saved layouts and application ordering</summary>
+</key>
+<key name="excluded-apps" type="as"><default>[]</default><summary>Application IDs excluded from tiling</summary>
+</key>
+<key name="toggle" type="as"><default>['&lt;Control&gt;&lt;Alt&gt;t']</default><summary>Toggle</summary>
+</key>
+<key name="retile" type="as"><default>['&lt;Control&gt;&lt;Alt&gt;r']</default><summary>Retile</summary>
+</key>
+<key name="studio" type="as"><default>['&lt;Control&gt;&lt;Alt&gt;p']</default><summary>Studio</summary>
+</key>
+<key name="floating" type="as"><default>['&lt;Control&gt;&lt;Alt&gt;f']</default><summary>Floating</summary>
+</key>
+<key name="swap" type="as"><default>['&lt;Control&gt;&lt;Alt&gt;s']</default><summary>Swap</summary>
+</key>
+<key name="undo" type="as"><default>['&lt;Control&gt;&lt;Alt&gt;z']</default><summary>Undo</summary>
+</key>
+<key name="space-1" type="as"><default>['&lt;Control&gt;&lt;Alt&gt;1']</default><summary>Space 1</summary>
+</key>
+<key name="space-2" type="as"><default>['&lt;Control&gt;&lt;Alt&gt;2']</default><summary>Space 2</summary>
+</key>
+<key name="space-3" type="as"><default>['&lt;Control&gt;&lt;Alt&gt;3']</default><summary>Space 3</summary>
+</key>
+<key name="stop" type="as"><default>['&lt;Control&gt;&lt;Alt&gt;q']</default><summary>Stop</summary>
+</key>
+</schema>
+</schemalist>
