@@ -11,9 +11,10 @@ import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js';
 import {layout, fitMinimumSize, frameScalePivot, nearestSlot, directionalSlot, reconcileSlots} from './lib/layout.js';
 import {Studio} from './lib/studio.js';
 
-const RUNTIME_REVISION = 6;
+const RUNTIME_REVISION = 7;
 const RESTORE_STABILIZE_MS = 1400;
 const RESTORE_QUIET_MS = 120;
+const MAX_RESTORE_MOVES = 8;
 
 export default class SnapTess extends Extension {
     enable() {
@@ -139,12 +140,14 @@ export default class SnapTess extends Extension {
         if (!this.eligible(w) || this.records.has(w)) return;
         const record = {original: null, floating: false, space: this.activeSpace(w.get_monitor(), w.get_workspace()),
             parked: false, signals: [], monitor: w.get_monitor(), tileRect: null, visualScale: 1, scaleTimer: 0,
-            scaleFrameRequest: null, effectActor: null, effectSignal: 0, specialState: this.isSpecialWindow(w),
+            backingRect: null, scaleNegotiated: false, placing: false, restoreStarted: false, restoreMoves: 0,
+            traceUntil: 0, traceSignals: [], traceTimer: 0, requestSequence: 0, effectActor: null, effectSignal: 0, specialState: this.isSpecialWindow(w),
             restorePending: false, restoreTimer: 0, settleTimer: 0, restoreUntil: 0, restoreQuietUntil: 0};
         this.records.set(w, record);
         this.watchWindowEffects(w);
         const watch = (signal, fn) => record.signals.push(w.connect(signal, fn));
         watch('unmanaged', () => {
+            this.stopWindowTrace(record);
             this.cancel(record.scaleTimer); record.scaleTimer = 0;
             this.cancel(record.restoreTimer); record.restoreTimer = 0;
             this.cancel(record.settleTimer); record.settleTimer = 0;
@@ -172,7 +175,11 @@ export default class SnapTess extends Extension {
             this.schedule(this.settings.get_boolean('compact-minimize'));
         });
         for (const signal of ['notify::maximized-horizontally', 'notify::maximized-vertically',
-            'notify::fullscreen']) watch(signal, () => this.specialWindowChanged(w, record));
+            'notify::fullscreen']) watch(signal, () => {
+                this.startWindowTrace(w, record);
+                this.traceWindow(w, signal);
+                this.specialWindowChanged(w, record);
+            });
         watch('workspace-changed', () => {
             if (!this.busy) {
                 record.space = this.activeSpace(w.get_monitor(), w.get_workspace());
@@ -180,18 +187,20 @@ export default class SnapTess extends Extension {
             }
         });
         watch('position-changed', () => {
+            this.traceWindow(w, 'position-changed');
             const monitor = w.get_monitor();
-            if (!this.busy && !this.drag && record.monitor !== monitor) {
+            if (!this.busy && !this.drag && !record.placing && !record.restorePending && record.monitor !== monitor) {
                 record.monitor = monitor;
                 record.space = this.activeSpace(monitor);
                 this.schedule(true);
             }
-            if (record.restorePending && Date.now() >= record.restoreQuietUntil && !this.busy && !this.drag)
+            if (record.restorePending && Date.now() >= record.restoreQuietUntil && !record.placing && !this.busy && !this.drag)
                 this.queueWindowRestore(w, 80);
             if (global.display.focus_window === w) this.updateBorder();
         });
         watch('size-changed', () => {
-            if (record.restorePending && Date.now() >= record.restoreQuietUntil && !this.busy && !this.drag)
+            this.traceWindow(w, 'size-changed');
+            if (record.restorePending && Date.now() >= record.restoreQuietUntil && !record.placing && !this.busy && !this.drag)
                 this.queueWindowRestore(w, 80);
             if (this.running && record.tileRect && !record.floating) this.scheduleWindowScale(w);
             if (global.display.focus_window === w) this.updateBorder();
@@ -208,12 +217,13 @@ export default class SnapTess extends Extension {
             this.cancel(record.restoreTimer); record.restoreTimer = 0;
             this.cancel(record.settleTimer); record.settleTimer = 0;
             this.resetWindowScale(w);
-            this.schedule(false);
             return;
         }
         if (record.specialState) {
             record.specialState = false;
             record.restorePending = true;
+            record.restoreStarted = false;
+            record.restoreMoves = 0;
             record.restoreUntil = Date.now() + RESTORE_STABILIZE_MS;
             record.restoreQuietUntil = 0;
             this.cancel(record.settleTimer);
@@ -224,12 +234,13 @@ export default class SnapTess extends Extension {
             this.queueWindowRestore(w, 180);
             return;
         }
-        this.schedule(false);
+        // Both maximize properties notify for one transition. The second
+        // notification must not schedule a full tile()/place() during restore.
     }
 
     queueWindowRestore(w, delay = 120) {
         const record = this.records.get(w);
-        if (!record?.restorePending || Date.now() > record.restoreUntil) return;
+        if (!record?.restorePending) return;
         this.cancel(record.restoreTimer);
         record.restoreTimer = this.later(delay, () => {
             if (!this.records.has(w)) return;
@@ -250,8 +261,17 @@ export default class SnapTess extends Extension {
             this.queueWindowRestore(w, 120);
             return;
         }
+        if (this.windowEffectActive(this.windowActor(w))) return;
         record.restoreQuietUntil = Date.now() + RESTORE_QUIET_MS;
-        this.place(w, record.tileRect);
+        if (!record.restoreStarted) {
+            record.restoreStarted = true;
+            // Reuse the pre-maximize backing size, never the transient maximized
+            // frame. Later commits may update the visual fit, not this request.
+            this.place(w, record.tileRect, true);
+        } else {
+            this.restoreWindowPosition(w, record);
+            this.scheduleWindowScale(w, 0);
+        }
     }
 
     finishWindowRestore(w) {
@@ -259,12 +279,110 @@ export default class SnapTess extends Extension {
         if (!record?.restorePending) return;
         this.cancel(record.restoreTimer); record.restoreTimer = 0;
         this.cancel(record.settleTimer); record.settleTimer = 0;
+        if (!this.running || !record.tileRect || record.floating || w.minimized || this.isSpecialWindow(w) ||
+            this.drag?.window === w || global.display.is_grabbed()) {
+            record.restorePending = false;
+            return;
+        }
+        // Completion resumes through effects-completed, even for long effects.
+        if (this.windowEffectActive(this.windowActor(w))) return;
+        // Never end the transaction by restarting size negotiation.
+        if (!record.restoreStarted) {
+            record.restoreStarted = true;
+            this.place(w, record.tileRect, true);
+        } else {
+            this.restoreWindowPosition(w, record);
+        }
         record.restorePending = false;
         record.restoreUntil = 0;
         record.restoreQuietUntil = 0;
-        if (!this.running || !record.tileRect || record.floating || w.minimized || this.isSpecialWindow(w) ||
-            this.drag?.window === w || global.display.is_grabbed()) return;
-        this.place(w, record.tileRect);
+        this.traceWindow(w, 'restore-finished');
+        this.scheduleWindowScale(w, 0);
+    }
+
+    restoreWindowPosition(w, record) {
+        const frame = w.get_frame_rect(), target = record.tileRect;
+        if (Math.abs(frame.x - target.x) <= 1 && Math.abs(frame.y - target.y) <= 1) return;
+        // Keep position repair separate from backing-size negotiation.
+        // A client that also rejects moves must not create an unlimited echo loop.
+        if (record.restoreMoves >= MAX_RESTORE_MOVES) return;
+        record.restoreMoves++;
+        this.requestWindowGeometry(w, 'restore-position', target, true);
+    }
+
+    windowEffectActive(actor) {
+        // GNOME Shell 50 freezes the actor before installing transitions. Its
+        // animation info covers that gap; effects-completed follows its cleanup.
+        return Boolean(actor && (actor.__animationInfo ||
+            ['scale-x', 'scale-y', 'translation-x', 'translation-y', 'x', 'y']
+                .some(name => actor.get_transition?.(name))));
+    }
+
+    requestWindowGeometry(w, reason, rect, positionOnly = false) {
+        const record = this.records.get(w);
+        if (!record) return;
+        record.requestSequence++;
+        record.placing = true;
+        this.traceWindow(w, `request:${reason}`, {requested: {...rect}, positionOnly});
+        try {
+            if (positionOnly) w.move_frame(false, rect.x, rect.y);
+            else w.move_resize_frame(false, rect.x, rect.y, rect.width, rect.height);
+        } finally {
+            record.placing = false;
+            this.traceWindow(w, `returned:${reason}`);
+        }
+    }
+
+    startWindowTrace(w, record) {
+        // Opt in for one WM_CLASS (or '*') at runtime; no filesystem polling.
+        // Checked only on maximize/fullscreen notifications, before handling them.
+        try {
+            const path = GLib.build_filenamev([GLib.get_user_runtime_dir(), 'snaptess', 'trace-restore']);
+            const [ok, data] = GLib.file_get_contents(path);
+            const filter = ok ? new TextDecoder().decode(data).trim() : '';
+            if (filter !== '*' && filter !== w.get_wm_class()) return;
+        } catch { return; }
+        record.traceUntil = Date.now() + 10000;
+        this.cancel(record.traceTimer);
+        record.traceTimer = this.later(10000, () => this.stopWindowTrace(record));
+        const actor = this.windowActor(w);
+        if (!actor || record.traceSignals.length) return;
+        for (const property of ['x', 'y', 'width', 'height', 'scale-x', 'scale-y',
+            'translation-x', 'translation-y', 'pivot-point']) {
+            const id = actor.connect(`notify::${property}`, () => this.traceWindow(w, `actor:${property}`));
+            record.traceSignals.push([actor, id]);
+        }
+    }
+
+    stopWindowTrace(record) {
+        this.cancel(record.traceTimer); record.traceTimer = 0;
+        record.traceUntil = 0;
+        for (const [actor, id] of record.traceSignals) {
+            try { actor.disconnect(id); } catch { /* actor disposed */ }
+        }
+        record.traceSignals = [];
+    }
+
+    traceWindow(w, event, detail = {}) {
+        const r = this.records.get(w);
+        if (!r || Date.now() >= r.traceUntil) return;
+        const actor = this.windowActor(w);
+        const rect = value => value ? {x: value.x, y: value.y, width: value.width, height: value.height} : null;
+        console.log(`[SnapTess:restore] ${JSON.stringify({
+            timestamp: new Date().toISOString(), monotonic_us: GLib.get_monotonic_time(),
+            window: w.get_stable_sequence(), wmClass: w.get_wm_class(), clientType: w.get_client_type?.(),
+            event, frame_rect: rect(w.get_frame_rect()), buffer_rect: rect(w.get_buffer_rect?.()),
+            tileRect: r.tileRect, backingRect: r.backingRect,
+            actor: actor ? {x: actor.x, y: actor.y, width: actor.width, height: actor.height,
+                scale: actor.get_scale(), translation: [actor.translation_x, actor.translation_y],
+                pivot: actor.get_pivot_point(), effectActive: this.windowEffectActive(actor)} : null,
+            fullscreen: w.fullscreen, maximize_flags: w.get_maximize_flags(),
+            is_grabbed: global.display.is_grabbed(), restorePending: r.restorePending,
+            stabilization: {started: r.restoreStarted, until: r.restoreUntil,
+                quietUntil: r.restoreQuietUntil, moves: r.restoreMoves},
+            scaleNegotiated: r.scaleNegotiated, inSnapTessRequest: r.placing,
+            requestSequence: r.requestSequence, ...detail,
+        })}`);
     }
 
     activeSpace(monitor, workspace = global.workspace_manager.get_active_workspace()) {
@@ -321,7 +439,7 @@ export default class SnapTess extends Extension {
         w.unmaximize();
         if (state.monitor < Main.layoutManager.monitors.length) w.move_to_monitor(state.monitor);
         if (state.tileRect && !state.maximized) this.place(w, state.tileRect);
-        else w.move_resize_frame(false, state.x, state.y, state.width, state.height);
+        else this.requestWindowGeometry(w, 'original-state', state);
         if (state.maximized) w.set_maximize_flags(state.maximized);
         if (state.minimized) w.minimize(); else w.unminimize();
     }
@@ -432,8 +550,9 @@ export default class SnapTess extends Extension {
         try {
             record.effectActor = actor;
             record.effectSignal = actor.connect('effects-completed', () => {
+                this.traceWindow(w, 'effects-completed');
                 if (!this.running || this.records.get(w) !== record || !record.tileRect || record.floating) return;
-                if (record.restorePending && !this.isSpecialWindow(w)) this.restoreWindowPlacement(w);
+                if (record.restorePending && !this.isSpecialWindow(w)) this.queueWindowRestore(w, 0);
                 else this.scheduleWindowScale(w, 0);
             });
         } catch {
@@ -447,14 +566,18 @@ export default class SnapTess extends Extension {
         if (record) {
             this.cancel(record.scaleTimer); record.scaleTimer = 0;
         }
-        if (actor) {
+        if (actor && !this.windowEffectActive(actor)) {
             actor.set_pivot_point(0, 0);
             actor.set_scale(1, 1);
         }
         if (record) {
             record.visualScale = 1;
-            record.scaleFrameRequest = null;
-            if (clearTarget) record.tileRect = null;
+            if (clearTarget) {
+                record.tileRect = null;
+                record.backingRect = null;
+                record.scaleNegotiated = false;
+            }
+            this.traceWindow(w, 'reset-scale');
         }
     }
     minimumSize(w) {
@@ -479,36 +602,33 @@ export default class SnapTess extends Extension {
     correctWindowScale(w) {
         const record = this.records.get(w), actor = this.windowActor(w);
         if (!record?.tileRect || !actor || record.floating || w.minimized || w.fullscreen || w.get_maximize_flags()) return;
-        if (actor.get_transition?.('scale-x') || actor.get_transition?.('scale-y')) {
-            this.scheduleWindowScale(w, 60);
-            return;
-        }
+        if (!this.running || record.placing || this.drag?.window === w || global.display.is_grabbed()) return;
+        if (this.windowEffectActive(actor)) return; // effects-completed resumes us
+        if (record.restorePending && !record.restoreStarted) return;
         const frame = w.get_frame_rect(), target = record.tileRect;
-        const fitted = fitMinimumSize(target, frame.width, frame.height);
-        if (fitted.scale < 0.999) {
-            const backing = fitted.frame;
-            const differs = Math.abs(frame.x - backing.x) > 1 || Math.abs(frame.y - backing.y) > 1 ||
-                Math.abs(frame.width - backing.width) > 1 || Math.abs(frame.height - backing.height) > 1;
-            if (differs) {
-                const requestKey = `${frame.x},${frame.y},${frame.width},${frame.height}->` +
-                    `${backing.x},${backing.y},${backing.width},${backing.height}`;
-                if (record.scaleFrameRequest !== requestKey) {
-                    record.scaleFrameRequest = requestKey;
-                    w.move_resize_frame(false, backing.x, backing.y, backing.width, backing.height);
-                    this.scheduleWindowScale(w, 120);
-                    return;
-                }
-            } else {
-                record.scaleFrameRequest = null;
+        // One measured-size negotiation per explicit placement. A committed frame
+        // is an observation, not a new minimum constraint. Feeding each reply back
+        // into fitMinimumSize creates a configure/commit feedback loop.
+        if (!record.scaleNegotiated) {
+            const fitted = fitMinimumSize(target, frame.width, frame.height);
+            // A normal-sized observation does not consume the one fallback:
+            // minimum constraints may only surface in a later client commit.
+            record.scaleNegotiated = fitted.scale < 0.999; // before requesting
+            record.backingRect = {...fitted.frame};
+            if (fitted.scale < 0.999 &&
+                (Math.abs(frame.width - fitted.frame.width) > 1 ||
+                 Math.abs(frame.height - fitted.frame.height) > 1)) {
+                this.requestWindowGeometry(w, 'backing-fit', fitted.frame);
+                this.scheduleWindowScale(w, 120);
+                return;
             }
-        } else {
-            record.scaleFrameRequest = null;
         }
         const actual = w.get_frame_rect();
         const scale = Math.max(0.05, Math.min(1,
             target.width / Math.max(1, actual.width), target.height / Math.max(1, actual.height)));
         this.applyWindowScale(w, actor, scale);
         record.visualScale = scale;
+        this.traceWindow(w, 'apply-scale');
     }
     scheduleWindowScale(w, delay = 90) {
         const record = this.records.get(w);
@@ -520,21 +640,30 @@ export default class SnapTess extends Extension {
             this.correctWindowScale(w);
         });
     }
-    place(w, rect) {
-        if (!rect) return;
+    place(w, rect, restoring = false) {
+        if (!rect || this.isSpecialWindow(w)) return;
         this.watchWindowEffects(w);
-        const actor = this.windowActor(w);
+        const actor = this.windowActor(w), record = this.records.get(w);
+        if (!record) return;
+        if (!restoring) {
+            // Explicit arrangement (including a manual drop) owns a new target.
+            this.cancel(record.restoreTimer); record.restoreTimer = 0;
+            this.cancel(record.settleTimer); record.settleTimer = 0;
+            record.restorePending = false;
+            record.restoreUntil = 0;
+            record.restoreQuietUntil = 0;
+        }
+        const previousBacking = restoring ? record.backingRect : null;
         this.resetWindowScale(w);
         const minimum = actor ? this.minimumSize(w) : {width: 0, height: 0};
         const fitted = fitMinimumSize(rect, minimum.width, minimum.height);
-        w.move_resize_frame(false, fitted.frame.x, fitted.frame.y, fitted.frame.width, fitted.frame.height);
-        const record = this.records.get(w);
-        if (record) record.tileRect = {...rect};
-        if (actor) {
-            this.applyWindowScale(w, actor, fitted.scale);
-            if (record) record.visualScale = fitted.scale;
-            this.scheduleWindowScale(w);
-        }
+        // Publish the target and transaction state before move_resize_frame can
+        // emit signals. Restores preserve the previous backing-size decision.
+        record.tileRect = {...rect};
+        record.backingRect = previousBacking ? {...previousBacking, x: rect.x, y: rect.y} : {...fitted.frame};
+        record.scaleNegotiated = restoring && Boolean(previousBacking);
+        this.requestWindowGeometry(w, restoring ? 'restore' : 'place', record.backingRect);
+        if (actor) this.scheduleWindowScale(w);
     }
     hideGuides() { this.border.hide(); this.preview.hide(); }
     showRect(actor, rect) {
@@ -667,6 +796,11 @@ export default class SnapTess extends Extension {
     grabBegin(w, op) {
         if (!this.running || !this.records.has(w) || this.records.get(w).floating ||
             ![Meta.GrabOp.MOVING, Meta.GrabOp.KEYBOARD_MOVING].includes(op)) return;
+        const record = this.records.get(w);
+        this.cancel(record.restoreTimer); record.restoreTimer = 0;
+        this.cancel(record.settleTimer); record.settleTimer = 0;
+        record.restorePending = false;
+        this.traceWindow(w, 'grab-begin');
         this.checkpoint();
         this.drag = {window: w, monitor: w.get_monitor(), target: null};
         this.border.hide();
@@ -766,6 +900,7 @@ export default class SnapTess extends Extension {
         this.sources.clear();
         for (const [object, id] of this.connections) object.disconnect(id);
         for (const [w, r] of this.records) {
+            this.stopWindowTrace(r);
             this.disconnectWindowEffects(r);
             for (const id of r.signals) w.disconnect(id);
         }
