@@ -131,10 +131,11 @@ export default class SnapTess extends Extension {
     track(w) {
         if (!this.eligible(w) || this.records.has(w)) return;
         const record = {original: null, floating: false, space: this.activeSpace(w.get_monitor(), w.get_workspace()),
-            parked: false, signals: [], monitor: w.get_monitor(), tileRect: null, visualScale: 1};
+            parked: false, signals: [], monitor: w.get_monitor(), tileRect: null, visualScale: 1, scaleTimer: 0};
         this.records.set(w, record);
         const watch = (signal, fn) => record.signals.push(w.connect(signal, fn));
         watch('unmanaged', () => {
+            this.cancel(record.scaleTimer); record.scaleTimer = 0;
             for (const id of record.signals) w.disconnect(id);
             this.records.delete(w);
             if (this.drag?.window === w) this.drag = null;
@@ -177,7 +178,10 @@ export default class SnapTess extends Extension {
             }
             if (global.display.focus_window === w) this.updateBorder();
         });
-        watch('size-changed', () => { if (global.display.focus_window === w) this.updateBorder(); });
+        watch('size-changed', () => {
+            if (this.running && record.tileRect && !record.floating) this.scheduleWindowScale(w);
+            if (global.display.focus_window === w) this.updateBorder();
+        });
     }
 
     activeSpace(monitor, workspace = global.workspace_manager.get_active_workspace()) {
@@ -322,11 +326,14 @@ export default class SnapTess extends Extension {
     }
     resetWindowScale(w, clearTarget = false) {
         const actor = this.windowActor(w);
+        const record = this.records.get(w);
+        if (record) {
+            this.cancel(record.scaleTimer); record.scaleTimer = 0;
+        }
         if (actor) {
             actor.set_pivot_point(0, 0);
             actor.set_scale(1, 1);
         }
-        const record = this.records.get(w);
         if (record) {
             record.visualScale = 1;
             if (clearTarget) record.tileRect = null;
@@ -341,6 +348,26 @@ export default class SnapTess extends Extension {
             return {width: 0, height: 0};
         }
     }
+    correctWindowScale(w) {
+        const record = this.records.get(w), actor = this.windowActor(w);
+        if (!record?.tileRect || !actor || record.floating || w.minimized || w.fullscreen || w.get_maximize_flags()) return;
+        const frame = w.get_frame_rect(), target = record.tileRect;
+        const scale = Math.max(0.05, Math.min(1,
+            target.width / Math.max(1, frame.width), target.height / Math.max(1, frame.height)));
+        actor.set_pivot_point(0, 0);
+        actor.set_scale(scale, scale);
+        record.visualScale = scale;
+    }
+    scheduleWindowScale(w) {
+        const record = this.records.get(w);
+        if (!record) return;
+        this.cancel(record.scaleTimer);
+        record.scaleTimer = this.later(90, () => {
+            if (!this.records.has(w)) return;
+            record.scaleTimer = 0;
+            this.correctWindowScale(w);
+        });
+    }
     place(w, rect) {
         if (!rect) return;
         const actor = this.windowActor(w);
@@ -349,13 +376,12 @@ export default class SnapTess extends Extension {
         const fitted = fitMinimumSize(rect, minimum.width, minimum.height);
         w.move_resize_frame(false, fitted.frame.x, fitted.frame.y, fitted.frame.width, fitted.frame.height);
         const record = this.records.get(w);
-        if (record) {
-            record.tileRect = {...rect};
-            record.visualScale = fitted.scale;
-        }
-        if (actor && fitted.scale < 0.999) {
+        if (record) record.tileRect = {...rect};
+        if (actor) {
             actor.set_pivot_point(0, 0);
             actor.set_scale(fitted.scale, fitted.scale);
+            if (record) record.visualScale = fitted.scale;
+            this.scheduleWindowScale(w);
         }
     }
     hideGuides() { this.border.hide(); this.preview.hide(); }
