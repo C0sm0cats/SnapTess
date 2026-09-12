@@ -8,7 +8,7 @@ import {Extension} from 'resource:///org/gnome/shell/extensions/extension.js';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import * as PanelMenu from 'resource:///org/gnome/shell/ui/panelMenu.js';
 import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js';
-import {layout, nearestSlot, directionalSlot, reconcileSlots} from './lib/layout.js';
+import {layout, fitMinimumSize, nearestSlot, directionalSlot, reconcileSlots} from './lib/layout.js';
 import {Studio} from './lib/studio.js';
 
 export default class SnapTess extends Extension {
@@ -69,7 +69,7 @@ export default class SnapTess extends Extension {
         });
         this.connect(Main.layoutManager, 'monitors-changed', () => this.monitorsChanged());
         this.connect(Main.overview, 'showing', () => this.hideGuides());
-        this.connect(Main.overview, 'hidden', () => this.updateBorder());
+        this.connect(Main.overview, 'hidden', () => { this.schedule(false); this.updateBorder(); });
         this.connect(this.settings, 'changed', (_s, key) => {
             if (key === 'profiles') this.loadProfiles();
             this.schedule(true);
@@ -109,7 +109,7 @@ export default class SnapTess extends Extension {
     track(w) {
         if (!this.eligible(w) || this.records.has(w)) return;
         const record = {original: null, floating: false, space: this.activeSpace(w.get_monitor(), w.get_workspace()),
-            parked: false, signals: [], monitor: w.get_monitor()};
+            parked: false, signals: [], monitor: w.get_monitor(), tileRect: null, visualScale: 1};
         this.records.set(w, record);
         const watch = (signal, fn) => record.signals.push(w.connect(signal, fn));
         watch('unmanaged', () => {
@@ -136,7 +136,10 @@ export default class SnapTess extends Extension {
             this.schedule(this.settings.get_boolean('compact-minimize'));
         });
         for (const signal of ['notify::maximized-horizontally', 'notify::maximized-vertically',
-            'notify::fullscreen']) watch(signal, () => this.schedule(false));
+            'notify::fullscreen']) watch(signal, () => {
+            if (w.fullscreen || w.get_maximize_flags()) this.resetWindowScale(w);
+            this.schedule(false);
+        });
         watch('workspace-changed', () => {
             if (!this.busy) {
                 record.space = this.activeSpace(w.get_monitor(), w.get_workspace());
@@ -189,8 +192,10 @@ export default class SnapTess extends Extension {
 
     snapshot(w) {
         const r = w.get_frame_rect();
+        const tileRect = this.records.get(w)?.tileRect;
         return {x: r.x, y: r.y, width: r.width, height: r.height, monitor: w.get_monitor(),
-            maximized: w.get_maximize_flags(), minimized: w.minimized};
+            maximized: w.get_maximize_flags(), minimized: w.minimized,
+            tileRect: tileRect ? {...tileRect} : null};
     }
     checkpoint() {
         if (!this.running) return;
@@ -203,9 +208,11 @@ export default class SnapTess extends Extension {
     }
     restore(w, state) {
         if (w.fullscreen) return;
+        this.resetWindowScale(w, true);
         w.unmaximize();
         if (state.monitor < Main.layoutManager.monitors.length) w.move_to_monitor(state.monitor);
-        w.move_resize_frame(false, state.x, state.y, state.width, state.height);
+        if (state.tileRect && !state.maximized) this.place(w, state.tileRect);
+        else w.move_resize_frame(false, state.x, state.y, state.width, state.height);
         if (state.maximized) w.set_maximize_flags(state.maximized);
         if (state.minimized) w.minimize(); else w.unminimize();
     }
@@ -289,9 +296,46 @@ export default class SnapTess extends Extension {
         this.updateBorder();
     }
 
+    windowActor(w) {
+        return global.get_window_actors().find(actor => actor.meta_window === w) ?? null;
+    }
+    resetWindowScale(w, clearTarget = false) {
+        const actor = this.windowActor(w);
+        if (actor) {
+            actor.set_pivot_point(0, 0);
+            actor.set_scale(1, 1);
+        }
+        const record = this.records.get(w);
+        if (record) {
+            record.visualScale = 1;
+            if (clearTarget) record.tileRect = null;
+        }
+    }
+    minimumSize(w) {
+        if (typeof w.get_min_size !== 'function') return {width: 0, height: 0};
+        try {
+            const [known, width, height] = w.get_min_size();
+            return known ? {width: Math.max(0, width), height: Math.max(0, height)} : {width: 0, height: 0};
+        } catch {
+            return {width: 0, height: 0};
+        }
+    }
     place(w, rect) {
         if (!rect) return;
-        w.move_resize_frame(false, rect.x, rect.y, rect.width, rect.height);
+        const actor = this.windowActor(w);
+        this.resetWindowScale(w);
+        const minimum = actor ? this.minimumSize(w) : {width: 0, height: 0};
+        const fitted = fitMinimumSize(rect, minimum.width, minimum.height);
+        w.move_resize_frame(false, fitted.frame.x, fitted.frame.y, fitted.frame.width, fitted.frame.height);
+        const record = this.records.get(w);
+        if (record) {
+            record.tileRect = {...rect};
+            record.visualScale = fitted.scale;
+        }
+        if (actor && fitted.scale < 0.999) {
+            actor.set_pivot_point(0, 0);
+            actor.set_scale(fitted.scale, fitted.scale);
+        }
     }
     hideGuides() { this.border.hide(); this.preview.hide(); }
     showRect(actor, rect) {
@@ -311,7 +355,7 @@ export default class SnapTess extends Extension {
             this.border.hide(); return;
         }
         this.border.set_style(this.swapMode ? 'border-color: #ff808b;' : '');
-        this.showRect(this.border, w.get_frame_rect());
+        this.showRect(this.border, record.tileRect ?? w.get_frame_rect());
     }
     focusChanged() { this.updateBorder(); }
 

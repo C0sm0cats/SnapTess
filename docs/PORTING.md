@@ -18,14 +18,14 @@ This is a native GNOME implementation, not a translation of the Win32 calls. Ini
 | Saved slots | Adapted | Layout and application order, not exact window identity across sessions |
 | Settings and global hotkeys | Implemented | libadwaita preferences and GNOME keybindings |
 | Tray UI | Adapted | Native top-panel indicator |
-| Force arbitrary app geometry | Not promised | Mutter and application minimum sizes remain authoritative |
+| Force arbitrary app geometry | Adapted | Mutter keeps client minimum sizes authoritative; SnapTess uniformly scales constrained window actors into their slots so they do not overlap neighboring tiles |
 | Pixel-perfect Windows animation | Replaced | Native window placement with animated guides; not a custom window animation engine |
 | Slot-guard polling | Not ported | Event-driven reflow; does not continuously fight app self-resizing |
 | Undo | Added | Last ten manual arrangements, including floating membership and profiles |
 
 ## Validation
 
-- Node tests check layout transitions, >15 windows, negative monitor coordinates, non-overlap, exact extents, directional neighbors and slot holes.
+- Node tests check layout transitions, >15 windows, negative monitor coordinates, non-overlap, exact extents, directional neighbors, slot holes and constrained-window fitting.
 - A real GNOME 50.4 headless Wayland session exercises four native GTK windows: initial pause, placement, maximize freeze, compaction, spaces, floating/undo, swap, Studio apply, restoration and extension cleanup.
 - The two-monitor variant exercises window assignment, independent spaces, cross-display drop handling and reflow.
 - GTK4/libadwaita preferences are constructed in an isolated process; shortcut validation, saving and disabling are checked.
