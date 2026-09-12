@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {layout, autoLayout, nearestSlot, directionalSlot, reconcileSlots, PRESETS} from '../lib/layout.js';
+import {layout, autoLayout, fitMinimumSize, nearestSlot, directionalSlot, reconcileSlots, PRESETS} from '../lib/layout.js';
 
 test('SmartGrid layout progression, including more than 15 windows', () => {
     assert.deepEqual([1,2,3,4,5,7,10,13].map(autoLayout), ['full','split','master','2x2','3x2','3x3','4x3','5x3']);
@@ -28,6 +28,16 @@ test('split and master consume the available extent exactly', () => {
         assert.equal(r.at(-1).x+r.at(-1).width,901);
         assert.equal(r.at(-1).y+r.at(-1).height,721);
     }
+});
+test('minimum-size fitting preserves slot aspect and only scales constrained windows', () => {
+    const slot={x:100,y:50,width:600,height:400};
+    assert.deepEqual(fitMinimumSize(slot,500,300),{frame:slot,scale:1});
+    const widthLimited=fitMinimumSize(slot,800,200);
+    assert.equal(widthLimited.scale,0.75);
+    assert.deepEqual(widthLimited.frame,{x:100,y:50,width:800,height:534});
+    const heightLimited=fitMinimumSize(slot,300,800);
+    assert.equal(heightLimited.scale,0.5);
+    assert.deepEqual(heightLimited.frame,{x:100,y:50,width:1200,height:800});
 });
 test('directional swap follows geometric neighbors', () => {
     const r=layout({x:0,y:0,width:1000,height:800},4);
