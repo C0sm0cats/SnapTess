@@ -38,7 +38,7 @@ export default class SnapTess extends Extension {
         this.indicator.menu.addAction('Layout Studio…', () => this.openStudio());
         this.indicator.menu.addAction('Arrange again', () => { this.checkpoint(); this.tile(true); });
         this.indicator.menu.addAction('Float / tile focused window', () => this.toggleFloating());
-        this.indicator.menu.addAction('Swap mode · arrows, Esc to finish', () => this.toggleSwap());
+        this.indicator.menu.addAction('Swap mode · arrows · Enter accept · Esc cancel', () => this.toggleSwap());
         this.indicator.menu.addAction('Undo last arrangement', () => this.undo());
         this.indicator.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
         this.spaceMenu = new PopupMenu.PopupSubMenuMenuItem('Monitor spaces');
@@ -138,6 +138,7 @@ export default class SnapTess extends Extension {
             for (const id of record.signals) w.disconnect(id);
             this.records.delete(w);
             if (this.drag?.window === w) this.drag = null;
+            if (this.swapWindow === w) this.exitSwap(false);
             this.schedule(this.settings.get_boolean('compact-close'));
         });
         watch('notify::minimized', () => {
@@ -261,7 +262,7 @@ export default class SnapTess extends Extension {
             this.tile(true, true);
         } else {
             this.cancel(this.pending); this.pending = 0;
-            this.exitSwap(); this.drag = null; this.hideGuides();
+            this.exitSwap(false); this.drag = null; this.hideGuides();
             this.busy = true;
             try {
                 for (const [w, r] of this.records) {
@@ -397,39 +398,73 @@ export default class SnapTess extends Extension {
     }
 
     toggleSwap() {
-        if (this.swapMode) { this.exitSwap(); return; }
-        if (!this.running || !this.records.has(global.display.focus_window)) return;
+        if (this.swapMode) { this.exitSwap(true); return; }
+        const w = global.display.focus_window, record = this.records.get(w);
+        if (!this.running || !record || record.floating || w.minimized || w.fullscreen || w.get_maximize_flags()) return;
+        const key = this.key(w.get_monitor());
+        const slots = this.groups.get(key) ?? [];
+        if (!slots.includes(w) || slots.filter(Boolean).length < 2) return;
+
         this.swapMode = true;
+        this.swapWindow = w;
+        this.swapKey = key;
+        this.swapOriginal = [...slots];
+        this.swapHistory = [...this.history];
+        this.swapChanged = false;
         this.swapActor = new St.Widget({reactive: true, can_focus: true, width: 1, height: 1});
         Main.uiGroup.add_child(this.swapActor);
         this.swapGrab = Main.pushModal(this.swapActor, {actionMode: Shell.ActionMode.NORMAL});
         this.swapActor.grab_key_focus();
-        this.swapWindow = global.display.focus_window;
         this.swapActor.connect('key-press-event', (_a, e) => {
-            const key = e.get_key_symbol();
-            if (key === Clutter.KEY_Escape || key === Clutter.KEY_Return) this.exitSwap();
+            const keySymbol = e.get_key_symbol();
+            if (keySymbol === Clutter.KEY_Escape) {
+                this.exitSwap(false);
+                return Clutter.EVENT_STOP;
+            }
+            if (keySymbol === Clutter.KEY_Return || keySymbol === Clutter.KEY_KP_Enter) {
+                this.exitSwap(true);
+                return Clutter.EVENT_STOP;
+            }
             const direction = new Map([[Clutter.KEY_Left, 'left'], [Clutter.KEY_Right, 'right'],
-                [Clutter.KEY_Up, 'up'], [Clutter.KEY_Down, 'down']]).get(key);
+                [Clutter.KEY_Up, 'up'], [Clutter.KEY_Down, 'down']]).get(keySymbol);
             if (direction) this.swapDirection(direction);
             return Clutter.EVENT_STOP;
         });
         this.updateBorder();
     }
-    exitSwap() {
+    exitSwap(commit = true) {
+        if (!commit && this.swapMode && this.swapChanged && this.swapKey) {
+            const original = (this.swapOriginal ?? []).map(w => w && this.records.has(w) ? w : null);
+            this.groups.set(this.swapKey, original);
+            this.history = this.swapHistory ?? this.history;
+            this.tile(false);
+        }
         if (this.swapGrab) Main.popModal(this.swapGrab);
         this.swapGrab = null;
-        this.swapActor?.destroy(); this.swapActor = null; this.swapMode = false; this.swapWindow = null;
+        this.swapActor?.destroy();
+        this.swapActor = null;
+        this.swapMode = false;
+        this.swapWindow = null;
+        this.swapKey = null;
+        this.swapOriginal = null;
+        this.swapHistory = null;
+        this.swapChanged = false;
         this.updateBorder();
     }
     swapDirection(direction) {
         const w = this.swapWindow;
-        if (!this.records.has(w)) { this.exitSwap(); return; }
-        const slots = this.groups.get(this.key(w.get_monitor())) ?? [];
+        if (!this.records.has(w) || !this.swapKey) { this.exitSwap(false); return; }
+        const slots = this.groups.get(this.swapKey) ?? [];
         const from = slots.indexOf(w);
+        if (from < 0) { this.exitSwap(false); return; }
         const rects = layout(this.area(w.get_monitor()), slots.length, this.options(w.get_monitor()));
         const to = directionalSlot(rects, from, direction);
         if (to < 0) return;
-        this.checkpoint(); [slots[from], slots[to]] = [slots[to], slots[from]];
+        if (!this.swapChanged) {
+            this.checkpoint();
+            this.swapChanged = true;
+        }
+        [slots[from], slots[to]] = [slots[to], slots[from]];
         this.tile(false);
     }
 
@@ -506,6 +541,7 @@ export default class SnapTess extends Extension {
 
     monitorsChanged() {
         if (!this.running) return;
+        this.exitSwap(false);
         this.busy = true;
         try {
             for (const [w, r] of this.records) {
