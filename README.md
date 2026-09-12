@@ -94,6 +94,24 @@ npm test                  # geometry and slot reconciliation; no dependencies
 ./scripts/test-shell.sh   # real GNOME 50 headless integration test
 ```
 
+### Hot reload on Wayland
+
+GNOME caches imported extension modules for the lifetime of the Shell process. SnapTess keeps `extension.js` as a small stable loader and loads `runtime.js` plus `lib/` from a unique runtime path on every enable, so development changes can be reloaded without restarting GNOME Shell.
+
+Set up a development install once:
+
+```bash
+./scripts/dev-install.sh
+```
+
+This symlinks the checked-out repository into `~/.local/share/gnome-shell/extensions/`, so edits are immediately visible to the loader. After changing JavaScript, reload with:
+
+```bash
+./scripts/dev-reload.sh
+```
+
+Disabling and re-enabling SnapTess from the Extensions UI does the same thing. When migrating from an older SnapTess build that predates this loader, GNOME still has the old `extension.js` cached, so **one logout/login is required once**. After that migration, normal code changes no longer require restarting GNOME Shell.
+
 The Shell test runs on a private session bus with temporary XDG directories. It does not load SnapTess into your current desktop. Test logs from system services can contain unrelated portal/accessibility warnings; SnapTess assertions fail the process.
 
 For the two-monitor integration test:
@@ -104,7 +122,7 @@ dbus-run-session -- gnome-shell-test-tool --headless --disable-animations \
   --extension dist/snaptess@c0sm0cats.github.io.shell-extension.zip tests/shell.js
 ```
 
-`lib/layout.js` has no GNOME imports. `extension.js` owns the GNOME adapter and lifecycle; `lib/studio.js` owns the modal editor; `prefs.js` uses GTK4/libadwaita. Other desktop backends may be added later without changing the project's name.
+`lib/layout.js` has no GNOME imports. `extension.js` is the cache-busting loader; `runtime.js` owns the GNOME adapter and lifecycle; `lib/studio.js` owns the modal editor; `prefs.js` uses GTK4/libadwaita. Other desktop backends may be added later without changing the project's name.
 
 ## Contributing
 
