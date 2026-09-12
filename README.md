@@ -102,6 +102,8 @@ There is only one local installer:
 
 It symlinks the checked-out repository into `~/.local/share/gnome-shell/extensions/`. Once the loader has been activated, editing the source or running `git pull` requires no reinstall: simply disable and re-enable SnapTess from the Extensions app to load the new `runtime.js` and `lib/` code.
 
+Hot-reload snapshots are staged under `$XDG_RUNTIME_DIR/snaptess-hot-reload/` while the extension is enabled. Disabling SnapTess recursively removes that staging directory, including stale snapshots left by earlier activations.
+
 When migrating from a build that predates the loader, the old `extension.js` can still be cached in the current Shell process, so **one logout/login is required once**. Future source updates then reload through disable/enable without restarting GNOME Shell.
 
 The Shell test runs on a private session bus with temporary XDG directories. It does not load SnapTess into your current desktop. Test logs from system services can contain unrelated portal/accessibility warnings; SnapTess assertions fail the process.
