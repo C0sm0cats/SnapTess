@@ -8,10 +8,10 @@ import {Extension} from 'resource:///org/gnome/shell/extensions/extension.js';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import * as PanelMenu from 'resource:///org/gnome/shell/ui/panelMenu.js';
 import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js';
-import {layout, fitMinimumSize, nearestSlot, directionalSlot, reconcileSlots} from './lib/layout.js';
+import {layout, fitMinimumSize, frameScalePivot, nearestSlot, directionalSlot, reconcileSlots} from './lib/layout.js';
 import {Studio} from './lib/studio.js';
 
-const RUNTIME_REVISION = 4;
+const RUNTIME_REVISION = 5;
 
 export default class SnapTess extends Extension {
     enable() {
@@ -383,6 +383,16 @@ export default class SnapTess extends Extension {
             return {width: 0, height: 0};
         }
     }
+    applyWindowScale(w, actor, scale) {
+        let pivot = {x: 0, y: 0};
+        try {
+            const frame = w.get_frame_rect();
+            const buffer = typeof w.get_buffer_rect === 'function' ? w.get_buffer_rect() : frame;
+            pivot = frameScalePivot(frame, buffer, actor.get_width?.(), actor.get_height?.());
+        } catch { /* fall back to the actor origin */ }
+        actor.set_pivot_point(pivot.x, pivot.y);
+        actor.set_scale(scale, scale);
+    }
     correctWindowScale(w) {
         const record = this.records.get(w), actor = this.windowActor(w);
         if (!record?.tileRect || !actor || record.floating || w.minimized || w.fullscreen || w.get_maximize_flags()) return;
@@ -414,8 +424,7 @@ export default class SnapTess extends Extension {
         const actual = w.get_frame_rect();
         const scale = Math.max(0.05, Math.min(1,
             target.width / Math.max(1, actual.width), target.height / Math.max(1, actual.height)));
-        actor.set_pivot_point(0, 0);
-        actor.set_scale(scale, scale);
+        this.applyWindowScale(w, actor, scale);
         record.visualScale = scale;
     }
     scheduleWindowScale(w, delay = 90) {
@@ -439,8 +448,7 @@ export default class SnapTess extends Extension {
         const record = this.records.get(w);
         if (record) record.tileRect = {...rect};
         if (actor) {
-            actor.set_pivot_point(0, 0);
-            actor.set_scale(fitted.scale, fitted.scale);
+            this.applyWindowScale(w, actor, fitted.scale);
             if (record) record.visualScale = fitted.scale;
             this.scheduleWindowScale(w);
         }
