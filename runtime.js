@@ -11,7 +11,9 @@ import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js';
 import {layout, fitMinimumSize, frameScalePivot, nearestSlot, directionalSlot, reconcileSlots} from './lib/layout.js';
 import {Studio} from './lib/studio.js';
 
-const RUNTIME_REVISION = 5;
+const RUNTIME_REVISION = 6;
+const RESTORE_STABILIZE_MS = 1400;
+const RESTORE_QUIET_MS = 120;
 
 export default class SnapTess extends Extension {
     enable() {
@@ -129,16 +131,23 @@ export default class SnapTess extends Extension {
         return Shell.WindowTracker.get_default().get_window_app(w)?.get_id() ?? w.get_wm_class() ?? '';
     }
 
+    isSpecialWindow(w) {
+        return Boolean(w?.fullscreen || w?.get_maximize_flags?.());
+    }
+
     track(w) {
         if (!this.eligible(w) || this.records.has(w)) return;
         const record = {original: null, floating: false, space: this.activeSpace(w.get_monitor(), w.get_workspace()),
             parked: false, signals: [], monitor: w.get_monitor(), tileRect: null, visualScale: 1, scaleTimer: 0,
-            scaleFrameRequest: null, effectActor: null, effectSignal: 0};
+            scaleFrameRequest: null, effectActor: null, effectSignal: 0, specialState: this.isSpecialWindow(w),
+            restorePending: false, restoreTimer: 0, settleTimer: 0, restoreUntil: 0, restoreQuietUntil: 0};
         this.records.set(w, record);
         this.watchWindowEffects(w);
         const watch = (signal, fn) => record.signals.push(w.connect(signal, fn));
         watch('unmanaged', () => {
             this.cancel(record.scaleTimer); record.scaleTimer = 0;
+            this.cancel(record.restoreTimer); record.restoreTimer = 0;
+            this.cancel(record.settleTimer); record.settleTimer = 0;
             this.disconnectWindowEffects(record);
             for (const id of record.signals) w.disconnect(id);
             this.records.delete(w);
@@ -163,10 +172,7 @@ export default class SnapTess extends Extension {
             this.schedule(this.settings.get_boolean('compact-minimize'));
         });
         for (const signal of ['notify::maximized-horizontally', 'notify::maximized-vertically',
-            'notify::fullscreen']) watch(signal, () => {
-            if (w.fullscreen || w.get_maximize_flags()) this.resetWindowScale(w);
-            this.schedule(false);
-        });
+            'notify::fullscreen']) watch(signal, () => this.specialWindowChanged(w, record));
         watch('workspace-changed', () => {
             if (!this.busy) {
                 record.space = this.activeSpace(w.get_monitor(), w.get_workspace());
@@ -180,12 +186,85 @@ export default class SnapTess extends Extension {
                 record.space = this.activeSpace(monitor);
                 this.schedule(true);
             }
+            if (record.restorePending && Date.now() >= record.restoreQuietUntil && !this.busy && !this.drag)
+                this.queueWindowRestore(w, 80);
             if (global.display.focus_window === w) this.updateBorder();
         });
         watch('size-changed', () => {
+            if (record.restorePending && Date.now() >= record.restoreQuietUntil && !this.busy && !this.drag)
+                this.queueWindowRestore(w, 80);
             if (this.running && record.tileRect && !record.floating) this.scheduleWindowScale(w);
             if (global.display.focus_window === w) this.updateBorder();
         });
+    }
+
+    specialWindowChanged(w, record) {
+        const special = this.isSpecialWindow(w);
+        if (special) {
+            record.specialState = true;
+            record.restorePending = false;
+            record.restoreUntil = 0;
+            record.restoreQuietUntil = 0;
+            this.cancel(record.restoreTimer); record.restoreTimer = 0;
+            this.cancel(record.settleTimer); record.settleTimer = 0;
+            this.resetWindowScale(w);
+            this.schedule(false);
+            return;
+        }
+        if (record.specialState) {
+            record.specialState = false;
+            record.restorePending = true;
+            record.restoreUntil = Date.now() + RESTORE_STABILIZE_MS;
+            record.restoreQuietUntil = 0;
+            this.cancel(record.settleTimer);
+            record.settleTimer = this.later(RESTORE_STABILIZE_MS, () => {
+                record.settleTimer = 0;
+                this.finishWindowRestore(w);
+            });
+            this.queueWindowRestore(w, 180);
+            return;
+        }
+        this.schedule(false);
+    }
+
+    queueWindowRestore(w, delay = 120) {
+        const record = this.records.get(w);
+        if (!record?.restorePending || Date.now() > record.restoreUntil) return;
+        this.cancel(record.restoreTimer);
+        record.restoreTimer = this.later(delay, () => {
+            if (!this.records.has(w)) return;
+            record.restoreTimer = 0;
+            this.restoreWindowPlacement(w);
+        });
+    }
+
+    restoreWindowPlacement(w) {
+        const record = this.records.get(w);
+        if (!this.running || !record?.restorePending || !record.tileRect || record.floating || w.minimized ||
+            this.isSpecialWindow(w)) return;
+        if (Date.now() > record.restoreUntil) {
+            this.finishWindowRestore(w);
+            return;
+        }
+        if (this.drag?.window === w || global.display.is_grabbed()) {
+            this.queueWindowRestore(w, 120);
+            return;
+        }
+        record.restoreQuietUntil = Date.now() + RESTORE_QUIET_MS;
+        this.place(w, record.tileRect);
+    }
+
+    finishWindowRestore(w) {
+        const record = this.records.get(w);
+        if (!record?.restorePending) return;
+        this.cancel(record.restoreTimer); record.restoreTimer = 0;
+        this.cancel(record.settleTimer); record.settleTimer = 0;
+        record.restorePending = false;
+        record.restoreUntil = 0;
+        record.restoreQuietUntil = 0;
+        if (!this.running || !record.tileRect || record.floating || w.minimized || this.isSpecialWindow(w) ||
+            this.drag?.window === w || global.display.is_grabbed()) return;
+        this.place(w, record.tileRect);
     }
 
     activeSpace(monitor, workspace = global.workspace_manager.get_active_workspace()) {
@@ -274,6 +353,9 @@ export default class SnapTess extends Extension {
             this.busy = true;
             try {
                 for (const [w, r] of this.records) {
+                    this.cancel(r.restoreTimer); r.restoreTimer = 0;
+                    this.cancel(r.settleTimer); r.settleTimer = 0;
+                    r.restorePending = false; r.restoreUntil = 0; r.restoreQuietUntil = 0;
                     if (r.parked) { w.unminimize(); r.parked = false; }
                     if (r.original) this.restore(w, r.original);
                     r.original = null; r.space = 0;
@@ -350,8 +432,9 @@ export default class SnapTess extends Extension {
         try {
             record.effectActor = actor;
             record.effectSignal = actor.connect('effects-completed', () => {
-                if (this.running && this.records.get(w) === record && record.tileRect && !record.floating)
-                    this.scheduleWindowScale(w, 0);
+                if (!this.running || this.records.get(w) !== record || !record.tileRect || record.floating) return;
+                if (record.restorePending && !this.isSpecialWindow(w)) this.restoreWindowPlacement(w);
+                else this.scheduleWindowScale(w, 0);
             });
         } catch {
             record.effectActor = null;
