@@ -11,7 +11,7 @@ import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js';
 import {layout, fitMinimumSize, nearestSlot, directionalSlot, reconcileSlots} from './lib/layout.js';
 import {Studio} from './lib/studio.js';
 
-const RUNTIME_VERSION = 2;
+const RUNTIME_VERSION = 3;
 
 export default class SnapTess extends Extension {
     enable() {
@@ -131,11 +131,14 @@ export default class SnapTess extends Extension {
     track(w) {
         if (!this.eligible(w) || this.records.has(w)) return;
         const record = {original: null, floating: false, space: this.activeSpace(w.get_monitor(), w.get_workspace()),
-            parked: false, signals: [], monitor: w.get_monitor(), tileRect: null, visualScale: 1, scaleTimer: 0};
+            parked: false, signals: [], monitor: w.get_monitor(), tileRect: null, visualScale: 1, scaleTimer: 0,
+            effectActor: null, effectSignal: 0};
         this.records.set(w, record);
+        this.watchWindowEffects(w);
         const watch = (signal, fn) => record.signals.push(w.connect(signal, fn));
         watch('unmanaged', () => {
             this.cancel(record.scaleTimer); record.scaleTimer = 0;
+            this.disconnectWindowEffects(record);
             for (const id of record.signals) w.disconnect(id);
             this.records.delete(w);
             if (this.drag?.window === w) this.drag = null;
@@ -322,7 +325,37 @@ export default class SnapTess extends Extension {
     }
 
     windowActor(w) {
-        return global.get_window_actors().find(actor => actor.meta_window === w) ?? null;
+        try {
+            return w?.get_compositor_private?.() ??
+                global.get_window_actors().find(actor => actor.meta_window === w) ?? null;
+        } catch {
+            return global.get_window_actors().find(actor => actor.meta_window === w) ?? null;
+        }
+    }
+    disconnectWindowEffects(record) {
+        if (!record) return;
+        const actor = record.effectActor, id = record.effectSignal;
+        record.effectActor = null;
+        record.effectSignal = 0;
+        if (actor && id) {
+            try { actor.disconnect(id); } catch { /* actor may already be disposed */ }
+        }
+    }
+    watchWindowEffects(w) {
+        const record = this.records.get(w);
+        if (!record || record.effectSignal) return;
+        const actor = this.windowActor(w);
+        if (!actor) return;
+        try {
+            record.effectActor = actor;
+            record.effectSignal = actor.connect('effects-completed', () => {
+                if (this.running && this.records.get(w) === record && record.tileRect && !record.floating)
+                    this.scheduleWindowScale(w, 0);
+            });
+        } catch {
+            record.effectActor = null;
+            record.effectSignal = 0;
+        }
     }
     resetWindowScale(w, clearTarget = false) {
         const actor = this.windowActor(w);
@@ -351,6 +384,10 @@ export default class SnapTess extends Extension {
     correctWindowScale(w) {
         const record = this.records.get(w), actor = this.windowActor(w);
         if (!record?.tileRect || !actor || record.floating || w.minimized || w.fullscreen || w.get_maximize_flags()) return;
+        if (actor.get_transition?.('scale-x') || actor.get_transition?.('scale-y')) {
+            this.scheduleWindowScale(w, 60);
+            return;
+        }
         const frame = w.get_frame_rect(), target = record.tileRect;
         const scale = Math.max(0.05, Math.min(1,
             target.width / Math.max(1, frame.width), target.height / Math.max(1, frame.height)));
@@ -358,11 +395,11 @@ export default class SnapTess extends Extension {
         actor.set_scale(scale, scale);
         record.visualScale = scale;
     }
-    scheduleWindowScale(w) {
+    scheduleWindowScale(w, delay = 90) {
         const record = this.records.get(w);
         if (!record) return;
         this.cancel(record.scaleTimer);
-        record.scaleTimer = this.later(90, () => {
+        record.scaleTimer = this.later(delay, () => {
             if (!this.records.has(w)) return;
             record.scaleTimer = 0;
             this.correctWindowScale(w);
@@ -370,6 +407,7 @@ export default class SnapTess extends Extension {
     }
     place(w, rect) {
         if (!rect) return;
+        this.watchWindowEffects(w);
         const actor = this.windowActor(w);
         this.resetWindowScale(w);
         const minimum = actor ? this.minimumSize(w) : {width: 0, height: 0};
@@ -613,7 +651,10 @@ export default class SnapTess extends Extension {
         for (const id of this.sources) GLib.Source.remove(id);
         this.sources.clear();
         for (const [object, id] of this.connections) object.disconnect(id);
-        for (const [w, r] of this.records) for (const id of r.signals) w.disconnect(id);
+        for (const [w, r] of this.records) {
+            this.disconnectWindowEffects(r);
+            for (const id of r.signals) w.disconnect(id);
+        }
         this.records.clear();
         Main.layoutManager.removeChrome(this.border); this.border.destroy();
         Main.layoutManager.removeChrome(this.preview); this.preview.destroy();
