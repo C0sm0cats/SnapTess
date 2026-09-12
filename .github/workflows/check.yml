@@ -13,6 +13,7 @@ jobs:
       - run: npm test
       - run: |
           node --check extension.js
+          node --check runtime.js
           node --check prefs.js
           node --check lib/studio.js
       - run: sudo apt-get update && sudo apt-get install -y libglib2.0-bin gnome-shell

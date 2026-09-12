@@ -8,12 +8,18 @@ export const METRICS = {};
 const assert = (condition, message) => { if (!condition) throw new Error(`SnapTess: ${message}`); };
 const pause = () => Scripting.sleep(400);
 const geometry = w => { const r=w.get_frame_rect(); return [r.x,r.y,r.width,r.height].join(','); };
+async function waitRuntime(loader) {
+    for (let i=0;i<30 && !loader.runtime;i++) await Scripting.sleep(100);
+    return loader.runtime;
+}
 export async function run() {
     await Scripting.sleep(1200);
     Main.overview.hide(); await pause();
     const entry=Main.extensionManager.lookup('snaptess@c0sm0cats.github.io');
     assert(entry?.stateObj, `extension loaded (${JSON.stringify(entry?.errors)})`);
-    const app=entry.stateObj;
+    const loader=entry.stateObj;
+    const app=await waitRuntime(loader);
+    assert(app,'runtime loaded');
     assert(!app.running,'starts without moving windows');
     for(let i=0;i<4;i++) await Scripting.createTestWindow({width:320,height:240});
     await Scripting.waitTestWindows(); await pause();
@@ -82,8 +88,15 @@ export async function run() {
         assert(r.x===s.x && r.y===s.y && r.width===s.width && r.height===s.height,'stop restores original geometry');
     });
     app.setRunning(true); await pause();
-    await Main.extensionManager.disableExtension(app.uuid); await pause();
-    assert(!Main.panel.statusArea[app.uuid],'disable removes indicator');
+    const firstRuntimeClass=app.constructor;
+    await Main.extensionManager.disableExtension(loader.uuid); await pause();
+    assert(!Main.panel.statusArea[loader.uuid],'disable removes indicator');
+    await Main.extensionManager.enableExtension(loader.uuid); await pause();
+    const reloadedEntry=Main.extensionManager.lookup(loader.uuid);
+    const reloaded=await waitRuntime(reloadedEntry.stateObj);
+    assert(reloaded,'runtime reloads after disable/enable');
+    assert(reloaded.constructor!==firstRuntimeClass,'reload bypasses the GJS module cache');
+    await Main.extensionManager.disableExtension(loader.uuid); await pause();
     await Scripting.destroyTestWindows();
     const launcher=new Gio.SubprocessLauncher({flags:Gio.SubprocessFlags.NONE});
     launcher.setenv('WAYLAND_DISPLAY','gnome-shell-test-display',true);
