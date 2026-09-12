@@ -38,11 +38,7 @@ cd SnapTess
 ./scripts/install.sh
 ```
 
-On first installation, GNOME may need a **logout and login** to discover the extension. If the installer asks for it, then run:
-
-```bash
-gnome-extensions enable snaptess@c0sm0cats.github.io
-```
+The installer links this checkout directly into `~/.local/share/gnome-shell/extensions/`, so future source changes are visible to GNOME immediately. On first installation, or when migrating from an older SnapTess build that predates the hot-reload loader, GNOME may need **one logout/login** to discover/load the new extension module. After that, normal updates do not require restarting GNOME Shell.
 
 Open the grid icon in the top panel, or press **Ctrl+Alt+T** to begin arranging. **Ctrl+Alt+P** opens Layout Studio. Stop with **Ctrl+Alt+Q** to restore the original window geometry.
 
@@ -96,21 +92,17 @@ npm test                  # geometry and slot reconciliation; no dependencies
 
 ### Hot reload on Wayland
 
-GNOME caches imported extension modules for the lifetime of the Shell process. SnapTess keeps `extension.js` as a small stable loader and loads `runtime.js` plus `lib/` from a unique runtime path on every enable, so development changes can be reloaded without restarting GNOME Shell.
+GNOME caches imported extension modules for the lifetime of the Shell process. SnapTess keeps `extension.js` as a small stable loader and loads `runtime.js` plus `lib/` from a unique runtime path on every enable.
 
-Set up a development install once:
-
-```bash
-./scripts/dev-install.sh
-```
-
-This symlinks the checked-out repository into `~/.local/share/gnome-shell/extensions/`, so edits are immediately visible to the loader. After changing JavaScript, reload with:
+There is only one local installer:
 
 ```bash
-./scripts/dev-reload.sh
+./scripts/install.sh
 ```
 
-Disabling and re-enabling SnapTess from the Extensions UI does the same thing. When migrating from an older SnapTess build that predates this loader, GNOME still has the old `extension.js` cached, so **one logout/login is required once**. After that migration, normal code changes no longer require restarting GNOME Shell.
+It symlinks the checked-out repository into `~/.local/share/gnome-shell/extensions/`. Once the loader has been activated, editing the source or running `git pull` requires no reinstall: simply disable and re-enable SnapTess from the Extensions app to load the new `runtime.js` and `lib/` code.
+
+When migrating from a build that predates the loader, the old `extension.js` can still be cached in the current Shell process, so **one logout/login is required once**. Future source updates then reload through disable/enable without restarting GNOME Shell.
 
 The Shell test runs on a private session bus with temporary XDG directories. It does not load SnapTess into your current desktop. Test logs from system services can contain unrelated portal/accessibility warnings; SnapTess assertions fail the process.
 
