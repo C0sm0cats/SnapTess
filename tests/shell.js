@@ -75,12 +75,16 @@ export async function run() {
     const restoreActor=app.windowActor(windows[0]);
     restoreActor.emit('effects-completed');
     await Scripting.sleep(90);
-    windows[0].move_resize_frame(false,restoreTarget.x+80,restoreTarget.y+55,restoreTarget.width,restoreTarget.height);
-    await Scripting.sleep(520);
+    for(let i=1;i<=4;i++) {
+        windows[0].move_resize_frame(false,restoreTarget.x+i*22,restoreTarget.y+i*15,restoreTarget.width,restoreTarget.height);
+        await Scripting.sleep(170);
+    }
+    await Scripting.sleep(900);
     const restoredFrame=windows[0].get_frame_rect();
     assert(Math.abs(restoredFrame.x-restoreTarget.x)<=1 && Math.abs(restoredFrame.y-restoreTarget.y)<=1 &&
         Math.abs(restoredFrame.width-restoreTarget.width)<=1 && Math.abs(restoredFrame.height-restoreTarget.height)<=1,
-        'late app geometry restore after maximize exit is pulled back into its tile');
+        'progressive app geometry drift after maximize exit is pulled back into its tile');
+    assert(!app.records.get(windows[0]).restorePending,'restore stabilization is bounded and finishes');
     windows[0].minimize(); await pause();
     assert(app.groups.get(app.key(0)).filter(Boolean).length===3,'minimize compacts');
     windows[0].unminimize(); await pause();
