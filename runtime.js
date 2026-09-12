@@ -11,6 +11,8 @@ import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js';
 import {layout, fitMinimumSize, nearestSlot, directionalSlot, reconcileSlots} from './lib/layout.js';
 import {Studio} from './lib/studio.js';
 
+const RUNTIME_VERSION = 2;
+
 export default class SnapTess extends Extension {
     enable() {
         this.settings = this.getSettings();
@@ -46,7 +48,12 @@ export default class SnapTess extends Extension {
         this.indicator.menu.addAction('Preferences', () => this.openPreferences());
         this.indicator.menu.addAction('Stop and restore windows', () => this.setRunning(false));
         this.border = new St.Widget({style_class: 'snaptess-border', reactive: false, visible: false});
-        this.preview = new St.Widget({style_class: 'snaptess-preview', reactive: false, visible: false});
+        this.preview = new St.Widget({
+            style_class: 'snaptess-preview',
+            style: 'background-color: transparent; background-image: none; border: 2px solid #8ce8c3; border-radius: 16px;',
+            reactive: false,
+            visible: false,
+        });
         Main.layoutManager.addChrome(this.border);
         Main.layoutManager.addChrome(this.preview);
         this.bindings = {
@@ -75,6 +82,7 @@ export default class SnapTess extends Extension {
             this.schedule(true);
         });
         for (const actor of global.get_window_actors()) this.track(actor.meta_window);
+        this.writeRuntimeStatus();
     }
 
     connect(object, signal, callback) {
@@ -95,6 +103,20 @@ export default class SnapTess extends Extension {
 
     cancel(id) {
         if (id && this.sources.delete(id)) GLib.Source.remove(id);
+    }
+
+    writeRuntimeStatus() {
+        try {
+            const dir = GLib.build_filenamev([GLib.get_user_runtime_dir(), 'snaptess']);
+            GLib.mkdir_with_parents(dir, 0o700);
+            GLib.file_set_contents(GLib.build_filenamev([dir, 'runtime-status.json']), JSON.stringify({
+                loaded_version: RUNTIME_VERSION,
+                runtime_uri: import.meta.url,
+                loaded_at: new Date().toISOString(),
+            }, null, 2));
+        } catch (error) {
+            console.error(`[SnapTess] cannot write runtime status: ${error.stack ?? error}`);
+        }
     }
 
     eligible(w) {
@@ -128,7 +150,6 @@ export default class SnapTess extends Extension {
                     this.groups.set(this.key(w.get_monitor()), before);
                 record.minimizeSlots = null;
             }
-            // A parked window activated from the dock joins the current space.
             if (record.parked && !w.minimized) {
                 record.parked = false;
                 record.space = this.activeSpace(w.get_monitor());
@@ -270,7 +291,6 @@ export default class SnapTess extends Extension {
         try {
             for (let monitor = 0; monitor < Main.layoutManager.monitors.length; monitor++) {
                 const windows = this.windows(monitor);
-                // Freeze the entire monitor while a window is maximized/fullscreen.
                 if (!releaseMaximized && windows.some(w => w.fullscreen || w.get_maximize_flags())) continue;
                 const key = this.key(monitor);
                 let previous = this.groups.get(key);
@@ -360,7 +380,10 @@ export default class SnapTess extends Extension {
         );
         this.showRect(this.border, record.tileRect ?? w.get_frame_rect());
     }
-    focusChanged() { this.updateBorder(); }
+    focusChanged() {
+        if (this.drag && !global.display.is_grabbed()) this.grabEnd();
+        else this.updateBorder();
+    }
 
     toggleFloating() {
         const w = global.display.focus_window, record = this.records.get(w);
@@ -436,6 +459,10 @@ export default class SnapTess extends Extension {
         this.border.hide();
         const tick = () => {
             if (!this.drag) return;
+            if (!global.display.is_grabbed()) {
+                this.grabEnd();
+                return;
+            }
             const [x, y] = global.get_pointer();
             const monitor = Main.layoutManager.monitors.findIndex(m => x >= m.x && x < m.x + m.width && y >= m.y && y < m.y + m.height);
             if (monitor >= 0) {
@@ -479,7 +506,6 @@ export default class SnapTess extends Extension {
 
     monitorsChanged() {
         if (!this.running) return;
-        // Never leave a window parked on a disconnected display.
         this.busy = true;
         try {
             for (const [w, r] of this.records) {
