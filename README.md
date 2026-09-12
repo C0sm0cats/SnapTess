@@ -84,7 +84,7 @@ Spaces are **session-local window groups**, not replacement GNOME workspaces. Ea
 
 Layouts and application order are saved by native workspace index, monitor connector and space number. Profiles reorder **existing** windows; they do not launch applications or restore a desktop session after login. Multiple windows from the same app retain their current relative order.
 
-Maximizing or fullscreening a managed window freezes automatic layout changes on that display. Restoring resumes tiling. Explicitly applying a layout can unmaximize windows; it never exits fullscreen. Applications can impose minimum window sizes, which GNOME enforces.
+Maximizing or fullscreening a managed window freezes automatic layout changes on that display. Restoring resumes tiling. Explicitly applying a layout can unmaximize windows; it never exits fullscreen. Applications can impose minimum client sizes, which GNOME still enforces. If a requested tile is smaller, SnapTess keeps the real client at an allowed size and uniformly scales its compositor actor into the slot, preventing overlap while preserving aspect ratio.
 
 ## Development
 
