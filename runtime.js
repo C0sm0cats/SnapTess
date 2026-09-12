@@ -11,7 +11,7 @@ import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js';
 import {layout, fitMinimumSize, nearestSlot, directionalSlot, reconcileSlots} from './lib/layout.js';
 import {Studio} from './lib/studio.js';
 
-const RUNTIME_VERSION = 3;
+const RUNTIME_REVISION = 4;
 
 export default class SnapTess extends Extension {
     enable() {
@@ -110,7 +110,8 @@ export default class SnapTess extends Extension {
             const dir = GLib.build_filenamev([GLib.get_user_runtime_dir(), 'snaptess']);
             GLib.mkdir_with_parents(dir, 0o700);
             GLib.file_set_contents(GLib.build_filenamev([dir, 'runtime-status.json']), JSON.stringify({
-                loaded_version: RUNTIME_VERSION,
+                extension_version: this.metadata.version ?? null,
+                runtime_revision: RUNTIME_REVISION,
                 runtime_uri: import.meta.url,
                 loaded_at: new Date().toISOString(),
             }, null, 2));
@@ -132,7 +133,7 @@ export default class SnapTess extends Extension {
         if (!this.eligible(w) || this.records.has(w)) return;
         const record = {original: null, floating: false, space: this.activeSpace(w.get_monitor(), w.get_workspace()),
             parked: false, signals: [], monitor: w.get_monitor(), tileRect: null, visualScale: 1, scaleTimer: 0,
-            effectActor: null, effectSignal: 0};
+            scaleFrameRequest: null, effectActor: null, effectSignal: 0};
         this.records.set(w, record);
         this.watchWindowEffects(w);
         const watch = (signal, fn) => record.signals.push(w.connect(signal, fn));
@@ -369,6 +370,7 @@ export default class SnapTess extends Extension {
         }
         if (record) {
             record.visualScale = 1;
+            record.scaleFrameRequest = null;
             if (clearTarget) record.tileRect = null;
         }
     }
@@ -389,8 +391,29 @@ export default class SnapTess extends Extension {
             return;
         }
         const frame = w.get_frame_rect(), target = record.tileRect;
+        const fitted = fitMinimumSize(target, frame.width, frame.height);
+        if (fitted.scale < 0.999) {
+            const backing = fitted.frame;
+            const differs = Math.abs(frame.x - backing.x) > 1 || Math.abs(frame.y - backing.y) > 1 ||
+                Math.abs(frame.width - backing.width) > 1 || Math.abs(frame.height - backing.height) > 1;
+            if (differs) {
+                const requestKey = `${frame.x},${frame.y},${frame.width},${frame.height}->` +
+                    `${backing.x},${backing.y},${backing.width},${backing.height}`;
+                if (record.scaleFrameRequest !== requestKey) {
+                    record.scaleFrameRequest = requestKey;
+                    w.move_resize_frame(false, backing.x, backing.y, backing.width, backing.height);
+                    this.scheduleWindowScale(w, 120);
+                    return;
+                }
+            } else {
+                record.scaleFrameRequest = null;
+            }
+        } else {
+            record.scaleFrameRequest = null;
+        }
+        const actual = w.get_frame_rect();
         const scale = Math.max(0.05, Math.min(1,
-            target.width / Math.max(1, frame.width), target.height / Math.max(1, frame.height)));
+            target.width / Math.max(1, actual.width), target.height / Math.max(1, actual.height)));
         actor.set_pivot_point(0, 0);
         actor.set_scale(scale, scale);
         record.visualScale = scale;
