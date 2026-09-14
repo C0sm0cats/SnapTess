@@ -27,6 +27,10 @@ export default class SnapTessPreferences extends ExtensionPreferences {
         const excluded = new Adw.EntryRow({title: 'Floating app IDs (comma separated)', text: settings.get_strv('excluded-apps').join(', '), show_apply_button: true});
         excluded.connect('apply', () => settings.set_strv('excluded-apps', excluded.text.split(',').map(s => s.trim()).filter(Boolean)));
         behavior.add(excluded);
+        const scaled = new Adw.EntryRow({title: 'Scale-to-fit app IDs (comma separated)',
+            text: settings.get_strv('scaled-apps').join(', '), show_apply_button: true});
+        scaled.connect('apply', () => settings.set_strv('scaled-apps', scaled.text.split(',').map(s => s.trim()).filter(Boolean)));
+        behavior.add(scaled);
         const shortcuts = new Adw.PreferencesGroup({title: 'Keyboard shortcuts', description: 'GTK accelerator notation, e.g. <Control><Alt>t. Leave blank to disable.'});
         page.add(shortcuts);
         for (const [key, title] of [['toggle', 'Toggle tiling'], ['retile', 'Arrange again'], ['studio', 'Open Layout Studio'],

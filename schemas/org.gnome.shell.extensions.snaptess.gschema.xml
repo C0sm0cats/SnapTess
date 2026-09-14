@@ -22,6 +22,8 @@
 </key>
 <key name="excluded-apps" type="as"><default>[]</default><summary>Application IDs excluded from tiling</summary>
 </key>
+<key name="scaled-apps" type="as"><default>[]</default><summary>Application IDs allowed to use compositor scaling</summary>
+</key>
 <key name="toggle" type="as"><default>['&lt;Control&gt;&lt;Alt&gt;t']</default><summary>Toggle</summary>
 </key>
 <key name="retile" type="as"><default>['&lt;Control&gt;&lt;Alt&gt;r']</default><summary>Retile</summary>

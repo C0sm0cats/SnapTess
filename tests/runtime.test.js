@@ -51,7 +51,9 @@ function harness() {
             workspace_manager: {get_active_workspace: () => workspace}, get_window_actors: () => [actor]},
     });
     const app = new Runtime();
-    Object.assign(app, {records: new Map(), spaces: new Map(), running: true, busy: false, drag: null});
+    Object.assign(app, {records: new Map(), spaces: new Map(), running: true, busy: false, drag: null,
+        settings: {get_strv: () => []}});
+    app.appId = () => 'test.desktop';
     app.later = (ms, fn) => { const id = nextId++; timers.set(id, {at: now + ms, fn}); return id; };
     app.cancel = id => timers.delete(id);
     app.schedule = () => { throw new Error('state notifications must not schedule a full retile'); };
@@ -214,6 +216,38 @@ test('a clamped oversized backing window keeps native actor geometry', () => {
     assert.equal(h.actor.scale_x, 1);
     assert.equal(h.actor.translation_x, 0);
     assert.equal(h.actor.translation_y, 0);
+});
+
+test('only configured applications use scale-to-fit fallback', () => {
+    const h = harness();
+    h.app.settings.get_strv = key => key === 'scaled-apps' ? ['test.desktop'] : [];
+    h.w.get_min_size = () => [true, 800, 600];
+    const target = {...h.slot, width: 400, height: 300};
+    h.app.place(h.w, target);
+    assert.deepEqual(h.requests.at(-1), {type: 'resize', x: target.x, y: target.y, width: 800, height: 600});
+    h.commit({x: target.x, y: target.y, width: 800, height: 600});
+    h.advance(200);
+    assert.equal(h.actor.scale_x, 0.5);
+    assert.equal(h.actor.scale_y, 0.5);
+});
+
+test('moving a scaled exception keeps its fitted size during placement', () => {
+    const h = harness();
+    h.app.settings.get_strv = key => key === 'scaled-apps' ? ['test.desktop'] : [];
+    h.w.get_min_size = () => [true, 800, 600];
+    const first = {...h.slot, width: 400, height: 300};
+    h.app.place(h.w, first);
+    h.commit({x: first.x, y: first.y, width: 800, height: 600});
+    h.advance(200);
+    assert.equal(h.actor.scale_x, 0.5);
+    h.scaleWrites.length = 0;
+    const second = {...first, x: 900, y: 500};
+    h.app.place(h.w, second);
+    assert.equal(h.actor.scale_x, 0.5);
+    assert.equal(h.actor.scale_y, 0.5);
+    assert.ok(h.scaleWrites.every(([x, y]) => x === 0.5 && y === 0.5));
+    assert.equal(h.actor.translation_x, second.x - first.x);
+    assert.equal(h.actor.translation_y, second.y - first.y);
 });
 
 test('resetting a scaled window clears its visual translation', () => {
