@@ -63,6 +63,9 @@ export async function run() {
     assert(Math.abs(actorScaleX-stubbornRecord.visualScale)<0.01 && Math.abs(actorScaleY-stubbornRecord.visualScale)<0.01,
         'reapplied scale matches the measured stubborn-window fit');
     app.place(stubborn,stubbornTarget); await pause();
+    [actorScaleX,actorScaleY]=stubbornActor.get_scale();
+    assert(actorScaleX<0.999 && actorScaleY<0.999,'unchanged placement preserves constrained-window scale');
+    app.place(stubborn,stubbornTarget,false,true); await pause();
     assert(stubbornRecord.visualScale>0.999,'normal tile size restores unit scale');
     [actorScaleX,actorScaleY]=stubbornActor.get_scale();
     assert(actorScaleX>0.999 && actorScaleY>0.999,'normal tile size restores the actor transform');

@@ -658,11 +658,14 @@ export default class SnapTess extends Extension {
             this.correctWindowScale(w);
         });
     }
-    place(w, rect, restoring = false) {
+    place(w, rect, restoring = false, force = false) {
         if (!rect || this.isSpecialWindow(w)) return;
         this.watchWindowEffects(w);
         const actor = this.windowActor(w), record = this.records.get(w);
         if (!record) return;
+        const reusable = !force && !restoring && !record.restorePending && !record.specialState &&
+            record.tileRect && record.backingRect &&
+            ['x', 'y', 'width', 'height'].every(key => Math.abs(record.tileRect[key] - rect[key]) <= 1);
         if (!restoring) {
             record.placementMoves = 0;
             record.restoreMoves = 0;
@@ -672,6 +675,10 @@ export default class SnapTess extends Extension {
             record.restorePending = false;
             record.restoreUntil = 0;
             record.restoreQuietUntil = 0;
+        }
+        if (reusable) {
+            if (actor) this.scheduleWindowScale(w, 0);
+            return;
         }
         const previousBacking = restoring ? record.backingRect : null;
         this.resetWindowScale(w);
