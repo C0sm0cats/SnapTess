@@ -13,7 +13,7 @@ const source = fs.readFileSync(new URL('../runtime.js', import.meta.url), 'utf8'
 function harness() {
     let now = 1000, nextId = 1, grabbed = false;
     const timers = new Map(), signals = new Map(), actorSignals = new Map();
-    const requests = [], scaleWrites = [];
+    const requests = [], scaleWrites = [], userOps = [];
     let frame = {x: 100, y: 50, width: 600, height: 400};
     const slot = {...frame};
     const actor = {
@@ -36,10 +36,11 @@ function harness() {
         get_window_type: () => 0, is_override_redirect: () => false,
         is_on_all_workspaces: () => false, get_min_size: () => [false, 0, 0],
         connect(name, fn) { signals.set(name, fn); return nextId++; }, disconnect() {},
-        move_resize_frame(_user, x, y, width, height) {
+        move_resize_frame(user, x, y, width, height) {
+            userOps.push(user);
             requests.push({type: 'resize', x, y, width, height});
         },
-        move_frame(_user, x, y) { requests.push({type: 'move', x, y}); },
+        move_frame(user, x, y) { userOps.push(user); requests.push({type: 'move', x, y}); },
     };
     const Runtime = vm.runInNewContext(source, {
         ...geometry, Extension: class {}, console,
@@ -86,24 +87,23 @@ function harness() {
         app.place(w, slot); advance(150);
         requests.length = 0; scaleWrites.length = 0;
     }
-    return {app, w, actor, record, requests, scaleWrites, slot, timers, advance, commit, special,
+    return {app, w, actor, record, requests, scaleWrites, userOps, slot, timers, advance, commit, special,
         effectsDone, settleInitial, frame: () => frame, grab: value => { grabbed = value; }};
 }
 
-test('successive asynchronous replies cannot feed backing-size negotiation indefinitely', () => {
+test('successive asynchronous replies never trigger resize negotiation or actor scaling', () => {
     const h = harness();
     h.app.place(h.w, h.slot);
     h.commit({...h.slot, width: 800, height: 600});
     h.advance(100);
-    assert.equal(h.requests.filter(r => r.type === 'resize').length, 2, 'initial size plus one backing fit');
+    assert.equal(h.requests.filter(r => r.type === 'resize').length, 1, 'only the explicit tile request');
     for (let i = 0; i < 15; i++) {
         h.commit({width: 810 + i * 3, height: 550 + i * 2});
         h.advance(200);
     }
-    assert.equal(h.requests.length, 2, 'client rounding/constraints do not generate new configure requests');
-    assert.ok(h.actor.scale_x < 1);
-    assert.ok(h.frame().width * h.actor.scale_x <= h.slot.width + 0.001);
-    assert.ok(h.frame().height * h.actor.scale_y <= h.slot.height + 0.001);
+    assert.equal(h.requests.length, 2, 'one native move-resize pair with no feedback requests');
+    assert.equal(h.actor.scale_x, 1);
+    assert.equal(h.actor.scale_y, 1);
     assert.equal(h.timers.size, 0);
 });
 
@@ -114,8 +114,8 @@ test('unmaximize preserves the backing plan across several size/position commits
     h.actor.__animationInfo = {}; h.special(0); h.advance(250);
     assert.equal(h.requests.length, 0, 'no writes during the compositor effect');
     h.effectsDone(); h.advance(1);
-    assert.equal(h.requests.length, 1);
-    assert.deepEqual(h.requests[0], {type: 'resize', ...backing});
+    assert.equal(h.requests.length, 2);
+    assert.deepEqual(h.requests[1], {type: 'resize', ...backing});
     h.commit(backing); h.advance(150);
     for (let i = 1; i <= 4; i++) {
         h.commit({x: h.slot.x + i * 22, y: h.slot.y + i * 15,
@@ -141,7 +141,7 @@ test('long compositor effects resume restoration without polling or corrupting t
     assert.equal(h.requests.length, 0); assert.equal(h.scaleWrites.length, 0);
     assert.equal(h.timers.size, 0, 'waits on effects-completed, not retry timeouts');
     h.effectsDone(); h.advance(1);
-    assert.equal(h.requests.length, 1); assert.equal(h.record.restorePending, false);
+    assert.equal(h.requests.length, 2); assert.equal(h.record.restorePending, false);
 });
 
 test('fullscreen nested within maximize restores only when all special flags clear', () => {
@@ -167,6 +167,7 @@ test('synchronous geometry signals see the new target and cannot reenter placeme
 
 test('a client rejecting every position correction has a finite request budget', () => {
     const h = harness(); h.settleInitial(); h.special(3); h.special(0); h.advance(200);
+    h.requests.length = 0;
     for (let i = 1; i <= 30; i++) {
         h.commit({x: 100 + i, y: 50 + i});
         h.app.restoreWindowPlacement(h.w);
@@ -190,7 +191,7 @@ test('an explicit manual placement cancels the old restore transaction', () => {
     const manualSlot = {...h.slot, x: 700};
     h.app.place(h.w, manualSlot); h.commit(manualSlot); h.advance(2000);
     assert.equal(h.record.restorePending, false);
-    assert.equal(h.requests.length, 1);
+    assert.equal(h.requests.length, 2);
     assert.equal(h.record.tileRect.x, manualSlot.x);
     assert.equal(h.timers.size, 0);
 });
@@ -204,27 +205,15 @@ test('ordinary delayed position drift is repaired without a resize', () => {
     assert.equal(h.requests.length, 1);
 });
 
-test('a clamped oversized backing window is translated into its visual slot', () => {
+test('a clamped oversized backing window keeps native actor geometry', () => {
     const h = harness();
     const target = {...h.slot, x: 1200, y: 700, width: 400, height: 300};
     h.app.place(h.w, target);
     h.commit({x: 800, y: 500, width: 800, height: 600});
     h.advance(200);
-    assert.equal(h.actor.scale_x, 0.5);
-    assert.equal(h.actor.translation_x, 400);
-    assert.equal(h.actor.translation_y, 200);
-});
-
-test('the original application viewport drives dynamic tile scale', () => {
-    const h = harness();
-    h.record.original = {x: 0, y: 0, width: 800, height: 600};
-    const target = {...h.slot, width: 400, height: 300};
-    h.app.place(h.w, target);
-    assert.deepEqual(h.requests[0], {type: 'resize', x: target.x, y: target.y, width: 800, height: 600});
-    h.commit({x: target.x, y: target.y, width: 800, height: 600});
-    h.advance(200);
-    assert.equal(h.actor.scale_x, 0.5);
-    assert.equal(h.actor.scale_y, 0.5);
+    assert.equal(h.actor.scale_x, 1);
+    assert.equal(h.actor.translation_x, 0);
+    assert.equal(h.actor.translation_y, 0);
 });
 
 test('resetting a scaled window clears its visual translation', () => {
@@ -235,7 +224,7 @@ test('resetting a scaled window clears its visual translation', () => {
     assert.equal(h.actor.translation_y, 0);
 });
 
-test('placing an unchanged constrained tile preserves its transform', () => {
+test('placing an unchanged constrained tile preserves native scale', () => {
     const h = harness();
     const target = {...h.slot, x: 1200, y: 700, width: 400, height: 300};
     h.app.place(h.w, target);
@@ -243,14 +232,14 @@ test('placing an unchanged constrained tile preserves its transform', () => {
     h.advance(200);
     h.requests.length = 0; h.scaleWrites.length = 0;
     h.app.place(h.w, {...target});
-    assert.equal(h.actor.scale_x, 0.5);
-    assert.equal(h.actor.translation_x, 400);
+    assert.equal(h.actor.scale_x, 1);
+    assert.equal(h.actor.translation_x, 0);
     assert.equal(h.requests.length, 0);
     h.advance(1);
-    assert.ok(h.scaleWrites.every(([x, y]) => x === 0.5 && y === 0.5));
+    assert.ok(h.scaleWrites.every(([x, y]) => x === 1 && y === 1));
 });
 
-test('moving a constrained window between equal slots never resets its scale', () => {
+test('moving a constrained window between equal slots keeps native scale', () => {
     const h = harness();
     const first = {...h.slot, x: 1200, y: 700, width: 400, height: 300};
     h.app.place(h.w, first);
@@ -259,28 +248,31 @@ test('moving a constrained window between equal slots never resets its scale', (
     h.requests.length = 0; h.scaleWrites.length = 0;
     const second = {...first, x: 200, y: 100};
     h.app.place(h.w, second);
-    assert.equal(h.actor.scale_x, 0.5);
-    assert.ok(h.scaleWrites.every(([x, y]) => x === 0.5 && y === 0.5));
-    assert.equal(h.actor.translation_x, second.x - h.frame().x);
-    assert.equal(h.actor.translation_y, second.y - h.frame().y);
-    assert.deepEqual(h.requests, [{type: 'resize', x: second.x, y: second.y, width: 800, height: 600}]);
+    assert.equal(h.actor.scale_x, 1);
+    assert.ok(h.scaleWrites.every(([x, y]) => x === 1 && y === 1));
+    assert.equal(h.actor.translation_x, 0);
+    assert.equal(h.actor.translation_y, 0);
+    assert.deepEqual(h.requests, [
+        {type: 'move', x: second.x, y: second.y},
+        {type: 'resize', ...second},
+    ]);
 });
 
-test('post-grab validation repairs a stale constrained-window transform', () => {
+test('post-grab validation removes every stale compositor transform', () => {
     const h = harness();
     const target = {...h.slot, width: 400, height: 300};
     h.app.place(h.w, target);
     h.commit({...target, width: 800, height: 600});
     h.advance(200);
-    assert.equal(h.actor.scale_x, 0.5);
+    assert.equal(h.actor.scale_x, 1);
     h.app.validateTransformsAfterGrab();
     h.advance(300);
-    h.actor.set_scale(1, 1);
+    h.actor.set_scale(0.5, 0.5);
     h.actor.translation_x = 90;
     h.actor.translation_y = 60;
     h.advance(400);
-    assert.equal(h.actor.scale_x, 0.5);
-    assert.equal(h.actor.scale_y, 0.5);
+    assert.equal(h.actor.scale_x, 1);
+    assert.equal(h.actor.scale_y, 1);
     assert.equal(h.actor.translation_x, 0);
     assert.equal(h.actor.translation_y, 0);
 });

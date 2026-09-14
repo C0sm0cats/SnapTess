@@ -44,27 +44,19 @@ export async function run() {
     await pause();
     const stubbornFrame=stubborn.get_frame_rect();
     assert(stubbornFrame.width>stubbornTarget.width || stubbornFrame.height>stubbornTarget.height,'simulated stubborn window grows beyond its tile');
-    assert(stubbornRecord.visualScale<0.999,'late oversized frame is compositor-scaled');
-    const visualWidth=stubbornFrame.width*stubbornRecord.visualScale;
-    const visualHeight=stubbornFrame.height*stubbornRecord.visualScale;
-    assert(Math.abs(visualWidth-stubbornTarget.width)<=2 && Math.abs(visualHeight-stubbornTarget.height)<=2,
-        'scaled stubborn window fills its tile on both axes so gaps stay even');
+    assert(stubbornRecord.visualScale===1,'late oversized frame keeps native scale');
     assert(Math.abs(stubbornFrame.x-stubbornTarget.x)<=1 && Math.abs(stubbornFrame.y-stubbornTarget.y)<=1,
         'stubborn backing frame stays anchored to its tile');
     const stubbornActor=app.windowActor(stubborn);
     let [actorScaleX,actorScaleY]=stubbornActor.get_scale();
-    assert(Math.abs(actorScaleX-stubbornRecord.visualScale)<0.01 && Math.abs(actorScaleY-stubbornRecord.visualScale)<0.01,
-        'final window actor keeps the stubborn-window scale');
-    stubbornActor.set_scale(1,1);
+    assert(actorScaleX===1 && actorScaleY===1,'final window actor stays at native scale');
     stubbornActor.emit('effects-completed');
     await pause();
     [actorScaleX,actorScaleY]=stubbornActor.get_scale();
-    assert(actorScaleX<0.999 && actorScaleY<0.999,'effects completion reapplies stubborn-window scale');
-    assert(Math.abs(actorScaleX-stubbornRecord.visualScale)<0.01 && Math.abs(actorScaleY-stubbornRecord.visualScale)<0.01,
-        'reapplied scale matches the measured stubborn-window fit');
+    assert(actorScaleX===1 && actorScaleY===1,'effects completion preserves native scale');
     app.place(stubborn,stubbornTarget); await pause();
     [actorScaleX,actorScaleY]=stubbornActor.get_scale();
-    assert(actorScaleX<0.999 && actorScaleY<0.999,'unchanged placement preserves constrained-window scale');
+    assert(actorScaleX===1 && actorScaleY===1,'unchanged placement preserves native scale');
     app.place(stubborn,stubbornTarget,false,true); await pause();
     assert(stubbornRecord.visualScale>0.999,'normal tile size restores unit scale');
     [actorScaleX,actorScaleY]=stubbornActor.get_scale();
