@@ -238,6 +238,22 @@ test('placing an unchanged constrained tile preserves its transform', () => {
     assert.ok(h.scaleWrites.every(([x, y]) => x === 0.5 && y === 0.5));
 });
 
+test('moving a constrained window between equal slots never resets its scale', () => {
+    const h = harness();
+    const first = {...h.slot, x: 1200, y: 700, width: 400, height: 300};
+    h.app.place(h.w, first);
+    h.commit({x: 800, y: 500, width: 800, height: 600});
+    h.advance(200);
+    h.requests.length = 0; h.scaleWrites.length = 0;
+    const second = {...first, x: 200, y: 100};
+    h.app.place(h.w, second);
+    assert.equal(h.actor.scale_x, 0.5);
+    assert.ok(h.scaleWrites.every(([x, y]) => x === 0.5 && y === 0.5));
+    assert.equal(h.actor.translation_x, second.x - h.frame().x);
+    assert.equal(h.actor.translation_y, second.y - h.frame().y);
+    assert.deepEqual(h.requests, [{type: 'resize', x: second.x, y: second.y, width: 800, height: 600}]);
+});
+
 test('ordinary position repairs have a finite budget reset by explicit placement', () => {
     const h = harness(); h.settleInitial();
     for (let i = 1; i <= 20; i++) {

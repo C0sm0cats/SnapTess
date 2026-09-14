@@ -685,6 +685,19 @@ export default class SnapTess extends Extension {
             if (actor) this.scheduleWindowScale(w, 0);
             return;
         }
+        const movingSameSize = !force && !restoring && !record.restorePending &&
+            record.tileRect && record.backingRect && record.visualScale < 0.999 &&
+            Math.abs(record.tileRect.width - rect.width) <= 1 &&
+            Math.abs(record.tileRect.height - rect.height) <= 1;
+        if (movingSameSize) {
+            record.tileRect = {...rect};
+            record.backingRect = {...record.backingRect, x: rect.x, y: rect.y};
+            record.scaleNegotiated = true;
+            if (actor) this.applyWindowScale(w, actor, record.visualScale, rect);
+            this.requestWindowGeometry(w, 'place', record.backingRect);
+            if (actor) this.scheduleWindowScale(w);
+            return;
+        }
         const previousBacking = restoring ? record.backingRect : null;
         this.resetWindowScale(w);
         const minimum = actor ? this.minimumSize(w) : {width: 0, height: 0};
