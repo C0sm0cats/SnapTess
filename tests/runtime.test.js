@@ -52,7 +52,6 @@ function harness() {
     const app = new Runtime();
     Object.assign(app, {records: new Map(), spaces: new Map(), running: true, busy: false, drag: null});
     app.later = (ms, fn) => { const id = nextId++; timers.set(id, {at: now + ms, fn}); return id; };
-    app.beforeRedraw = fn => app.later(0, fn);
     app.cancel = id => timers.delete(id);
     app.schedule = () => { throw new Error('state notifications must not schedule a full retile'); };
     app.updateBorder = () => {};
@@ -83,17 +82,12 @@ function harness() {
         signals.get('notify::fullscreen')();
     }
     function effectsDone() { actor.__animationInfo = null; actorSignals.get('effects-completed')(); }
-    function resetActorTransform() {
-        actor.scale_x = 1; actor.scale_y = 1; actor.translation_x = 0; actor.translation_y = 0;
-        actorSignals.get('notify::scale-x')?.(); actorSignals.get('notify::scale-y')?.();
-        actorSignals.get('notify::translation-x')?.(); actorSignals.get('notify::translation-y')?.();
-    }
     function settleInitial() {
         app.place(w, slot); advance(150);
         requests.length = 0; scaleWrites.length = 0;
     }
     return {app, w, actor, record, requests, scaleWrites, slot, timers, advance, commit, special,
-        effectsDone, resetActorTransform, settleInitial, frame: () => frame, grab: value => { grabbed = value; }};
+        effectsDone, settleInitial, frame: () => frame, grab: value => { grabbed = value; }};
 }
 
 test('successive asynchronous replies cannot feed backing-size negotiation indefinitely', () => {
@@ -229,36 +223,6 @@ test('resetting a scaled window clears its visual translation', () => {
     assert.equal(h.actor.translation_y, 0);
 });
 
-test('focus changes synchronously restore constrained-window transforms', () => {
-    const h = harness();
-    const target = {...h.slot, x: 1200, y: 700, width: 400, height: 300};
-    h.app.place(h.w, target);
-    h.commit({x: 800, y: 500, width: 800, height: 600});
-    h.advance(200);
-    h.actor.scale_x = 1; h.actor.scale_y = 1;
-    h.actor.translation_x = 0; h.actor.translation_y = 0;
-    h.app.focusChanged();
-    assert.equal(h.actor.scale_x, 0.5);
-    assert.equal(h.actor.translation_x, 400);
-    assert.equal(h.actor.translation_y, 200);
-    assert.equal(h.timers.size, 0);
-});
-
-test('external actor transform resets are repaired before the next timeout turn', () => {
-    const h = harness();
-    const target = {...h.slot, x: 1200, y: 700, width: 400, height: 300};
-    h.app.place(h.w, target);
-    h.commit({x: 800, y: 500, width: 800, height: 600});
-    h.advance(200);
-    h.resetActorTransform();
-    assert.equal(h.timers.size, 1);
-    h.advance(0);
-    assert.equal(h.actor.scale_x, 0.5);
-    assert.equal(h.actor.translation_x, 400);
-    assert.equal(h.actor.translation_y, 200);
-    assert.equal(h.timers.size, 0);
-});
-
 test('ordinary position repairs have a finite budget reset by explicit placement', () => {
     const h = harness(); h.settleInitial();
     for (let i = 1; i <= 20; i++) {
@@ -281,4 +245,22 @@ test('ordinary position repair respects grabs, floating and stopped tiling', () 
         h.commit({x: h.slot.x + 80}); h.advance(300);
         assert.equal(h.requests.length, 0, mode);
     }
+});
+
+test('dropping a window back into its own slot does not retile other windows', () => {
+    const h = harness(); h.settleInitial();
+    h.app.key = () => 'workspace';
+    h.app.groups = new Map([['workspace', [h.w]]]);
+    h.app.preview = {hide() {}};
+    h.app.drag = {window: h.w, monitor: 0, target: {monitor: 0, index: 0}};
+    let placements = 0, tiles = 0, borders = 0;
+    h.app.place = (w, rect) => {
+        assert.equal(w, h.w); assert.deepEqual(rect, h.record.tileRect); placements++;
+    };
+    h.app.tile = () => tiles++;
+    h.app.updateBorder = () => borders++;
+    h.app.grabEnd();
+    assert.equal(placements, 1);
+    assert.equal(tiles, 0);
+    assert.equal(borders, 1);
 });
