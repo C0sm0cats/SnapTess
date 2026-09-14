@@ -223,6 +223,21 @@ test('resetting a scaled window clears its visual translation', () => {
     assert.equal(h.actor.translation_y, 0);
 });
 
+test('placing an unchanged constrained tile preserves its transform', () => {
+    const h = harness();
+    const target = {...h.slot, x: 1200, y: 700, width: 400, height: 300};
+    h.app.place(h.w, target);
+    h.commit({x: 800, y: 500, width: 800, height: 600});
+    h.advance(200);
+    h.requests.length = 0; h.scaleWrites.length = 0;
+    h.app.place(h.w, {...target});
+    assert.equal(h.actor.scale_x, 0.5);
+    assert.equal(h.actor.translation_x, 400);
+    assert.equal(h.requests.length, 0);
+    h.advance(1);
+    assert.ok(h.scaleWrites.every(([x, y]) => x === 0.5 && y === 0.5));
+});
+
 test('ordinary position repairs have a finite budget reset by explicit placement', () => {
     const h = harness(); h.settleInitial();
     for (let i = 1; i <= 20; i++) {
