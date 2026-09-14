@@ -11,7 +11,7 @@ import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js';
 import {layout, fitMinimumSize, frameScalePivot, nearestSlot, directionalSlot, reconcileSlots} from './lib/layout.js';
 import {Studio} from './lib/studio.js';
 
-const RUNTIME_REVISION = 7;
+const RUNTIME_REVISION = 8;
 const RESTORE_STABILIZE_MS = 1400;
 const RESTORE_QUIET_MS = 120;
 const MAX_RESTORE_MOVES = 8;
@@ -663,6 +663,17 @@ export default class SnapTess extends Extension {
             this.correctWindowScale(w);
         });
     }
+    validateTransformsAfterGrab() {
+        // Mutter can finish a grab after the geometry signals and leave an old
+        // actor transform behind. Recheck after its short and long effects settle.
+        for (const delay of [180, 650, 1400]) this.later(delay, () => {
+            if (!this.running || this.drag || global.display.is_grabbed()) return;
+            for (const [w, record] of this.records) {
+                if (record.tileRect && !record.floating && !w.minimized && !this.isSpecialWindow(w))
+                    this.scheduleWindowScale(w, 0);
+            }
+        });
+    }
     place(w, rect, restoring = false, force = false) {
         if (!rect || this.isSpecialWindow(w)) return;
         this.watchWindowEffects(w);
@@ -747,6 +758,7 @@ export default class SnapTess extends Extension {
             try { this.restore(w, {...record.original, minimized: false}); } finally { this.busy = false; }
         }
         this.tile(true);
+        this.validateTransformsAfterGrab();
     }
 
     toggleSwap() {
