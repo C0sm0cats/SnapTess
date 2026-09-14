@@ -18,9 +18,13 @@ function visit(widget) {
     for (let child = widget.get_first_child(); child; child = child.get_next_sibling()) visit(child);
 }
 visit(window);
-if (entries.length !== 11) throw new Error(`Expected 11 entry rows, got ${entries.length}`);
+if (entries.length !== 12) throw new Error(`Expected 12 entry rows, got ${entries.length}`);
 const toggle = entries.find(row => row.title === 'Toggle tiling');
 const settings = prefs.getSettings();
+const scaled = entries.find(row => row.title === 'Scale-to-fit app IDs (comma separated)');
+scaled.text = 'discord, discord.desktop'; scaled.emit('apply');
+if (settings.get_strv('scaled-apps').join(',') !== 'discord,discord.desktop')
+    throw new Error('Scale-to-fit app IDs were not saved');
 const original = settings.get_strv('toggle')[0];
 toggle.text = 'invalid-shortcut'; toggle.emit('apply');
 if (settings.get_strv('toggle')[0] !== original) throw new Error('Invalid accelerator was saved');

@@ -8,7 +8,7 @@ import {Extension} from 'resource:///org/gnome/shell/extensions/extension.js';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import * as PanelMenu from 'resource:///org/gnome/shell/ui/panelMenu.js';
 import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js';
-import {layout, nearestSlot, directionalSlot, reconcileSlots} from './lib/layout.js';
+import {layout, fitMinimumSize, frameScalePivot, nearestSlot, directionalSlot, reconcileSlots} from './lib/layout.js';
 import {Studio} from './lib/studio.js';
 
 const RUNTIME_REVISION = 8;
@@ -596,6 +596,26 @@ export default class SnapTess extends Extension {
             this.traceWindow(w, 'reset-scale');
         }
     }
+    scalesApp(w) {
+        const configured = this.settings.get_strv('scaled-apps');
+        return configured.includes(this.appId(w)) || configured.includes(w.get_wm_class?.() ?? '');
+    }
+    minimumSize(w) {
+        if (typeof w.get_min_size !== 'function') return {width: 0, height: 0};
+        try {
+            const [known, width, height] = w.get_min_size();
+            return known ? {width: Math.max(0, width), height: Math.max(0, height)} : {width: 0, height: 0};
+        } catch { return {width: 0, height: 0}; }
+    }
+    applyWindowScale(w, actor, scale, target) {
+        const frame = w.get_frame_rect();
+        const buffer = typeof w.get_buffer_rect === 'function' ? w.get_buffer_rect() : frame;
+        const pivot = frameScalePivot(frame, buffer, actor.get_width?.(), actor.get_height?.());
+        actor.set_pivot_point(pivot.x, pivot.y);
+        actor.set_scale(scale, scale);
+        actor.translation_x = target.x - frame.x;
+        actor.translation_y = target.y - frame.y;
+    }
     correctWindowScale(w) {
         const record = this.records.get(w), actor = this.windowActor(w);
         if (!record?.tileRect || !actor || record.floating || w.minimized || w.fullscreen || w.get_maximize_flags()) return;
@@ -603,6 +623,18 @@ export default class SnapTess extends Extension {
         if (this.windowEffectActive(actor)) return; // effects-completed resumes us
         if (record.restorePending && !record.restoreStarted) return;
         const frame = w.get_frame_rect(), target = record.tileRect;
+        const scaled = this.scalesApp(w);
+        if (scaled && !record.scaleNegotiated) {
+            const fitted = fitMinimumSize(target, frame.width, frame.height);
+            record.scaleNegotiated = fitted.scale < 0.999;
+            record.backingRect = {...fitted.frame};
+            if (fitted.scale < 0.999 &&
+                (Math.abs(frame.width - fitted.frame.width) > 1 || Math.abs(frame.height - fitted.frame.height) > 1)) {
+                this.requestWindowGeometry(w, 'backing-fit', fitted.frame);
+                this.scheduleWindowScale(w, 120);
+                return;
+            }
+        }
         // Ordinary client commits may move a window after its initial configure.
         // Repair position without renegotiating size, with a finite per-placement budget.
         if (!record.restorePending && record.monitor === w.get_monitor() &&
@@ -611,12 +643,21 @@ export default class SnapTess extends Extension {
             record.placementMoves++;
             this.requestWindowGeometry(w, 'tile-position', target, true);
         }
-        actor.set_pivot_point(0, 0);
-        actor.set_scale(1, 1);
-        actor.translation_x = 0;
-        actor.translation_y = 0;
-        record.visualScale = 1;
-        this.traceWindow(w, 'enforce-native-scale');
+        if (scaled) {
+            const actual = w.get_frame_rect();
+            const scale = Math.max(0.05, Math.min(1,
+                target.width / Math.max(1, actual.width), target.height / Math.max(1, actual.height)));
+            this.applyWindowScale(w, actor, scale, target);
+            record.visualScale = scale;
+            this.traceWindow(w, 'apply-exception-scale');
+        } else {
+            actor.set_pivot_point(0, 0);
+            actor.set_scale(1, 1);
+            actor.translation_x = 0;
+            actor.translation_y = 0;
+            record.visualScale = 1;
+            this.traceWindow(w, 'enforce-native-scale');
+        }
     }
     scheduleWindowScale(w, delay = 90) {
         const record = this.records.get(w);
@@ -661,10 +702,18 @@ export default class SnapTess extends Extension {
             if (actor) this.scheduleWindowScale(w, 0);
             return;
         }
-        this.resetWindowScale(w);
+        const scaled = this.scalesApp(w);
+        const preserveScale = scaled && actor && record.visualScale < 0.999;
+        if (!preserveScale) this.resetWindowScale(w);
         record.tileRect = {...rect};
-        record.backingRect = {...rect};
-        record.scaleNegotiated = true;
+        const minimum = scaled ? this.minimumSize(w) : null;
+        const fitted = scaled ? fitMinimumSize(rect, minimum.width, minimum.height) : {frame: rect, scale: 1};
+        record.backingRect = {...fitted.frame};
+        record.scaleNegotiated = !scaled;
+        if (preserveScale) {
+            this.applyWindowScale(w, actor, fitted.scale, rect);
+            record.visualScale = fitted.scale;
+        }
         this.requestWindowGeometry(w, restoring ? 'restore' : 'place', record.backingRect);
         if (actor) this.scheduleWindowScale(w);
     }
