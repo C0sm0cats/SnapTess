@@ -215,6 +215,18 @@ test('a clamped oversized backing window is translated into its visual slot', ()
     assert.equal(h.actor.translation_y, 200);
 });
 
+test('the original application viewport drives dynamic tile scale', () => {
+    const h = harness();
+    h.record.original = {x: 0, y: 0, width: 800, height: 600};
+    const target = {...h.slot, width: 400, height: 300};
+    h.app.place(h.w, target);
+    assert.deepEqual(h.requests[0], {type: 'resize', x: target.x, y: target.y, width: 800, height: 600});
+    h.commit({x: target.x, y: target.y, width: 800, height: 600});
+    h.advance(200);
+    assert.equal(h.actor.scale_x, 0.5);
+    assert.equal(h.actor.scale_y, 0.5);
+});
+
 test('resetting a scaled window clears its visual translation', () => {
     const h = harness(); h.settleInitial();
     h.actor.translation_x = 250; h.actor.translation_y = 120;
