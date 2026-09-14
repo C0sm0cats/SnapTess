@@ -254,6 +254,25 @@ test('moving a constrained window between equal slots never resets its scale', (
     assert.deepEqual(h.requests, [{type: 'resize', x: second.x, y: second.y, width: 800, height: 600}]);
 });
 
+test('post-grab validation repairs a stale constrained-window transform', () => {
+    const h = harness();
+    const target = {...h.slot, width: 400, height: 300};
+    h.app.place(h.w, target);
+    h.commit({...target, width: 800, height: 600});
+    h.advance(200);
+    assert.equal(h.actor.scale_x, 0.5);
+    h.app.validateTransformsAfterGrab();
+    h.advance(300);
+    h.actor.set_scale(1, 1);
+    h.actor.translation_x = 90;
+    h.actor.translation_y = 60;
+    h.advance(400);
+    assert.equal(h.actor.scale_x, 0.5);
+    assert.equal(h.actor.scale_y, 0.5);
+    assert.equal(h.actor.translation_x, 0);
+    assert.equal(h.actor.translation_y, 0);
+});
+
 test('ordinary position repairs have a finite budget reset by explicit placement', () => {
     const h = harness(); h.settleInitial();
     for (let i = 1; i <= 20; i++) {
