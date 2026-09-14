@@ -267,8 +267,10 @@ test('dropping a window back into its own slot does not retile other windows', (
     h.app.key = () => 'workspace';
     h.app.groups = new Map([['workspace', [h.w]]]);
     h.app.preview = {hide() {}};
-    h.app.drag = {window: h.w, monitor: 0, target: {monitor: 0, index: 0}};
+    const checkpoint = {before: true};
+    h.app.drag = {window: h.w, monitor: 0, target: {monitor: 0, index: 0}, checkpoint};
     let placements = 0, tiles = 0, borders = 0;
+    h.app.pushCheckpoint = () => assert.fail('same-slot drop must not create an undo checkpoint');
     h.app.place = (w, rect) => {
         assert.equal(w, h.w); assert.deepEqual(rect, h.record.tileRect); placements++;
     };
@@ -278,4 +280,22 @@ test('dropping a window back into its own slot does not retile other windows', (
     assert.equal(placements, 1);
     assert.equal(tiles, 0);
     assert.equal(borders, 1);
+});
+
+test('moving to another slot commits the checkpoint captured before dragging', () => {
+    const h = harness(); h.settleInitial();
+    const other = {};
+    h.app.key = () => 'workspace';
+    h.app.groups = new Map([['workspace', [h.w, other]]]);
+    h.app.preview = {hide() {}};
+    const checkpoint = {before: true};
+    h.app.drag = {window: h.w, monitor: 0, target: {monitor: 0, index: 1}, checkpoint};
+    const pushed = [];
+    h.app.pushCheckpoint = state => pushed.push(state);
+    let tiles = 0; h.app.tile = () => tiles++;
+    h.app.grabEnd();
+    assert.deepEqual(pushed, [checkpoint]);
+    assert.equal(h.app.groups.get('workspace')[0], other);
+    assert.equal(h.app.groups.get('workspace')[1], h.w);
+    assert.equal(tiles, 1);
 });

@@ -426,15 +426,20 @@ export default class SnapTess extends Extension {
             maximized: w.get_maximize_flags(), minimized: w.minimized,
             tileRect: tileRect ? {...tileRect} : null};
     }
-    checkpoint() {
+    captureCheckpoint() {
         if (!this.running) return;
-        this.history.push({windows: new Map([...this.records.keys()].map(w => [w, this.snapshot(w)])),
+        return {windows: new Map([...this.records.keys()].map(w => [w, this.snapshot(w)])),
             groups: new Map([...this.groups].map(([k, g]) => [k, [...g]])),
             records: new Map([...this.records].map(([w, r]) => [w, {floating: r.floating, space: r.space, parked: r.parked}])),
             spaces: new Map([...this.spaces].map(([w, m]) => [w, new Map(m)])),
-            profiles: JSON.stringify(this.profiles)});
+            profiles: JSON.stringify(this.profiles)};
+    }
+    pushCheckpoint(state) {
+        if (!state) return;
+        this.history.push(state);
         if (this.history.length > 10) this.history.shift();
     }
+    checkpoint() { this.pushCheckpoint(this.captureCheckpoint()); }
     restore(w, state) {
         if (w.fullscreen) return;
         this.resetWindowScale(w, true);
@@ -828,8 +833,8 @@ export default class SnapTess extends Extension {
         this.cancel(record.settleTimer); record.settleTimer = 0;
         record.restorePending = false;
         this.traceWindow(w, 'grab-begin');
-        this.checkpoint();
-        this.drag = {window: w, monitor: w.get_monitor(), target: null};
+        this.drag = {window: w, monitor: w.get_monitor(), target: null,
+            checkpoint: this.captureCheckpoint()};
         this.border.hide();
         const tick = () => {
             if (!this.drag) return;
@@ -856,7 +861,7 @@ export default class SnapTess extends Extension {
     grabEnd() {
         if (!this.drag) return;
         this.cancel(this.dragTimer); this.dragTimer = 0;
-        const {window: w, target, monitor: source} = this.drag;
+        const {window: w, target, monitor: source, checkpoint} = this.drag;
         this.drag = null; this.preview.hide();
         if (!this.records.has(w)) return;
         if (target) {
@@ -869,8 +874,12 @@ export default class SnapTess extends Extension {
                     this.updateBorder();
                     return;
                 }
-                if (from >= 0) [slots[from], slots[target.index]] = [slots[target.index], slots[from]];
+                if (from >= 0) {
+                    this.pushCheckpoint(checkpoint);
+                    [slots[from], slots[target.index]] = [slots[target.index], slots[from]];
+                }
             } else {
+                this.pushCheckpoint(checkpoint);
                 this.busy = true;
                 try { w.move_to_monitor(target.monitor); } finally { this.busy = false; }
                 const r = this.records.get(w); r.monitor = target.monitor; r.space = this.activeSpace(target.monitor);
