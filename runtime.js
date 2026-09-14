@@ -104,16 +104,6 @@ export default class SnapTess extends Extension {
         return id;
     }
 
-    beforeRedraw(callback) {
-        const id = GLib.idle_add(Meta.PRIORITY_BEFORE_REDRAW, () => {
-            this.sources.delete(id);
-            try { callback(); } catch (error) { console.error(`[SnapTess] ${error.stack}`); }
-            return GLib.SOURCE_REMOVE;
-        });
-        this.sources.add(id);
-        return id;
-    }
-
     cancel(id) {
         if (id && this.sources.delete(id)) GLib.Source.remove(id);
     }
@@ -151,8 +141,7 @@ export default class SnapTess extends Extension {
         const record = {original: null, floating: false, space: this.activeSpace(w.get_monitor(), w.get_workspace()),
             parked: false, signals: [], monitor: w.get_monitor(), tileRect: null, visualScale: 1, scaleTimer: 0,
             backingRect: null, scaleNegotiated: false, placementMoves: 0, placing: false, restoreStarted: false, restoreMoves: 0,
-            traceUntil: 0, traceSignals: [], traceTimer: 0, requestSequence: 0, effectActor: null, effectSignal: 0,
-            transformSignals: [], transforming: false, specialState: this.isSpecialWindow(w),
+            traceUntil: 0, traceSignals: [], traceTimer: 0, requestSequence: 0, effectActor: null, effectSignal: 0, specialState: this.isSpecialWindow(w),
             restorePending: false, restoreTimer: 0, settleTimer: 0, restoreUntil: 0, restoreQuietUntil: 0};
         this.records.set(w, record);
         this.watchWindowEffects(w);
@@ -554,10 +543,6 @@ export default class SnapTess extends Extension {
         if (actor && id) {
             try { actor.disconnect(id); } catch { /* actor may already be disposed */ }
         }
-        for (const signal of record.transformSignals) {
-            try { actor?.disconnect(signal); } catch { /* actor may already be disposed */ }
-        }
-        record.transformSignals = [];
     }
     watchWindowEffects(w) {
         const record = this.records.get(w);
@@ -572,16 +557,6 @@ export default class SnapTess extends Extension {
                 if (record.restorePending && !this.isSpecialWindow(w)) this.queueWindowRestore(w, 0);
                 else this.scheduleWindowScale(w, 0);
             });
-            for (const property of ['scale-x', 'scale-y', 'translation-x', 'translation-y']) {
-                const id = actor.connect(`notify::${property}`, () => {
-                    if (record.transforming || !this.running || !record.tileRect || record.floating ||
-                        w.minimized || this.isSpecialWindow(w) || this.drag || global.display.is_grabbed()) return;
-                    const frame = w.get_frame_rect(), target = record.tileRect;
-                    if (record.visualScale < 0.999 || Math.abs(frame.x - target.x) > 1 ||
-                        Math.abs(frame.y - target.y) > 1) this.scheduleWindowScale(w, 0, true);
-                });
-                record.transformSignals.push(id);
-            }
         } catch {
             record.effectActor = null;
             record.effectSignal = 0;
@@ -594,15 +569,10 @@ export default class SnapTess extends Extension {
             this.cancel(record.scaleTimer); record.scaleTimer = 0;
         }
         if (actor && !this.windowEffectActive(actor)) {
-            if (record) record.transforming = true;
-            try {
-                actor.set_pivot_point(0, 0);
-                actor.set_scale(1, 1);
-                actor.translation_x = 0;
-                actor.translation_y = 0;
-            } finally {
-                if (record) record.transforming = false;
-            }
+            actor.set_pivot_point(0, 0);
+            actor.set_scale(1, 1);
+            actor.translation_x = 0;
+            actor.translation_y = 0;
         }
         if (record) {
             record.visualScale = 1;
@@ -624,7 +594,6 @@ export default class SnapTess extends Extension {
         }
     }
     applyWindowScale(w, actor, scale, target) {
-        const record = this.records.get(w);
         let pivot = {x: 0, y: 0};
         let frame = null;
         try {
@@ -632,18 +601,13 @@ export default class SnapTess extends Extension {
             const buffer = typeof w.get_buffer_rect === 'function' ? w.get_buffer_rect() : frame;
             pivot = frameScalePivot(frame, buffer, actor.get_width?.(), actor.get_height?.());
         } catch { /* fall back to the actor origin */ }
-        if (record) record.transforming = true;
-        try {
-            actor.set_pivot_point(pivot.x, pivot.y);
-            actor.set_scale(scale, scale);
-            // Mutter keeps an oversized backing window inside the work area, so a
-            // right/bottom tile request can be clamped before compositor scaling.
-            // Translate the scaled actor from the committed frame to its visual slot.
-            actor.translation_x = frame && target ? target.x - frame.x : 0;
-            actor.translation_y = frame && target ? target.y - frame.y : 0;
-        } finally {
-            if (record) record.transforming = false;
-        }
+        actor.set_pivot_point(pivot.x, pivot.y);
+        actor.set_scale(scale, scale);
+        // Mutter keeps an oversized backing window inside the work area, so a
+        // right/bottom tile request can be clamped before compositor scaling.
+        // Translate the scaled actor from the committed frame to its visual slot.
+        actor.translation_x = frame && target ? target.x - frame.x : 0;
+        actor.translation_y = frame && target ? target.y - frame.y : 0;
     }
     correctWindowScale(w) {
         const record = this.records.get(w), actor = this.windowActor(w);
@@ -684,16 +648,15 @@ export default class SnapTess extends Extension {
         record.visualScale = scale;
         this.traceWindow(w, 'apply-scale');
     }
-    scheduleWindowScale(w, delay = 90, beforeRedraw = false) {
+    scheduleWindowScale(w, delay = 90) {
         const record = this.records.get(w);
         if (!record) return;
         this.cancel(record.scaleTimer);
-        const run = () => {
+        record.scaleTimer = this.later(delay, () => {
             if (!this.records.has(w)) return;
             record.scaleTimer = 0;
             this.correctWindowScale(w);
-        };
-        record.scaleTimer = beforeRedraw ? this.beforeRedraw(run) : this.later(delay, run);
+        });
     }
     place(w, rect, restoring = false) {
         if (!rect || this.isSpecialWindow(w)) return;
@@ -747,24 +710,7 @@ export default class SnapTess extends Extension {
     }
     focusChanged() {
         if (this.drag && !global.display.is_grabbed()) this.grabEnd();
-        else {
-            // Mutter may reset compositor transforms while changing the focused
-            // surface. Reapply constrained-window transforms in the same signal
-            // turn so their unscaled backing geometry is never painted.
-            for (const [w, record] of this.records) {
-                if (!record.tileRect || record.floating || w.minimized ||
-                    w.fullscreen || w.get_maximize_flags()) continue;
-                const actor = this.windowActor(w);
-                if (!actor || (record.visualScale >= 0.999 &&
-                    Math.abs(actor.translation_x) <= 1 && Math.abs(actor.translation_y) <= 1)) continue;
-                const frame = w.get_frame_rect(), target = record.tileRect;
-                const scale = Math.max(0.05, Math.min(1,
-                    target.width / Math.max(1, frame.width), target.height / Math.max(1, frame.height)));
-                this.applyWindowScale(w, actor, scale, target);
-                record.visualScale = scale;
-            }
-            this.updateBorder();
-        }
+        else this.updateBorder();
     }
 
     toggleFloating() {
@@ -911,6 +857,11 @@ export default class SnapTess extends Extension {
             const slots = [...(this.groups.get(key) ?? this.windows(target.monitor))];
             if (source === target.monitor) {
                 const from = slots.indexOf(w);
+                if (from === target.index) {
+                    this.place(w, this.records.get(w).tileRect);
+                    this.updateBorder();
+                    return;
+                }
                 if (from >= 0) [slots[from], slots[target.index]] = [slots[target.index], slots[from]];
             } else {
                 this.busy = true;
