@@ -712,6 +712,13 @@ export default class SnapTess extends Extension {
         const previousBacking = restoring ? record.backingRect : null;
         this.resetWindowScale(w);
         const minimum = actor ? this.minimumSize(w) : {width: 0, height: 0};
+        // Keep a stable application viewport while the tile grid changes. This
+        // makes the compositor scale dynamic without letting the client reflow
+        // its entire interface at every slot size.
+        if (record.original) {
+            minimum.width = Math.max(minimum.width, record.original.width);
+            minimum.height = Math.max(minimum.height, record.original.height);
+        }
         const fitted = fitMinimumSize(rect, minimum.width, minimum.height);
         // Publish the target and transaction state before move_resize_frame can
         // emit signals. Restores preserve the previous backing-size decision.
