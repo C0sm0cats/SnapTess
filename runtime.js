@@ -140,7 +140,7 @@ export default class SnapTess extends Extension {
         if (!this.eligible(w) || this.records.has(w)) return;
         const record = {original: null, floating: false, space: this.activeSpace(w.get_monitor(), w.get_workspace()),
             parked: false, signals: [], monitor: w.get_monitor(), tileRect: null, visualScale: 1, scaleTimer: 0,
-            backingRect: null, scaleNegotiated: false, placing: false, restoreStarted: false, restoreMoves: 0,
+            backingRect: null, scaleNegotiated: false, placementMoves: 0, placing: false, restoreStarted: false, restoreMoves: 0,
             traceUntil: 0, traceSignals: [], traceTimer: 0, requestSequence: 0, effectActor: null, effectSignal: 0, specialState: this.isSpecialWindow(w),
             restorePending: false, restoreTimer: 0, settleTimer: 0, restoreUntil: 0, restoreQuietUntil: 0};
         this.records.set(w, record);
@@ -196,6 +196,8 @@ export default class SnapTess extends Extension {
             }
             if (record.restorePending && Date.now() >= record.restoreQuietUntil && !record.placing && !this.busy && !this.drag)
                 this.queueWindowRestore(w, 80);
+            if (this.running && record.tileRect && !record.floating && !record.placing && !this.busy && !this.drag)
+                this.scheduleWindowScale(w);
             if (global.display.focus_window === w) this.updateBorder();
         });
         watch('size-changed', () => {
@@ -569,6 +571,8 @@ export default class SnapTess extends Extension {
         if (actor && !this.windowEffectActive(actor)) {
             actor.set_pivot_point(0, 0);
             actor.set_scale(1, 1);
+            actor.translation_x = 0;
+            actor.translation_y = 0;
         }
         if (record) {
             record.visualScale = 1;
@@ -589,20 +593,26 @@ export default class SnapTess extends Extension {
             return {width: 0, height: 0};
         }
     }
-    applyWindowScale(w, actor, scale) {
+    applyWindowScale(w, actor, scale, target) {
         let pivot = {x: 0, y: 0};
+        let frame = null;
         try {
-            const frame = w.get_frame_rect();
+            frame = w.get_frame_rect();
             const buffer = typeof w.get_buffer_rect === 'function' ? w.get_buffer_rect() : frame;
             pivot = frameScalePivot(frame, buffer, actor.get_width?.(), actor.get_height?.());
         } catch { /* fall back to the actor origin */ }
         actor.set_pivot_point(pivot.x, pivot.y);
         actor.set_scale(scale, scale);
+        // Mutter keeps an oversized backing window inside the work area, so a
+        // right/bottom tile request can be clamped before compositor scaling.
+        // Translate the scaled actor from the committed frame to its visual slot.
+        actor.translation_x = frame && target ? target.x - frame.x : 0;
+        actor.translation_y = frame && target ? target.y - frame.y : 0;
     }
     correctWindowScale(w) {
         const record = this.records.get(w), actor = this.windowActor(w);
         if (!record?.tileRect || !actor || record.floating || w.minimized || w.fullscreen || w.get_maximize_flags()) return;
-        if (!this.running || record.placing || this.drag?.window === w || global.display.is_grabbed()) return;
+        if (!this.running || this.busy || record.placing || this.drag || global.display.is_grabbed()) return;
         if (this.windowEffectActive(actor)) return; // effects-completed resumes us
         if (record.restorePending && !record.restoreStarted) return;
         const frame = w.get_frame_rect(), target = record.tileRect;
@@ -623,10 +633,18 @@ export default class SnapTess extends Extension {
                 return;
             }
         }
+        // Ordinary client commits may move a window after its initial configure.
+        // Repair position without renegotiating size, with a finite per-placement budget.
+        if (!record.restorePending && record.monitor === w.get_monitor() &&
+            record.placementMoves + record.restoreMoves < MAX_RESTORE_MOVES &&
+            (Math.abs(frame.x - target.x) > 1 || Math.abs(frame.y - target.y) > 1)) {
+            record.placementMoves++;
+            this.requestWindowGeometry(w, 'tile-position', target, true);
+        }
         const actual = w.get_frame_rect();
         const scale = Math.max(0.05, Math.min(1,
             target.width / Math.max(1, actual.width), target.height / Math.max(1, actual.height)));
-        this.applyWindowScale(w, actor, scale);
+        this.applyWindowScale(w, actor, scale, target);
         record.visualScale = scale;
         this.traceWindow(w, 'apply-scale');
     }
@@ -646,6 +664,8 @@ export default class SnapTess extends Extension {
         const actor = this.windowActor(w), record = this.records.get(w);
         if (!record) return;
         if (!restoring) {
+            record.placementMoves = 0;
+            record.restoreMoves = 0;
             // Explicit arrangement (including a manual drop) owns a new target.
             this.cancel(record.restoreTimer); record.restoreTimer = 0;
             this.cancel(record.settleTimer); record.settleTimer = 0;
