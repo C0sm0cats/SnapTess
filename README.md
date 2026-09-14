@@ -14,7 +14,7 @@ Automatic window tiling for **GNOME Shell 50 · Wayland**.
 
 </div>
 
-![SnapTess Layout Studio running in a real GNOME Wayland test session](docs/layout-studio.png)
+![SnapTess arranging four windows in a balanced grid](docs/snaptess-overview.svg)
 
 SnapTess brings the workflow of [SmartGrid for Windows](https://github.com/C0sm0cats/SmartGrid) to GNOME as a standalone extension. No Python daemon, root access, or unsafe Shell mode. It starts paused: enabling the extension does not rearrange your windows.
 
