@@ -8,7 +8,7 @@ import {Extension} from 'resource:///org/gnome/shell/extensions/extension.js';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import * as PanelMenu from 'resource:///org/gnome/shell/ui/panelMenu.js';
 import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js';
-import {layout, fitMinimumSize, frameScalePivot, nearestSlot, directionalSlot, reconcileSlots} from './lib/layout.js';
+import {layout, nearestSlot, directionalSlot, reconcileSlots} from './lib/layout.js';
 import {Studio} from './lib/studio.js';
 
 const RUNTIME_REVISION = 8;
@@ -327,8 +327,15 @@ export default class SnapTess extends Extension {
         record.placing = true;
         this.traceWindow(w, `request:${reason}`, {requested: {...rect}, positionOnly});
         try {
-            if (positionOnly) w.move_frame(false, rect.x, rect.y);
-            else w.move_resize_frame(false, rect.x, rect.y, rect.width, rect.height);
+            if (positionOnly) {
+                w.move_frame(true, rect.x, rect.y);
+            } else {
+                // Match Tiling Assistant's native Wayland placement path. A user
+                // operation avoids Mutter's monitor clamping; moving first also
+                // handles clients that otherwise resize without changing origin.
+                w.move_frame(true, rect.x, rect.y);
+                w.move_resize_frame(true, rect.x, rect.y, rect.width, rect.height);
+            }
         } finally {
             record.placing = false;
             this.traceWindow(w, `returned:${reason}`);
@@ -589,31 +596,6 @@ export default class SnapTess extends Extension {
             this.traceWindow(w, 'reset-scale');
         }
     }
-    minimumSize(w) {
-        if (typeof w.get_min_size !== 'function') return {width: 0, height: 0};
-        try {
-            const [known, width, height] = w.get_min_size();
-            return known ? {width: Math.max(0, width), height: Math.max(0, height)} : {width: 0, height: 0};
-        } catch {
-            return {width: 0, height: 0};
-        }
-    }
-    applyWindowScale(w, actor, scale, target) {
-        let pivot = {x: 0, y: 0};
-        let frame = null;
-        try {
-            frame = w.get_frame_rect();
-            const buffer = typeof w.get_buffer_rect === 'function' ? w.get_buffer_rect() : frame;
-            pivot = frameScalePivot(frame, buffer, actor.get_width?.(), actor.get_height?.());
-        } catch { /* fall back to the actor origin */ }
-        actor.set_pivot_point(pivot.x, pivot.y);
-        actor.set_scale(scale, scale);
-        // Mutter keeps an oversized backing window inside the work area, so a
-        // right/bottom tile request can be clamped before compositor scaling.
-        // Translate the scaled actor from the committed frame to its visual slot.
-        actor.translation_x = frame && target ? target.x - frame.x : 0;
-        actor.translation_y = frame && target ? target.y - frame.y : 0;
-    }
     correctWindowScale(w) {
         const record = this.records.get(w), actor = this.windowActor(w);
         if (!record?.tileRect || !actor || record.floating || w.minimized || w.fullscreen || w.get_maximize_flags()) return;
@@ -621,23 +603,6 @@ export default class SnapTess extends Extension {
         if (this.windowEffectActive(actor)) return; // effects-completed resumes us
         if (record.restorePending && !record.restoreStarted) return;
         const frame = w.get_frame_rect(), target = record.tileRect;
-        // One measured-size negotiation per explicit placement. A committed frame
-        // is an observation, not a new minimum constraint. Feeding each reply back
-        // into fitMinimumSize creates a configure/commit feedback loop.
-        if (!record.scaleNegotiated) {
-            const fitted = fitMinimumSize(target, frame.width, frame.height);
-            // A normal-sized observation does not consume the one fallback:
-            // minimum constraints may only surface in a later client commit.
-            record.scaleNegotiated = fitted.scale < 0.999; // before requesting
-            record.backingRect = {...fitted.frame};
-            if (fitted.scale < 0.999 &&
-                (Math.abs(frame.width - fitted.frame.width) > 1 ||
-                 Math.abs(frame.height - fitted.frame.height) > 1)) {
-                this.requestWindowGeometry(w, 'backing-fit', fitted.frame);
-                this.scheduleWindowScale(w, 120);
-                return;
-            }
-        }
         // Ordinary client commits may move a window after its initial configure.
         // Repair position without renegotiating size, with a finite per-placement budget.
         if (!record.restorePending && record.monitor === w.get_monitor() &&
@@ -646,12 +611,12 @@ export default class SnapTess extends Extension {
             record.placementMoves++;
             this.requestWindowGeometry(w, 'tile-position', target, true);
         }
-        const actual = w.get_frame_rect();
-        const scale = Math.max(0.05, Math.min(1,
-            target.width / Math.max(1, actual.width), target.height / Math.max(1, actual.height)));
-        this.applyWindowScale(w, actor, scale, target);
-        record.visualScale = scale;
-        this.traceWindow(w, 'apply-scale');
+        actor.set_pivot_point(0, 0);
+        actor.set_scale(1, 1);
+        actor.translation_x = 0;
+        actor.translation_y = 0;
+        record.visualScale = 1;
+        this.traceWindow(w, 'enforce-native-scale');
     }
     scheduleWindowScale(w, delay = 90) {
         const record = this.records.get(w);
@@ -696,35 +661,10 @@ export default class SnapTess extends Extension {
             if (actor) this.scheduleWindowScale(w, 0);
             return;
         }
-        const movingSameSize = !force && !restoring && !record.restorePending &&
-            record.tileRect && record.backingRect && record.visualScale < 0.999 &&
-            Math.abs(record.tileRect.width - rect.width) <= 1 &&
-            Math.abs(record.tileRect.height - rect.height) <= 1;
-        if (movingSameSize) {
-            record.tileRect = {...rect};
-            record.backingRect = {...record.backingRect, x: rect.x, y: rect.y};
-            record.scaleNegotiated = true;
-            if (actor) this.applyWindowScale(w, actor, record.visualScale, rect);
-            this.requestWindowGeometry(w, 'place', record.backingRect);
-            if (actor) this.scheduleWindowScale(w);
-            return;
-        }
-        const previousBacking = restoring ? record.backingRect : null;
         this.resetWindowScale(w);
-        const minimum = actor ? this.minimumSize(w) : {width: 0, height: 0};
-        // Keep a stable application viewport while the tile grid changes. This
-        // makes the compositor scale dynamic without letting the client reflow
-        // its entire interface at every slot size.
-        if (record.original) {
-            minimum.width = Math.max(minimum.width, record.original.width);
-            minimum.height = Math.max(minimum.height, record.original.height);
-        }
-        const fitted = fitMinimumSize(rect, minimum.width, minimum.height);
-        // Publish the target and transaction state before move_resize_frame can
-        // emit signals. Restores preserve the previous backing-size decision.
         record.tileRect = {...rect};
-        record.backingRect = previousBacking ? {...previousBacking, x: rect.x, y: rect.y} : {...fitted.frame};
-        record.scaleNegotiated = restoring && Boolean(previousBacking);
+        record.backingRect = {...rect};
+        record.scaleNegotiated = true;
         this.requestWindowGeometry(w, restoring ? 'restore' : 'place', record.backingRect);
         if (actor) this.scheduleWindowScale(w);
     }
