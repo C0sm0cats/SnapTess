@@ -932,21 +932,34 @@ export default class SnapTess extends Extension {
                 const rects = layout(this.area(monitor), slots.length, this.options(monitor));
                 const index = nearestSlot(rects, x, y);
                 if (index >= 0) {
-                    this.drag.target = {monitor, index};
+                    const destination = rects[index];
+                    const visualWindow = this.windows(monitor).find(candidate => {
+                        if (candidate === w) return false;
+                        const tile = this.records.get(candidate)?.tileRect;
+                        return tile && ['x', 'y', 'width', 'height'].every(key => Math.abs(tile[key] - destination[key]) <= 2);
+                    });
+                    const targetWindow = visualWindow ?? slots[index];
+                    this.drag.target = {monitor, index, window: targetWindow};
                     this.showRect(this.preview, rects[index]);
-                    const from = slots.indexOf(w), targetWindow = slots[index];
+                    const from = slots.indexOf(w);
                     let arrow = '';
                     if (from >= 0 && from !== index) {
                         const a = rects[from], b = rects[index];
                         const dx = b.x - a.x, dy = b.y - a.y;
                         arrow = Math.abs(dx) >= Math.abs(dy) ? (dx > 0 ? ' →' : ' ←') : (dy > 0 ? ' ↓' : ' ↑');
                     }
-                    const app = targetWindow && targetWindow !== w ? this.appId(targetWindow).replace(/\.desktop$/, '') : 'empty';
-                    this.previewLabel.text = `Tile ${String(index + 1).padStart(2, '0')}${arrow} · ${app}`;
-                    this.previewLabel.set_position(rects[index].x + 12, rects[index].y + 12);
-                    this.previewLabel.show();
+                    if (targetWindow === w) {
+                        this.previewLabel.hide();
+                    } else {
+                        const action = targetWindow
+                            ? `Swap with ${this.appId(targetWindow).replace(/\.desktop$/, '')}`
+                            : 'Move to free tile';
+                        this.previewLabel.text = `Tile ${String(index + 1).padStart(2, '0')}${arrow} · ${action}`;
+                        this.previewLabel.set_position(rects[index].x + 12, rects[index].y + 12);
+                        this.previewLabel.show();
+                    }
                 }
-            } else { this.drag.target = null; this.preview.hide(); }
+            } else { this.drag.target = null; this.preview.hide(); this.previewLabel.hide(); }
             this.dragTimer = this.later(32, tick);
         };
         tick();
@@ -955,21 +968,23 @@ export default class SnapTess extends Extension {
         if (!this.drag) return;
         this.cancel(this.dragTimer); this.dragTimer = 0;
         const {window: w, target, monitor: source, checkpoint} = this.drag;
-        this.drag = null; this.preview.hide();
+        this.drag = null; this.preview.hide(); this.previewLabel.hide();
         if (!this.records.has(w)) return;
         if (target) {
             const key = this.key(target.monitor);
             const slots = [...(this.groups.get(key) ?? this.windows(target.monitor))];
             if (source === target.monitor) {
                 const from = slots.indexOf(w);
-                if (from === target.index) {
+                const visualIndex = target.window ? slots.indexOf(target.window) : -1;
+                const destinationIndex = visualIndex >= 0 ? visualIndex : target.index;
+                if (from === destinationIndex) {
                     this.place(w, this.records.get(w).tileRect);
                     this.updateBorder();
                     return;
                 }
                 if (from >= 0) {
                     this.pushCheckpoint(checkpoint);
-                    [slots[from], slots[target.index]] = [slots[target.index], slots[from]];
+                    [slots[from], slots[destinationIndex]] = [slots[destinationIndex], slots[from]];
                 }
             } else {
                 this.pushCheckpoint(checkpoint);
