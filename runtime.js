@@ -60,9 +60,15 @@ export default class SnapTess extends Extension {
             visible: false,
         });
         this.previewLabel = new St.Label({style_class: 'snaptess-preview-label', reactive: false, visible: false});
+        this.swapFromGuide = new St.Widget({style_class: 'snaptess-swap-guide source', reactive: false, visible: false});
+        this.swapToGuide = new St.Widget({style_class: 'snaptess-swap-guide target', reactive: false, visible: false});
+        this.swapArrow = new St.Label({style_class: 'snaptess-swap-arrow', reactive: false, visible: false});
         Main.layoutManager.addChrome(this.border);
         Main.layoutManager.addChrome(this.preview);
         Main.layoutManager.addChrome(this.previewLabel);
+        Main.layoutManager.addChrome(this.swapFromGuide);
+        Main.layoutManager.addChrome(this.swapToGuide);
+        Main.layoutManager.addChrome(this.swapArrow);
         try {
             this.interfaceSettings = new Gio.Settings({schema_id: 'org.gnome.desktop.interface'});
             this.connect(this.interfaceSettings, 'changed::accent-color', () => this.updateBorder());
@@ -742,7 +748,33 @@ export default class SnapTess extends Extension {
         const preset = this.options(monitor, space).preset;
         this.statusItem.label.text = `${this.running ? 'Active' : 'Paused'}  ·  ${preset}  ·  Space ${space + 1}`;
     }
-    hideGuides() { this.border.hide(); this.preview.hide(); this.previewLabel.hide(); }
+    hideSwapGuides() {
+        this.cancel(this.swapGuideTimer); this.swapGuideTimer = 0;
+        this.swapFromGuide.hide(); this.swapToGuide.hide(); this.swapArrow.hide();
+    }
+    hideGuides() { this.border.hide(); this.preview.hide(); this.previewLabel.hide(); this.hideSwapGuides(); }
+    showSwapGuides(from, to, direction) {
+        this.hideSwapGuides();
+        this.showRect(this.swapFromGuide, from); this.showRect(this.swapToGuide, to);
+        const arrows = {left: '←', right: '→', up: '↑', down: '↓'};
+        this.swapArrow.text = arrows[direction] ?? '↔';
+        this.swapArrow.set_position(Math.round((from.x + from.width / 2 + to.x + to.width / 2) / 2 - 18),
+            Math.round((from.y + from.height / 2 + to.y + to.height / 2) / 2 - 18));
+        this.swapArrow.show();
+        if (this.settings.get_boolean('animations')) {
+            this.swapArrow.set_scale(0.7, 0.7);
+            this.swapArrow.ease({scale_x: 1.15, scale_y: 1.15, duration: 130,
+                mode: Clutter.AnimationMode.EASE_OUT_QUAD});
+        }
+        this.swapGuideTimer = this.later(420, () => {
+            this.swapGuideTimer = 0;
+            for (const actor of [this.swapFromGuide, this.swapToGuide, this.swapArrow]) {
+                if (this.settings.get_boolean('animations'))
+                    actor.ease({opacity: 0, duration: 140, onComplete: () => { actor.hide(); actor.opacity = 255; }});
+                else actor.hide();
+            }
+        });
+    }
     showRect(actor, rect) {
         const appearing = !actor.visible;
         actor.set_position(rect.x, rect.y); actor.set_size(rect.width, rect.height); actor.show();
@@ -845,6 +877,7 @@ export default class SnapTess extends Extension {
         const rects = layout(this.area(w.get_monitor()), slots.length, this.options(w.get_monitor()));
         const to = directionalSlot(rects, from, direction);
         if (to < 0) return;
+        this.showSwapGuides(rects[from], rects[to], direction);
         if (!this.swapChanged) {
             this.checkpoint();
             this.swapChanged = true;
@@ -1011,6 +1044,9 @@ export default class SnapTess extends Extension {
         Main.layoutManager.removeChrome(this.border); this.border.destroy();
         Main.layoutManager.removeChrome(this.preview); this.preview.destroy();
         Main.layoutManager.removeChrome(this.previewLabel); this.previewLabel.destroy();
+        Main.layoutManager.removeChrome(this.swapFromGuide); this.swapFromGuide.destroy();
+        Main.layoutManager.removeChrome(this.swapToGuide); this.swapToGuide.destroy();
+        Main.layoutManager.removeChrome(this.swapArrow); this.swapArrow.destroy();
         this.indicator.destroy();
         this.settings = null;
     }
