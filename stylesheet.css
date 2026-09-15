@@ -1,11 +1,14 @@
 .snaptess-on { color: #8ce8c3; }
 .snaptess-border { background-color: transparent; background-image: none; border: 2px solid #8ce8c3; border-radius: 12px; box-shadow: none; }
 .snaptess-preview { background-color: transparent; border: 2px solid #8ce8c3; border-radius: 16px; box-shadow: 0 8px 28px 0 rgba(0,0,0,0.28); }
+.snaptess-preview-label { background-color: rgba(16,22,29,0.94); border: 1px solid #8ce8c3; border-radius: 9px; padding: 7px 10px; color: #ecf4f2; font-size: 11px; font-weight: 700; }
+.snaptess-panel-status { color: #a8b8be; font-size: 11px; }
 .snaptess-studio { background-color: #171e26; border: 1px solid #35454c; border-radius: 24px; padding: 22px; color: #ecf4f2; }
 .snaptess-header { spacing: 18px; margin-bottom: 14px; }
 .snaptess-eyebrow { color: #8ce8c3; font-size: 11px; font-weight: 800; letter-spacing: 3px; margin-bottom: 8px; }
 .snaptess-title { font-size: 27px; font-weight: 800; }
 .snaptess-brand { color: #8ce8c3; }
+.snaptess-modified-badge { background-color: #5a4326; border: 1px solid #f3bd72; border-radius: 8px; padding: 4px 8px; color: #ffe0ad; font-size: 9px; font-weight: 800; }
 .snaptess-toolbar { spacing: 7px; margin-bottom: 10px; }
 .snaptess-presets { spacing: 5px; margin-bottom: 8px; }
 .snaptess-chip { background-color: #242e38; border: 1px solid transparent; border-radius: 9px; padding: 7px 10px; font-size: 11px; color: #c1cdd1; }
