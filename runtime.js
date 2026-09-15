@@ -35,11 +35,13 @@ export default class SnapTess extends Extension {
         this.icon = new Gio.FileIcon({file: this.dir.get_child('icons/snaptess-symbolic.svg')});
         this.indicator.add_child(new St.Icon({gicon: this.icon, style_class: 'system-status-icon'}));
         Main.panel.addToStatusArea(this.uuid, this.indicator);
+        this.statusItem = new PopupMenu.PopupMenuItem('', {reactive: false, style_class: 'snaptess-panel-status'});
+        this.indicator.menu.addMenuItem(this.statusItem);
         this.switchItem = new PopupMenu.PopupSwitchMenuItem('Arrange windows', false);
         this.switchItem.connect('toggled', (_item, value) => this.setRunning(value));
         this.indicator.menu.addMenuItem(this.switchItem);
         this.indicator.menu.addAction('Layout Studio…', () => this.openStudio());
-        this.indicator.menu.addAction('Arrange again', () => { this.checkpoint(); this.tile(true); });
+        this.indicator.menu.addAction('Arrange again', () => { this.checkpoint(); this.tile(true); this.notifyStatus('Windows arranged'); });
         this.indicator.menu.addAction('Float / tile focused window', () => this.toggleFloating());
         this.indicator.menu.addAction('Swap mode · arrows · Enter accept · Esc cancel', () => this.toggleSwap());
         this.indicator.menu.addAction('Undo last arrangement', () => this.undo());
@@ -57,10 +59,16 @@ export default class SnapTess extends Extension {
             reactive: false,
             visible: false,
         });
+        this.previewLabel = new St.Label({style_class: 'snaptess-preview-label', reactive: false, visible: false});
         Main.layoutManager.addChrome(this.border);
         Main.layoutManager.addChrome(this.preview);
+        Main.layoutManager.addChrome(this.previewLabel);
+        try {
+            this.interfaceSettings = new Gio.Settings({schema_id: 'org.gnome.desktop.interface'});
+            this.connect(this.interfaceSettings, 'changed::accent-color', () => this.updateBorder());
+        } catch { this.interfaceSettings = null; }
         this.bindings = {
-            toggle: () => this.setRunning(!this.running), retile: () => { this.checkpoint(); this.tile(true); },
+            toggle: () => this.setRunning(!this.running), retile: () => { this.checkpoint(); this.tile(true); this.notifyStatus('Windows arranged'); },
             studio: () => this.openStudio(), floating: () => this.toggleFloating(),
             swap: () => this.toggleSwap(), undo: () => this.undo(), stop: () => this.setRunning(false),
             'space-1': () => this.switchSpace(0), 'space-2': () => this.switchSpace(1), 'space-3': () => this.switchSpace(2),
@@ -85,6 +93,7 @@ export default class SnapTess extends Extension {
             this.schedule(true);
         });
         for (const actor of global.get_window_actors()) this.track(actor.meta_window);
+        this.updatePanelStatus();
         this.writeRuntimeStatus();
     }
 
@@ -471,7 +480,7 @@ export default class SnapTess extends Extension {
         this.updateBorder();
     }
 
-    setRunning(value) {
+    setRunning(value, silent = false) {
         if (this.running === value) return;
         this.running = value;
         this.switchItem.setToggleState(value);
@@ -479,6 +488,7 @@ export default class SnapTess extends Extension {
         if (value) {
             for (const [w, r] of this.records) r.original = this.snapshot(w);
             this.tile(true, true);
+            if (!silent) this.notifyStatus('Automatic arrangement enabled');
         } else {
             this.cancel(this.pending); this.pending = 0;
             this.exitSwap(false); this.drag = null; this.hideGuides();
@@ -494,7 +504,9 @@ export default class SnapTess extends Extension {
                 }
             } finally { this.busy = false; }
             this.groups.clear(); this.spaces.clear(); this.history = [];
+            if (!silent) this.notifyStatus('Windows restored');
         }
+        this.updatePanelStatus();
     }
 
     schedule(compact) {
@@ -717,7 +729,20 @@ export default class SnapTess extends Extension {
         this.requestWindowGeometry(w, restoring ? 'restore' : 'place', record.backingRect);
         if (actor) this.scheduleWindowScale(w);
     }
-    hideGuides() { this.border.hide(); this.preview.hide(); }
+    accentColor() {
+        const colors = {blue: '#62a0ea', teal: '#5bc8af', green: '#57e389', yellow: '#f8e45c',
+            orange: '#ffbe6f', red: '#ed333b', pink: '#f66151', purple: '#c061cb', slate: '#99c1f1'};
+        try { return colors[this.interfaceSettings?.get_string('accent-color')] ?? '#8ce8c3'; }
+        catch { return '#8ce8c3'; }
+    }
+    notifyStatus(message) { try { Main.notify('SnapTess', message); } catch { /* unavailable in tests */ } }
+    updatePanelStatus() {
+        if (!this.statusItem) return;
+        const monitor = this.currentMonitor(), space = this.activeSpace(monitor);
+        const preset = this.options(monitor, space).preset;
+        this.statusItem.label.text = `${this.running ? 'Active' : 'Paused'}  ·  ${preset}  ·  Space ${space + 1}`;
+    }
+    hideGuides() { this.border.hide(); this.preview.hide(); this.previewLabel.hide(); }
     showRect(actor, rect) {
         const appearing = !actor.visible;
         actor.set_position(rect.x, rect.y); actor.set_size(rect.width, rect.height); actor.show();
@@ -734,7 +759,7 @@ export default class SnapTess extends Extension {
             !this.windows(w.get_monitor()).includes(w)) {
             this.border.hide(); return;
         }
-        const borderColor = this.swapMode ? '#ff808b' : '#8ce8c3';
+        const borderColor = this.swapMode ? '#ff808b' : this.accentColor();
         this.border.set_style(
             `background-color: transparent; background-image: none; border: 2px solid ${borderColor}; border-radius: 12px; box-shadow: none;`,
         );
@@ -844,6 +869,9 @@ export default class SnapTess extends Extension {
         } finally { this.busy = false; }
         this.spaceMenu.label.text = `Monitor spaces · ${space + 1}`;
         this.tile(false);
+        this.updatePanelStatus();
+        try { Main.osdWindowManager.show(monitor, this.icon, `SnapTess · Space ${space + 1}`, null); }
+        catch { this.notifyStatus(`Space ${space + 1}`); }
     }
 
     grabBegin(w, op) {
@@ -873,6 +901,17 @@ export default class SnapTess extends Extension {
                 if (index >= 0) {
                     this.drag.target = {monitor, index};
                     this.showRect(this.preview, rects[index]);
+                    const from = slots.indexOf(w), targetWindow = slots[index];
+                    let arrow = '';
+                    if (from >= 0 && from !== index) {
+                        const a = rects[from], b = rects[index];
+                        const dx = b.x - a.x, dy = b.y - a.y;
+                        arrow = Math.abs(dx) >= Math.abs(dy) ? (dx > 0 ? ' →' : ' ←') : (dy > 0 ? ' ↓' : ' ↑');
+                    }
+                    const app = targetWindow && targetWindow !== w ? this.appId(targetWindow).replace(/\.desktop$/, '') : 'empty';
+                    this.previewLabel.text = `Tile ${String(index + 1).padStart(2, '0')}${arrow} · ${app}`;
+                    this.previewLabel.set_position(rects[index].x + 12, rects[index].y + 12);
+                    this.previewLabel.show();
                 }
             } else { this.drag.target = null; this.preview.hide(); }
             this.dragTimer = this.later(32, tick);
@@ -951,11 +990,13 @@ export default class SnapTess extends Extension {
         this.profiles[this.profileKey(monitor, space)] = {preset, apps: live.map(w => this.appId(w))};
         this.settings.set_string('profiles', JSON.stringify(this.profiles));
         this.tile(true, true);
+        this.updatePanelStatus();
+        this.notifyStatus(`Layout applied · ${live.length} windows`);
     }
 
     disable() {
         this.studio?.dialog.destroy(); this.studio = null;
-        this.setRunning(false);
+        this.setRunning(false, true);
         this.exitSwap();
         for (const name of Object.keys(this.bindings)) Main.wm.removeKeybinding(name);
         for (const id of this.sources) GLib.Source.remove(id);
@@ -969,6 +1010,7 @@ export default class SnapTess extends Extension {
         this.records.clear();
         Main.layoutManager.removeChrome(this.border); this.border.destroy();
         Main.layoutManager.removeChrome(this.preview); this.preview.destroy();
+        Main.layoutManager.removeChrome(this.previewLabel); this.previewLabel.destroy();
         this.indicator.destroy();
         this.settings = null;
     }
