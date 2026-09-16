@@ -20,6 +20,9 @@
 .snaptess-drag-zone.source { border: 3px solid #ff9b91; }
 .snaptess-drag-zone.target { border: 3px solid #8ce8c3; }
 .snaptess-drag-flow { background-color: rgba(16,22,29,0.94); border: 1px solid #8ce8c3; border-radius: 18px; padding: 8px 12px; spacing: 9px; color: #b5f7db; font-size: 18px; font-weight: 900; }
+.snaptess-space-backdrop { background-color: rgba(16,22,29,0.93); }
+.snaptess-space-osd { background-color: rgba(23,30,38,0.97); border: 2px solid #8ce8c3; border-radius: 24px; padding: 0; box-shadow: 0 14px 42px rgba(0,0,0,0.46); }
+.snaptess-space-osd-label { color: #ecf4f2; font-size: 22px; font-weight: 900; letter-spacing: 2px; text-align: center; }
 .snaptess-studio { background-color: #171e26; border: 1px solid #35454c; border-radius: 24px; padding: 22px; color: #ecf4f2; }
 .snaptess-header { spacing: 18px; margin-bottom: 14px; }
 .snaptess-eyebrow { color: #8ce8c3; font-size: 11px; font-weight: 800; letter-spacing: 3px; margin-bottom: 8px; }
