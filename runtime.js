@@ -11,7 +11,7 @@ import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js';
 import {layout, fitMinimumSize, frameScalePivot, nearestSlot, directionalSlot, reconcileSlots} from './lib/layout.js';
 import {Studio} from './lib/studio.js';
 
-const RUNTIME_REVISION = 10;
+const RUNTIME_REVISION = 18;
 const RESTORE_STABILIZE_MS = 1400;
 const RESTORE_QUIET_MS = 120;
 const MAX_RESTORE_MOVES = 8;
@@ -64,9 +64,47 @@ export default class SnapTess extends Extension {
         this.swapFromGuide = new St.Widget({style_class: 'snaptess-swap-guide source', reactive: false, visible: false});
         this.swapToGuide = new St.Widget({style_class: 'snaptess-swap-guide target', reactive: false, visible: false});
         this.swapArrow = new St.Label({style_class: 'snaptess-swap-arrow', reactive: false, visible: false});
+        this.windowActions = new St.BoxLayout({orientation: Clutter.Orientation.VERTICAL,
+            style_class: 'snaptess-window-actions', reactive: true, visible: false, width: 44, height: 176});
+        this.windowActionHandle = new St.Button({style_class: 'snaptess-window-action-handle',
+            accessible_name: 'Show window actions', reactive: true, can_focus: true,
+            visible: false, width: 12, height: 48});
+        this.windowActionHandle.connect('enter-event', () => this.showWindowActions());
+        this.windowActionHandle.connect('clicked', () => this.showWindowActions());
+        const actionButton = (name, icon, callback, style = '') => {
+            const actor = new St.Button({style_class: `snaptess-window-action ${style}`.trim(),
+                accessible_name: name, can_focus: true, reactive: true, width: 36, height: 36,
+                child: new St.Icon({icon_name: icon, icon_size: 17})});
+            actor.connect('clicked', callback);
+            this.windowActions.add_child(actor);
+            return actor;
+        };
+        this.floatAction = actionButton('Float or tile window', 'window-new-symbolic', () => {
+            this.toggleFloating(); this.hideWindowActions();
+        });
+        this.minimizeAction = actionButton('Minimize window', 'window-minimize-symbolic', () => {
+            const w = global.display.focus_window;
+            if (this.records.has(w)) w.minimize();
+            this.hideWindowActions();
+        });
+        this.maximizeAction = actionButton('Maximize or restore window', 'window-maximize-symbolic', () => {
+            const w = global.display.focus_window;
+            if (!this.records.has(w)) return;
+            if (w.get_maximize_flags()) w.unmaximize(); else w.maximize();
+            this.hideWindowActions();
+        });
+        this.closeAction = actionButton('Close window', 'window-close-symbolic', () => {
+            const w = global.display.focus_window;
+            if (this.records.has(w)) w.delete(global.get_current_time());
+            this.hideWindowActions();
+        }, 'danger');
+        this.windowActions.connect('enter-event', () => { this.cancel(this.actionsTimer); this.actionsTimer = 0; });
+        this.windowActions.connect('leave-event', () => this.scheduleWindowActionsHide(350));
         // Keep the focus outline with window content. Shell chrome (panel,
         // Dash-to-Dock, OSDs) must always paint above it.
         global.window_group.add_child(this.border);
+        global.window_group.add_child(this.windowActionHandle);
+        global.window_group.add_child(this.windowActions);
         Main.layoutManager.addChrome(this.preview);
         Main.layoutManager.addChrome(this.previewLabel);
         Main.layoutManager.addChrome(this.swapFromGuide);
@@ -89,7 +127,18 @@ export default class SnapTess extends Extension {
             this.later(160, () => this.schedule(true));
         });
         this.connect(global.display, 'notify::focus-window', () => this.focusChanged());
-        this.connect(global.display, 'restacked', () => this.updateBorder());
+        this.connect(global.display, 'restacked', () => this.windowsRestacked());
+        this.connect(global.stage, 'captured-event', (_stage, event) => {
+            if (event.type() !== Clutter.EventType.MOTION || this.windowActions.visible) return Clutter.EVENT_PROPAGATE;
+            const w = global.display.focus_window, record = this.records.get(w);
+            if (!this.running || !record || this.drag || this.studio || Main.overview.visible || w.minimized || w.fullscreen)
+                return Clutter.EVENT_PROPAGATE;
+            const rect = record.floating ? w.get_frame_rect() : record.tileRect ?? w.get_frame_rect();
+            const [x, y] = event.get_coords();
+            if (x >= rect.x + rect.width - 48 && x <= rect.x + rect.width + 2 && y >= rect.y && y <= rect.y + rect.height)
+                this.showWindowActions();
+            return Clutter.EVENT_PROPAGATE;
+        });
         this.connect(global.display, 'grab-op-begin', (_d, w, op) => this.grabBegin(w, op));
         this.connect(global.display, 'grab-op-end', () => this.grabEnd());
         this.connect(global.workspace_manager, 'active-workspace-changed', () => {
@@ -798,7 +847,9 @@ export default class SnapTess extends Extension {
         this.cancel(this.swapGuideTimer); this.swapGuideTimer = 0;
         this.swapFromGuide.hide(); this.swapToGuide.hide(); this.swapArrow.hide();
     }
-    hideGuides() { this.border.hide(); this.preview.hide(); this.previewLabel.hide(); this.hideSwapGuides(); }
+    hideGuides() {
+        this.border.hide(); this.preview.hide(); this.previewLabel.hide(); this.hideSwapGuides(); this.hideWindowActions();
+    }
     showSwapGuides(from, to, direction) {
         this.hideSwapGuides();
         this.showRect(this.swapFromGuide, from); this.showRect(this.swapToGuide, to);
@@ -842,13 +893,87 @@ export default class SnapTess extends Extension {
             `background-color: transparent; background-image: none; border: 2px solid ${borderColor}; border-radius: 12px; box-shadow: none;`,
         );
         this.showRect(this.border, record.tileRect ?? w.get_frame_rect());
+        this.stackWindowOverlays(w);
+    }
+    stackWindowOverlays(w) {
         const windowActor = this.windowActor(w);
-        if (windowActor?.get_parent() === global.window_group)
-            global.window_group.set_child_above_sibling(this.border, windowActor);
+        if (windowActor?.get_parent() !== global.window_group) return;
+        global.window_group.set_child_above_sibling(this.border, windowActor);
+        global.window_group.set_child_above_sibling(this.windowActionHandle, this.border);
+        global.window_group.set_child_above_sibling(this.windowActions, this.windowActionHandle);
+    }
+    windowsRestacked() {
+        const w = global.display.focus_window;
+        this.updateBorder(); this.stackWindowOverlays(w);
+        // Some Qt and terminal clients raise their actor without producing the
+        // focus notification used by the normal path.
+        if (w && w !== this.actionWindow && !this.windowActions.visible && !this.windowActionHandle.visible)
+            this.queueWindowActions(w);
+    }
+    scheduleWindowActionsHide(delay = 1600) {
+        this.cancel(this.actionsTimer);
+        this.actionsTimer = this.later(delay, () => {
+            this.actionsTimer = 0; this.windowActions.hide(); this.showWindowActionHandle();
+        });
+    }
+    queueWindowActions(w, delay = 140) {
+        if (this.actionsShowTimer && this.pendingActionWindow === w) return;
+        this.cancel(this.actionsShowTimer);
+        this.pendingActionWindow = w;
+        this.actionsShowTimer = this.later(delay, () => {
+            this.actionsShowTimer = 0;
+            this.pendingActionWindow = null;
+            if (global.display.focus_window === w) this.showWindowActions();
+        });
+    }
+    hideWindowActions() {
+        this.cancel(this.actionsShowTimer); this.actionsShowTimer = 0;
+        this.pendingActionWindow = null;
+        this.cancel(this.actionsTimer); this.actionsTimer = 0;
+        this.windowActions.hide(); this.windowActionHandle.hide();
+    }
+    showWindowActionHandle() {
+        const w = global.display.focus_window, record = this.records.get(w);
+        if (!this.running || !record || this.drag || this.studio || Main.overview.visible || w.minimized || w.fullscreen) {
+            this.windowActionHandle.hide(); return;
+        }
+        const rect = record.floating ? w.get_frame_rect() : record.tileRect ?? w.get_frame_rect();
+        this.windowActionHandle.set_position(rect.x + Math.max(2, rect.width - 14),
+            rect.y + Math.max(8, Math.round((rect.height - 48) / 2)));
+        this.stackWindowOverlays(w);
+        this.windowActionHandle.show();
+    }
+    showWindowActions() {
+        const w = global.display.focus_window, record = this.records.get(w);
+        if (!this.running || !record || this.drag || this.studio || Main.overview.visible || w.minimized || w.fullscreen) {
+            this.hideWindowActions(); return;
+        }
+        const rect = record.floating ? w.get_frame_rect() : record.tileRect ?? w.get_frame_rect();
+        this.actionWindow = w;
+        this.windowActionHandle.hide();
+        const height = 176;
+        this.windowActions.set_position(rect.x + Math.max(4, rect.width - 52),
+            rect.y + Math.max(8, Math.round((rect.height - height) / 2)));
+        this.floatAction[record.floating ? 'add_style_class_name' : 'remove_style_class_name']('selected');
+        this.maximizeAction.child.icon_name = w.get_maximize_flags() ? 'window-restore-symbolic' : 'window-maximize-symbolic';
+        this.stackWindowOverlays(w);
+        const appearing = !this.windowActions.visible;
+        this.windowActions.show();
+        if (appearing && this.settings.get_boolean('animations')) {
+            this.windowActions.opacity = 0;
+            this.windowActions.translation_x = 8;
+            this.windowActions.ease({opacity: 255, translation_x: 0, duration: 140,
+                mode: Clutter.AnimationMode.EASE_OUT_QUAD});
+        }
+        this.scheduleWindowActionsHide();
     }
     focusChanged() {
         if (this.drag && !global.display.is_grabbed()) this.grabEnd();
-        else this.updateBorder();
+        else {
+            this.updateBorder();
+            const w = global.display.focus_window;
+            if (w) this.queueWindowActions(w);
+        }
     }
 
     toggleFloating() {
@@ -966,7 +1091,7 @@ export default class SnapTess extends Extension {
         this.traceWindow(w, 'grab-begin');
         this.drag = {window: w, monitor: w.get_monitor(), target: null,
             checkpoint: this.captureCheckpoint()};
-        this.border.hide();
+        this.border.hide(); this.hideWindowActions();
         const tick = () => {
             if (!this.drag) return;
             if (!global.display.is_grabbed()) {
@@ -1029,6 +1154,7 @@ export default class SnapTess extends Extension {
                 if (from === destinationIndex) {
                     this.place(w, this.records.get(w).tileRect);
                     this.updateBorder();
+                    this.queueWindowActions(w);
                     return;
                 }
                 if (from >= 0) {
@@ -1047,6 +1173,7 @@ export default class SnapTess extends Extension {
             this.groups.set(key, slots);
         }
         this.tile(true);
+        this.queueWindowActions(w);
     }
 
     monitorsChanged() {
@@ -1106,6 +1233,8 @@ export default class SnapTess extends Extension {
         }
         this.records.clear();
         this.border.destroy();
+        this.windowActionHandle.destroy();
+        this.windowActions.destroy();
         Main.layoutManager.removeChrome(this.preview); this.preview.destroy();
         Main.layoutManager.removeChrome(this.previewLabel); this.previewLabel.destroy();
         Main.layoutManager.removeChrome(this.swapFromGuide); this.swapFromGuide.destroy();

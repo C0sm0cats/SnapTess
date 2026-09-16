@@ -25,6 +25,8 @@ export async function run() {
     const app=await waitRuntime(loader);
     assert(app,'runtime loaded');
     assert(app.border.get_parent()===global.window_group,'focus border stays below Shell chrome');
+    assert(app.windowActions.get_parent()===global.window_group,'window actions stay below Shell chrome');
+    assert(app.windowActionHandle.get_parent()===global.window_group,'window action handle stays below Shell chrome');
     assert(hotRoot.query_exists(null),'hot reload staging exists while enabled');
     assert(!app.running,'starts without moving windows');
     for(let i=0;i<4;i++) await Scripting.createTestWindow({width:320,height:240});
@@ -44,17 +46,38 @@ export async function run() {
     stubborn.move_resize_frame(false,stubbornTarget.x,stubbornTarget.y,stubbornTarget.width+180,stubbornTarget.height+140);
     await pause();
     const stubbornFrame=stubborn.get_frame_rect();
-    assert(stubbornFrame.width>stubbornTarget.width || stubbornFrame.height>stubbornTarget.height,'simulated stubborn window grows beyond its tile');
-    assert(stubbornRecord.visualScale===1,'late oversized frame keeps native scale');
-    assert(Math.abs(stubbornFrame.x-stubbornTarget.x)<=1 && Math.abs(stubbornFrame.y-stubbornTarget.y)<=1,
-        'stubborn backing frame stays anchored to its tile');
+    assert(Math.abs(stubbornFrame.x-stubbornTarget.x)<=1 && Math.abs(stubbornFrame.y-stubbornTarget.y)<=1 &&
+        Math.abs(stubbornFrame.width-stubbornTarget.width)<=1 && Math.abs(stubbornFrame.height-stubbornTarget.height)<=1,
+        'late oversized frame is pulled back into its tile');
+    assert(stubbornRecord.visualScale===1,'accepted size repair keeps native scale');
     const stubbornActor=app.windowActor(stubborn);
     let [actorScaleX,actorScaleY]=stubbornActor.get_scale();
-    assert(actorScaleX===1 && actorScaleY===1,'final window actor stays at native scale');
+    assert(actorScaleX===1 && actorScaleY===1,'repaired window actor stays at native scale');
     stubbornActor.emit('effects-completed');
     await pause();
     [actorScaleX,actorScaleY]=stubbornActor.get_scale();
     assert(actorScaleX===1 && actorScaleY===1,'effects completion preserves native scale');
+    stubborn.activate(global.get_current_time()); await pause();
+    app.actionWindow=null; app.hideWindowActions(); app.windowsRestacked(); await Scripting.sleep(160);
+    assert(app.windowActions.visible,'client restacking can reveal actions without a focus notification');
+    app.hideWindowActions();
+    app.showWindowActions();
+    assert(app.windowActions.visible && app.windowActions.get_children().length===4,
+        'focused window exposes four contextual actions');
+    global.window_group.set_child_above_sibling(stubbornActor,null);
+    app.updateBorder(); app.stackWindowOverlays(stubborn);
+    const stack=global.window_group.get_children();
+    assert(stack.indexOf(app.border)>stack.indexOf(stubbornActor) &&
+        stack.indexOf(app.windowActionHandle)>stack.indexOf(app.border) &&
+        stack.indexOf(app.windowActions)>stack.indexOf(app.windowActionHandle),
+        'window restacking keeps contextual actions above delayed client raises');
+    app.scheduleWindowActionsHide(0); await Scripting.sleep(20);
+    assert(!app.windowActions.visible && app.windowActionHandle.visible,
+        'hidden window actions leave a hoverable edge handle');
+    app.showWindowActions();
+    assert(app.windowActions.visible && !app.windowActionHandle.visible,
+        'hovering the edge handle restores window actions');
+    app.hideWindowActions();
     app.place(stubborn,stubbornTarget); await pause();
     [actorScaleX,actorScaleY]=stubbornActor.get_scale();
     assert(actorScaleX===1 && actorScaleY===1,'unchanged placement preserves native scale');
