@@ -41,6 +41,10 @@ export async function run() {
         const a=rects[i],b=rects[j];
         assert(a.x+a.width<=b.x || b.x+b.width<=a.x || a.y+a.height<=b.y || b.y+b.height<=a.y,'non-overlapping native frames');
     }
+    app.showDragGuides(windows[0],windows[1],rects[0],rects[1]);
+    assert(app.dragSourceGuide.visible && app.dragTargetGuide.visible && app.dragFlow.visible &&
+        app.dragFlow.get_children().length===3,'drag feedback shows source, target and application flow');
+    app.hideDragGuides();
     const stubborn=windows[0], stubbornRecord=app.records.get(stubborn);
     const stubbornTarget={...stubbornRecord.tileRect};
     stubborn.move_resize_frame(false,stubbornTarget.x,stubbornTarget.y,stubbornTarget.width+180,stubbornTarget.height+140);
@@ -64,6 +68,9 @@ export async function run() {
     app.showWindowActions();
     assert(app.windowActions.visible && app.windowActions.get_children().length===4,
         'focused window exposes four contextual actions');
+    app.showWindowActionTooltip(app.floatAction);
+    assert(app.windowActionTooltip.visible && app.windowActionTooltip.text.length>0,
+        'window actions expose contextual tooltips');
     global.window_group.set_child_above_sibling(stubbornActor,null);
     app.updateBorder(); app.stackWindowOverlays(stubborn);
     const stack=global.window_group.get_children();
