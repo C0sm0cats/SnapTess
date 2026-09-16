@@ -18,7 +18,7 @@ Automatic window tiling for **GNOME Shell 50 · Wayland**.
 
 SnapTess brings the workflow of [SmartGrid for Windows](https://github.com/C0sm0cats/SmartGrid) to GNOME as a standalone extension. No Python daemon, root access, or unsafe Shell mode. It starts paused: enabling the extension does not rearrange your windows.
 
-> **0.1 preview:** GNOME Shell 50 is the supported target. This is not a universal Linux window manager, and it does not claim exact Windows behavior. See the [porting matrix](docs/PORTING.md).
+> **Compatibility:** GNOME Shell 50 on Wayland is the supported target. This is not a universal Linux window manager, and it does not claim exact Windows behavior. See the [porting matrix](docs/PORTING.md).
 
 ## What it does
 
@@ -30,29 +30,19 @@ SnapTess brings the workflow of [SmartGrid for Windows](https://github.com/C0sm0
 
 ## Install
 
-Requires GNOME Shell **50**, `gnome-extensions`, and `glib-compile-schemas`. No Node.js is needed to run the extension.
+Requires GNOME Shell **50** on Wayland and the `gnome-extensions` command. No build tools or source checkout are needed.
 
-```bash
-git clone https://github.com/C0sm0cats/SnapTess.git
-cd SnapTess
-./scripts/install.sh
-```
-
-The installer links this checkout directly into `~/.local/share/gnome-shell/extensions/`, so future source changes are visible to GNOME immediately. On first installation, or when migrating from an older SnapTess build that predates the hot-reload loader, GNOME may need **one logout/login** to discover/load the new extension module. After that, normal updates do not require restarting GNOME Shell.
-
-Open the grid icon in the top panel, or press **Ctrl+Alt+T** to begin arranging. **Ctrl+Alt+P** opens Layout Studio. Stop with **Ctrl+Alt+Q** to restore the original window geometry.
-
-If another tiling extension is enabled, disable its automatic placement and overlapping shortcuts before using SnapTess. The installer never changes other extensions.
-
-### Install a packaged build
-
-Download the `.shell-extension.zip` from [Releases](https://github.com/C0sm0cats/SnapTess/releases), then:
+Download `snaptess@c0sm0cats.github.io.shell-extension.zip` from the [latest release](https://github.com/C0sm0cats/SnapTess/releases/latest). In the folder containing the downloaded ZIP, run:
 
 ```bash
 gnome-extensions install --force snaptess@c0sm0cats.github.io.shell-extension.zip
 ```
 
-The same first-install logout/login requirement applies. To remove SnapTess:
+On first installation, log out and back in so GNOME discovers the extension. Then enable SnapTess in the Extensions app or run `gnome-extensions enable snaptess@c0sm0cats.github.io`.
+
+Open the grid icon in the top panel, or press **Ctrl+Alt+T** to begin arranging. **Ctrl+Alt+P** opens Layout Studio. Stop with **Ctrl+Alt+Q** to restore the original window geometry.
+
+If another tiling extension is enabled, disable its automatic placement and overlapping shortcuts before using SnapTess. To remove SnapTess:
 
 ```bash
 gnome-extensions disable snaptess@c0sm0cats.github.io
@@ -81,42 +71,6 @@ Spaces are **session-local window groups**, not replacement GNOME workspaces. Ea
 Layouts and application order are saved by native workspace index, monitor connector and space number. Profiles reorder **existing** windows; they do not launch applications or restore a desktop session after login. Multiple windows from the same app retain their current relative order.
 
 Maximizing or fullscreening a managed window freezes automatic layout changes on that display. Restoring resumes tiling. Explicitly applying a layout can unmaximize windows; it never exits fullscreen. Applications can impose minimum client sizes, which GNOME still enforces. If a requested tile is smaller, SnapTess keeps the real client at an allowed size and uniformly scales its compositor actor into the slot, preventing overlap while preserving aspect ratio.
-
-## Development
-
-```bash
-npm test                  # geometry and slot reconciliation; no dependencies
-./scripts/build.sh        # dist/snaptess@c0sm0cats.github.io.shell-extension.zip
-./scripts/test-shell.sh   # real GNOME 50 headless integration test
-```
-
-### Hot reload on Wayland
-
-GNOME caches imported extension modules for the lifetime of the Shell process. SnapTess keeps `extension.js` as a small stable loader and loads `runtime.js` plus `lib/` from a unique runtime path on every enable.
-
-There is only one local installer:
-
-```bash
-./scripts/install.sh
-```
-
-It symlinks the checked-out repository into `~/.local/share/gnome-shell/extensions/`. Once the loader has been activated, editing the source or running `git pull` requires no reinstall: simply disable and re-enable SnapTess from the Extensions app to load the new `runtime.js` and `lib/` code.
-
-Hot-reload snapshots are staged under `$XDG_RUNTIME_DIR/snaptess-hot-reload/` while the extension is enabled. Disabling SnapTess recursively removes that staging directory, including stale snapshots left by earlier activations.
-
-When migrating from a build that predates the loader, the old `extension.js` can still be cached in the current Shell process, so **one logout/login is required once**. Future source updates then reload through disable/enable without restarting GNOME Shell.
-
-The Shell test runs on a private session bus with temporary XDG directories. It does not load SnapTess into your current desktop. Test logs from system services can contain unrelated portal/accessibility warnings; SnapTess assertions fail the process.
-
-For the two-monitor integration test:
-
-```bash
-dbus-run-session -- gnome-shell-test-tool --headless --disable-animations \
-  --wrap scripts/two-monitors.sh \
-  --extension dist/snaptess@c0sm0cats.github.io.shell-extension.zip tests/shell.js
-```
-
-`lib/layout.js` has no GNOME imports. `extension.js` is the cache-busting loader; `runtime.js` owns the GNOME adapter and lifecycle; `lib/studio.js` owns the modal editor; `prefs.js` uses GTK4/libadwaita. Other desktop backends may be added later without changing the project's name.
 
 ## Contributing
 
