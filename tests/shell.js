@@ -171,6 +171,21 @@ export async function run() {
     const library=app.studio.canvas.get_first_child().get_child();
     library.get_first_child().emit('clicked',1);
     assert(app.studio.draft.includes(unassigned) && !app.studio.showLibrary,'window library assigns to draft');
+    const studioPreset=app.studio.preset, scaledRecord=app.records.get(app.studio.draft[0]);
+    const originalScale=scaledRecord.visualScale;
+    scaledRecord.visualScale=0.8;
+    app.studio.preset='4x3'; app.studio.showPreviews=true; app.studio.render(); await pause();
+    const compactCard=app.studio.canvas.get_first_child();
+    const scaleBadge=compactCard.get_child().get_children().find(child =>
+        child.has_style_class_name?.('snaptess-scale-badge'));
+    assert(compactCard.height<130 && scaleBadge,'compact preview card includes the scale badge');
+    const [, cardY]=compactCard.get_transformed_position();
+    const [, badgeY]=scaleBadge.get_transformed_position();
+    const [, badgeHeight]=scaleBadge.get_transformed_size();
+    assert(badgeY>=cardY && badgeY+badgeHeight<=cardY+compactCard.height,
+        'scale badge stays fully inside a compact preview card');
+    scaledRecord.visualScale=originalScale;
+    app.studio.preset=studioPreset; app.studio.showPreviews=false; app.studio.render();
     if (GLib.getenv('SNAPTESS_SCREENSHOT')) {
         const stream=Gio.File.new_for_path(GLib.getenv('SNAPTESS_SCREENSHOT')).replace(null,false,Gio.FileCreateFlags.NONE,null);
         const m=Main.layoutManager.monitors[0];
