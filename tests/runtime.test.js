@@ -233,6 +233,34 @@ test('only configured applications use scale-to-fit fallback', () => {
     assert.equal(h.actor.scale_y, 0.5);
 });
 
+test('scaled backing size does not accumulate across tile aspect changes', () => {
+    const h = harness();
+    h.app.settings.get_strv = key => key === 'scaled-apps' ? ['test.desktop'] : [];
+    const first = {...h.slot, width: 400, height: 300};
+    h.app.place(h.w, first);
+    h.commit({width: 800, height: 500}); h.advance(100);
+    assert.equal(h.record.scaleMinimum.width, 800);
+    assert.equal(h.record.scaleMinimum.height, 500);
+    h.commit({width: 800, height: 600}); h.advance(200);
+    assert.equal(h.record.visualScale, 0.5);
+
+    const second = {...first, width: 300, height: 300};
+    h.app.place(h.w, second);
+    assert.equal(h.record.backingRect.width, 800);
+    assert.equal(h.record.backingRect.height, 800);
+    h.commit({width: 800, height: 800}); h.advance(200);
+    assert.equal(h.record.visualScale, 0.375);
+
+    h.app.place(h.w, first);
+    assert.equal(h.record.backingRect.width, 800);
+    assert.equal(h.record.backingRect.height, 600);
+    assert.equal(h.record.visualScale, 0.375, 'old backing frame remains contained until resize commits');
+    h.commit({width: 800, height: 600}); h.advance(200);
+    assert.equal(h.record.visualScale, 0.5);
+    assert.equal(h.record.scaleMinimum.width, 800);
+    assert.equal(h.record.scaleMinimum.height, 500);
+});
+
 test('moving a scaled exception keeps its fitted size during placement', () => {
     const h = harness();
     h.app.settings.get_strv = key => key === 'scaled-apps' ? ['test.desktop'] : [];
