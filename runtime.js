@@ -11,7 +11,7 @@ import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js';
 import {layout, fitMinimumSize, frameScalePivot, nearestSlot, directionalSlot, reconcileSlots} from './lib/layout.js';
 import {Studio} from './lib/studio.js';
 
-const RUNTIME_REVISION = 9;
+const RUNTIME_REVISION = 10;
 const RESTORE_STABILIZE_MS = 1400;
 const RESTORE_QUIET_MS = 120;
 const MAX_RESTORE_MOVES = 8;
@@ -64,7 +64,9 @@ export default class SnapTess extends Extension {
         this.swapFromGuide = new St.Widget({style_class: 'snaptess-swap-guide source', reactive: false, visible: false});
         this.swapToGuide = new St.Widget({style_class: 'snaptess-swap-guide target', reactive: false, visible: false});
         this.swapArrow = new St.Label({style_class: 'snaptess-swap-arrow', reactive: false, visible: false});
-        Main.layoutManager.addChrome(this.border);
+        // Keep the focus outline with window content. Shell chrome (panel,
+        // Dash-to-Dock, OSDs) must always paint above it.
+        global.window_group.add_child(this.border);
         Main.layoutManager.addChrome(this.preview);
         Main.layoutManager.addChrome(this.previewLabel);
         Main.layoutManager.addChrome(this.swapFromGuide);
@@ -87,6 +89,7 @@ export default class SnapTess extends Extension {
             this.later(160, () => this.schedule(true));
         });
         this.connect(global.display, 'notify::focus-window', () => this.focusChanged());
+        this.connect(global.display, 'restacked', () => this.updateBorder());
         this.connect(global.display, 'grab-op-begin', (_d, w, op) => this.grabBegin(w, op));
         this.connect(global.display, 'grab-op-end', () => this.grabEnd());
         this.connect(global.workspace_manager, 'active-workspace-changed', () => {
@@ -839,6 +842,9 @@ export default class SnapTess extends Extension {
             `background-color: transparent; background-image: none; border: 2px solid ${borderColor}; border-radius: 12px; box-shadow: none;`,
         );
         this.showRect(this.border, record.tileRect ?? w.get_frame_rect());
+        const windowActor = this.windowActor(w);
+        if (windowActor?.get_parent() === global.window_group)
+            global.window_group.set_child_above_sibling(this.border, windowActor);
     }
     focusChanged() {
         if (this.drag && !global.display.is_grabbed()) this.grabEnd();
@@ -1099,7 +1105,7 @@ export default class SnapTess extends Extension {
             for (const id of r.signals) w.disconnect(id);
         }
         this.records.clear();
-        Main.layoutManager.removeChrome(this.border); this.border.destroy();
+        this.border.destroy();
         Main.layoutManager.removeChrome(this.preview); this.preview.destroy();
         Main.layoutManager.removeChrome(this.previewLabel); this.previewLabel.destroy();
         Main.layoutManager.removeChrome(this.swapFromGuide); this.swapFromGuide.destroy();

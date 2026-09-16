@@ -24,6 +24,7 @@ export async function run() {
     ]));
     const app=await waitRuntime(loader);
     assert(app,'runtime loaded');
+    assert(app.border.get_parent()===global.window_group,'focus border stays below Shell chrome');
     assert(hotRoot.query_exists(null),'hot reload staging exists while enabled');
     assert(!app.running,'starts without moving windows');
     for(let i=0;i<4;i++) await Scripting.createTestWindow({width:320,height:240});
