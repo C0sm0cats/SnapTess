@@ -2,6 +2,7 @@ import Clutter from 'gi://Clutter';
 import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
 import Meta from 'gi://Meta';
+import Pango from 'gi://Pango';
 import Shell from 'gi://Shell';
 import St from 'gi://St';
 import {Extension} from 'resource:///org/gnome/shell/extensions/extension.js';
@@ -11,7 +12,7 @@ import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js';
 import {layout, fitMinimumSize, frameScalePivot, nearestSlot, directionalSlot, reconcileSlots} from './lib/layout.js';
 import {Studio} from './lib/studio.js';
 
-const RUNTIME_REVISION = 19;
+const RUNTIME_REVISION = 26;
 const RESTORE_STABILIZE_MS = 1400;
 const RESTORE_QUIET_MS = 120;
 const MAX_RESTORE_MOVES = 8;
@@ -112,6 +113,7 @@ export default class SnapTess extends Extension {
         global.window_group.add_child(this.windowActions);
         global.window_group.add_child(this.windowActionTooltip);
         this.motionGuides = new Set();
+        this.spaceTransitions = new Set();
         this.dragSourceGuide = new St.Widget({style_class: 'snaptess-drag-zone source', reactive: false, visible: false});
         this.dragTargetGuide = new St.Widget({style_class: 'snaptess-drag-zone target', reactive: false, visible: false});
         this.dragFlow = new St.BoxLayout({style_class: 'snaptess-drag-flow', reactive: false, visible: false});
@@ -1158,10 +1160,88 @@ export default class SnapTess extends Extension {
         this.tile(false);
     }
 
+    createSpaceTransition(monitor, oldSpace, newSpace, outgoing, incoming) {
+        const geometry = Main.layoutManager.monitors[monitor];
+        if (!geometry) return null;
+        for (const previous of this.spaceTransitions) previous.destroy();
+        this.spaceTransitions.clear();
+        const layer = new St.Widget({layout_manager: new Clutter.FixedLayout(), reactive: false,
+            width: global.stage.width, height: global.stage.height});
+        const backdrop = new St.Widget({style_class: 'snaptess-space-backdrop', reactive: false});
+        backdrop.set_position(geometry.x, geometry.y); backdrop.set_size(geometry.width, geometry.height);
+        layer.add_child(backdrop);
+        const direction = newSpace > oldSpace ? 1 : -1;
+        const shift = Math.round(geometry.width * 0.16);
+        const clones = [];
+        const addClone = (w, entering) => {
+            const actor = this.windowActor(w), record = this.records.get(w);
+            if (!actor || !record) return;
+            const rect = record.tileRect ?? w.get_frame_rect();
+            const clone = new Clutter.Clone({source: actor, reactive: false});
+            clone.set_position(rect.x + (entering ? direction * shift : 0), rect.y);
+            clone.set_size(rect.width, rect.height);
+            clone.opacity = entering ? 0 : 255;
+            layer.add_child(clone);
+            clones.push({clone, rect, entering});
+        };
+        outgoing.forEach(w => addClone(w, false));
+        incoming.forEach(w => addClone(w, true));
+        const osdLabel = new St.Label({text: `SPACE ${newSpace + 1}`, style_class: 'snaptess-space-osd-label'});
+        osdLabel.clutter_text.ellipsize = Pango.EllipsizeMode.NONE;
+        osdLabel.clutter_text.single_line_mode = true;
+        osdLabel.clutter_text.set_line_alignment(Pango.Alignment.CENTER);
+        const osd = new St.Bin({style_class: 'snaptess-space-osd', reactive: false,
+            x_align: Clutter.ActorAlign.CENTER, y_align: Clutter.ActorAlign.CENTER,
+            child: osdLabel});
+        osd.set_position(Math.round(geometry.x + geometry.width / 2 - 140),
+            Math.round(geometry.y + geometry.height / 2 - 43));
+        osd.set_size(280, 86); layer.add_child(osd);
+        global.window_group.add_child(layer);
+        this.spaceTransitions.add(layer);
+        return {layer, backdrop, osd, clones, direction, shift};
+    }
+    playSpaceTransition(transition) {
+        if (!transition) return;
+        const {layer, backdrop, osd, clones, direction, shift} = transition;
+        const animated = this.settings.get_boolean('animations');
+        const duration = animated ? 230 : 0;
+        if (animated) {
+            backdrop.opacity = 0;
+            backdrop.ease({opacity: 238, duration: 90, mode: Clutter.AnimationMode.EASE_OUT_QUAD});
+            osd.opacity = 0; osd.set_scale(0.92, 0.92);
+            osd.ease({opacity: 255, scale_x: 1, scale_y: 1, duration: 150,
+                mode: Clutter.AnimationMode.EASE_OUT_QUAD});
+        }
+        for (const {clone, rect, entering} of clones) {
+            clone.ease({x: entering ? rect.x : rect.x - direction * shift, opacity: entering ? 255 : 0,
+                duration, mode: Clutter.AnimationMode.EASE_OUT_QUAD});
+        }
+        this.later(animated ? 260 : 700, () => {
+            if (!this.spaceTransitions.has(layer)) return;
+            backdrop.ease({opacity: 0, duration: animated ? 120 : 0, mode: Clutter.AnimationMode.EASE_OUT_QUAD});
+            for (const {clone} of clones) clone.ease({opacity: 0, duration: animated ? 120 : 0,
+                mode: Clutter.AnimationMode.EASE_OUT_QUAD});
+        });
+        this.later(animated ? 1050 : 1200, () => {
+            if (!this.spaceTransitions.has(layer)) return;
+            const finish = () => { this.spaceTransitions.delete(layer); layer.destroy(); };
+            if (animated) osd.ease({opacity: 0, scale_x: 0.96, scale_y: 0.96, duration: 150,
+                mode: Clutter.AnimationMode.EASE_OUT_QUAD, onComplete: finish});
+            else finish();
+        });
+    }
+
     switchSpace(space, monitor = this.currentMonitor()) {
         if (!this.running || space === this.activeSpace(monitor)) return;
         this.exitSwap(); this.hideGuides();
         const old = this.activeSpace(monitor), workspace = global.workspace_manager.get_active_workspace();
+        const outgoing = [], incoming = [];
+        for (const [w, r] of this.records) {
+            if (w.get_monitor() !== monitor || w.get_workspace() !== workspace) continue;
+            if (r.space === old && !w.minimized) outgoing.push(w);
+            if (r.space === space && r.parked) incoming.push(w);
+        }
+        const transition = this.createSpaceTransition(monitor, old, space, outgoing, incoming);
         this.busy = true;
         try {
             for (const [w, r] of this.records) {
@@ -1175,8 +1255,7 @@ export default class SnapTess extends Extension {
         this.spaceMenu.label.text = `Monitor spaces · ${space + 1}`;
         this.tile(false);
         this.updatePanelStatus();
-        try { Main.osdWindowManager.show(monitor, this.icon, `SnapTess · Space ${space + 1}`, null); }
-        catch { this.notifyStatus(`Space ${space + 1}`); }
+        this.playSpaceTransition(transition);
     }
 
     grabBegin(w, op) {
@@ -1337,6 +1416,8 @@ export default class SnapTess extends Extension {
         this.records.clear();
         for (const guide of this.motionGuides) guide.destroy();
         this.motionGuides.clear();
+        for (const transition of this.spaceTransitions) transition.destroy();
+        this.spaceTransitions.clear();
         this.border.destroy();
         this.windowActionHandle.destroy();
         this.windowActions.destroy();

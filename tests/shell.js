@@ -114,9 +114,13 @@ export async function run() {
     windows[0].minimize(); await pause();
     assert(app.groups.get(app.key(0)).filter(Boolean).length===3,'minimize compacts');
     windows[0].unminimize(); await pause();
-    app.switchSpace(1,0); await pause();
+    app.switchSpace(1,0);
+    assert(app.spaceTransitions.size===1,'space switch uses the custom SnapTess transition');
+    await pause();
     assert(windows.every(w=>w.minimized),'space parks windows');
-    app.switchSpace(0,0); await pause();
+    app.switchSpace(0,0);
+    assert(app.spaceTransitions.size===1,'reverse space switch uses the custom transition');
+    await pause();
     assert(windows.every(w=>!w.minimized),'space restores parked windows');
     windows[0].activate(global.get_current_time()); await pause();
     app.toggleFloating(); await pause();
