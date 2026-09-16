@@ -12,7 +12,7 @@ import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js';
 import {layout, fitMinimumSize, frameScalePivot, nearestSlot, directionalSlot, reconcileSlots} from './lib/layout.js';
 import {Studio} from './lib/studio.js';
 
-const RUNTIME_REVISION = 26;
+const RUNTIME_REVISION = 27;
 const RESTORE_STABILIZE_MS = 1400;
 const RESTORE_QUIET_MS = 120;
 const MAX_RESTORE_MOVES = 8;
@@ -146,7 +146,8 @@ export default class SnapTess extends Extension {
         this.connect(global.stage, 'captured-event', (_stage, event) => {
             if (event.type() !== Clutter.EventType.MOTION || this.windowActions.visible) return Clutter.EVENT_PROPAGATE;
             const w = global.display.focus_window, record = this.records.get(w);
-            if (!this.running || !record || this.drag || this.studio || Main.overview.visible || w.minimized || w.fullscreen)
+            if (!this.running || !record || this.drag || this.studio || Main.overview.visible || w.minimized ||
+                this.isSpecialWindow(w))
                 return Clutter.EVENT_PROPAGATE;
             const rect = record.floating ? w.get_frame_rect() : record.tileRect ?? w.get_frame_rect();
             const [x, y] = event.get_coords();
@@ -300,6 +301,7 @@ export default class SnapTess extends Extension {
     specialWindowChanged(w, record) {
         const special = this.isSpecialWindow(w);
         if (special) {
+            if (global.display.focus_window === w || this.actionWindow === w) this.hideWindowActions();
             record.specialState = true;
             record.restorePending = false;
             record.restoreUntil = 0;
@@ -1014,7 +1016,8 @@ export default class SnapTess extends Extension {
     }
     showWindowActionHandle(animate = false) {
         const w = global.display.focus_window, record = this.records.get(w);
-        if (!this.running || !record || this.drag || this.studio || Main.overview.visible || w.minimized || w.fullscreen) {
+        if (!this.running || !record || this.drag || this.studio || Main.overview.visible || w.minimized ||
+            this.isSpecialWindow(w)) {
             this.windowActionHandle.hide(); return;
         }
         const rect = record.floating ? w.get_frame_rect() : record.tileRect ?? w.get_frame_rect();
@@ -1041,7 +1044,8 @@ export default class SnapTess extends Extension {
     }
     showWindowActions() {
         const w = global.display.focus_window, record = this.records.get(w);
-        if (!this.running || !record || this.drag || this.studio || Main.overview.visible || w.minimized || w.fullscreen) {
+        if (!this.running || !record || this.drag || this.studio || Main.overview.visible || w.minimized ||
+            this.isSpecialWindow(w)) {
             this.hideWindowActions(); return;
         }
         const rect = record.floating ? w.get_frame_rect() : record.tileRect ?? w.get_frame_rect();
