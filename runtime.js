@@ -11,7 +11,7 @@ import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js';
 import {layout, fitMinimumSize, frameScalePivot, nearestSlot, directionalSlot, reconcileSlots} from './lib/layout.js';
 import {Studio} from './lib/studio.js';
 
-const RUNTIME_REVISION = 18;
+const RUNTIME_REVISION = 19;
 const RESTORE_STABILIZE_MS = 1400;
 const RESTORE_QUIET_MS = 120;
 const MAX_RESTORE_MOVES = 8;
@@ -66,6 +66,8 @@ export default class SnapTess extends Extension {
         this.swapArrow = new St.Label({style_class: 'snaptess-swap-arrow', reactive: false, visible: false});
         this.windowActions = new St.BoxLayout({orientation: Clutter.Orientation.VERTICAL,
             style_class: 'snaptess-window-actions', reactive: true, visible: false, width: 44, height: 176});
+        this.windowActionTooltip = new St.Label({style_class: 'snaptess-window-action-tooltip',
+            reactive: false, visible: false});
         this.windowActionHandle = new St.Button({style_class: 'snaptess-window-action-handle',
             accessible_name: 'Show window actions', reactive: true, can_focus: true,
             visible: false, width: 12, height: 48});
@@ -76,6 +78,9 @@ export default class SnapTess extends Extension {
                 accessible_name: name, can_focus: true, reactive: true, width: 36, height: 36,
                 child: new St.Icon({icon_name: icon, icon_size: 17})});
             actor.connect('clicked', callback);
+            actor._snaptessTooltip = name;
+            actor.connect('enter-event', () => this.showWindowActionTooltip(actor));
+            actor.connect('leave-event', () => this.windowActionTooltip.hide());
             this.windowActions.add_child(actor);
             return actor;
         };
@@ -105,11 +110,19 @@ export default class SnapTess extends Extension {
         global.window_group.add_child(this.border);
         global.window_group.add_child(this.windowActionHandle);
         global.window_group.add_child(this.windowActions);
+        global.window_group.add_child(this.windowActionTooltip);
+        this.motionGuides = new Set();
+        this.dragSourceGuide = new St.Widget({style_class: 'snaptess-drag-zone source', reactive: false, visible: false});
+        this.dragTargetGuide = new St.Widget({style_class: 'snaptess-drag-zone target', reactive: false, visible: false});
+        this.dragFlow = new St.BoxLayout({style_class: 'snaptess-drag-flow', reactive: false, visible: false});
         Main.layoutManager.addChrome(this.preview);
         Main.layoutManager.addChrome(this.previewLabel);
         Main.layoutManager.addChrome(this.swapFromGuide);
         Main.layoutManager.addChrome(this.swapToGuide);
         Main.layoutManager.addChrome(this.swapArrow);
+        Main.layoutManager.addChrome(this.dragSourceGuide);
+        Main.layoutManager.addChrome(this.dragTargetGuide);
+        Main.layoutManager.addChrome(this.dragFlow);
         try {
             this.interfaceSettings = new Gio.Settings({schema_id: 'org.gnome.desktop.interface'});
             this.connect(this.interfaceSettings, 'changed::accent-color', () => this.updateBorder());
@@ -222,6 +235,7 @@ export default class SnapTess extends Extension {
             this.cancel(record.restoreTimer); record.restoreTimer = 0;
             this.cancel(record.settleTimer); record.settleTimer = 0;
             this.disconnectWindowEffects(record);
+            if (record.motionGuide) { this.motionGuides.delete(record.motionGuide); record.motionGuide.destroy(); }
             for (const id of record.signals) w.disconnect(id);
             this.records.delete(w);
             if (this.drag?.window === w) this.drag = null;
@@ -785,6 +799,7 @@ export default class SnapTess extends Extension {
         this.watchWindowEffects(w);
         const actor = this.windowActor(w), record = this.records.get(w);
         if (!record) return;
+        const previousTile = record.tileRect ? {...record.tileRect} : null;
         const reusable = !force && !restoring && !record.restorePending && !record.specialState &&
             record.tileRect && record.backingRect &&
             ['x', 'y', 'width', 'height'].every(key => Math.abs(record.tileRect[key] - rect[key]) <= 1);
@@ -808,6 +823,7 @@ export default class SnapTess extends Extension {
             }
             return;
         }
+        if (!restoring && previousTile) this.animatePlacement(w, previousTile, rect);
         const scaled = this.scalesApp(w) || record.autoScale;
         const preserveScale = scaled && actor && record.visualScale < 0.999;
         if (!preserveScale) this.resetWindowScale(w);
@@ -848,7 +864,8 @@ export default class SnapTess extends Extension {
         this.swapFromGuide.hide(); this.swapToGuide.hide(); this.swapArrow.hide();
     }
     hideGuides() {
-        this.border.hide(); this.preview.hide(); this.previewLabel.hide(); this.hideSwapGuides(); this.hideWindowActions();
+        this.border.hide(); this.preview.hide(); this.previewLabel.hide(); this.hideSwapGuides();
+        this.hideDragGuides(); this.hideWindowActions();
     }
     showSwapGuides(from, to, direction) {
         this.hideSwapGuides();
@@ -880,6 +897,52 @@ export default class SnapTess extends Extension {
             actor.ease({opacity: 255, duration: 140, mode: Clutter.AnimationMode.EASE_OUT_QUAD});
         } else if (appearing) actor.opacity = 255;
     }
+    animatePlacement(w, from, to) {
+        if (!this.settings.get_boolean('animations') ||
+            ['x', 'y', 'width', 'height'].every(key => Math.abs(from[key] - to[key]) <= 2)) return;
+        const record = this.records.get(w);
+        if (record?.motionGuide) { this.motionGuides.delete(record.motionGuide); record.motionGuide.destroy(); }
+        const app = Shell.WindowTracker.get_default().get_window_app(w);
+        const guide = new St.BoxLayout({style_class: 'snaptess-motion-guide', reactive: false,
+            x_align: Clutter.ActorAlign.CENTER, y_align: Clutter.ActorAlign.CENTER});
+        guide.add_child(app?.create_icon_texture(24) ??
+            new St.Icon({icon_name: 'application-x-executable-symbolic', icon_size: 24}));
+        guide.add_child(new St.Label({text: app?.get_name() ?? 'Window'}));
+        guide.set_position(from.x, from.y); guide.set_size(from.width, from.height);
+        global.window_group.add_child(guide);
+        this.motionGuides.add(guide);
+        if (record) record.motionGuide = guide;
+        guide.ease({x: to.x, y: to.y, width: to.width, height: to.height, opacity: 80,
+            duration: 230, mode: Clutter.AnimationMode.EASE_OUT_QUAD, onComplete: () => {
+                this.motionGuides.delete(guide);
+                if (record?.motionGuide === guide) record.motionGuide = null;
+                guide.destroy();
+            }});
+    }
+    hideDragGuides() {
+        this.dragSourceGuide?.hide(); this.dragTargetGuide?.hide(); this.dragFlow?.hide();
+        this.dragFlowKey = null;
+    }
+    showDragGuides(w, targetWindow, source, target) {
+        if (!source) return;
+        this.showRect(this.dragSourceGuide, source);
+        this.showRect(this.dragTargetGuide, target);
+        const key = `${target.x}:${target.y}:${targetWindow ? this.appId(targetWindow) : 'free'}`;
+        if (this.dragFlowKey !== key) {
+            this.dragFlowKey = key;
+            this.dragFlow.destroy_all_children();
+            const sourceApp = Shell.WindowTracker.get_default().get_window_app(w);
+            const targetApp = targetWindow ? Shell.WindowTracker.get_default().get_window_app(targetWindow) : null;
+            this.dragFlow.add_child(sourceApp?.create_icon_texture(22) ??
+                new St.Icon({icon_name: 'application-x-executable-symbolic', icon_size: 22}));
+            this.dragFlow.add_child(new St.Label({text: targetWindow ? '⇄' : '→'}));
+            if (targetWindow) this.dragFlow.add_child(targetApp?.create_icon_texture(22) ??
+                new St.Icon({icon_name: 'application-x-executable-symbolic', icon_size: 22}));
+            else this.dragFlow.add_child(new St.Icon({icon_name: 'view-grid-symbolic', icon_size: 22}));
+        }
+        this.dragFlow.set_position(Math.round(target.x + target.width / 2 - 42), target.y + target.height - 54);
+        this.dragFlow.show();
+    }
     updateBorder() {
         const w = global.display.focus_window;
         const record = this.records.get(w);
@@ -901,6 +964,7 @@ export default class SnapTess extends Extension {
         global.window_group.set_child_above_sibling(this.border, windowActor);
         global.window_group.set_child_above_sibling(this.windowActionHandle, this.border);
         global.window_group.set_child_above_sibling(this.windowActions, this.windowActionHandle);
+        global.window_group.set_child_above_sibling(this.windowActionTooltip, this.windowActions);
     }
     windowsRestacked() {
         const w = global.display.focus_window;
@@ -913,8 +977,20 @@ export default class SnapTess extends Extension {
     scheduleWindowActionsHide(delay = 1600) {
         this.cancel(this.actionsTimer);
         this.actionsTimer = this.later(delay, () => {
-            this.actionsTimer = 0; this.windowActions.hide(); this.showWindowActionHandle();
+            this.actionsTimer = 0; this.transitionWindowActionsToHandle();
         });
+    }
+    transitionWindowActionsToHandle() {
+        this.windowActionTooltip.hide();
+        this.windowActions.remove_all_transitions();
+        if (!this.windowActions.visible || !this.settings.get_boolean('animations')) {
+            this.windowActions.hide(); this.showWindowActionHandle(); return;
+        }
+        this.windowActions.ease({opacity: 0, translation_x: 8, duration: 120,
+            mode: Clutter.AnimationMode.EASE_OUT_QUAD, onComplete: () => {
+                this.windowActions.hide(); this.windowActions.opacity = 255; this.windowActions.translation_x = 0;
+                this.showWindowActionHandle(true);
+            }});
     }
     queueWindowActions(w, delay = 140) {
         if (this.actionsShowTimer && this.pendingActionWindow === w) return;
@@ -930,9 +1006,11 @@ export default class SnapTess extends Extension {
         this.cancel(this.actionsShowTimer); this.actionsShowTimer = 0;
         this.pendingActionWindow = null;
         this.cancel(this.actionsTimer); this.actionsTimer = 0;
-        this.windowActions.hide(); this.windowActionHandle.hide();
+        this.windowActions.remove_all_transitions(); this.windowActionHandle.remove_all_transitions();
+        this.windowActions.hide(); this.windowActions.opacity = 255; this.windowActions.translation_x = 0;
+        this.windowActionHandle.hide(); this.windowActionTooltip.hide();
     }
-    showWindowActionHandle() {
+    showWindowActionHandle(animate = false) {
         const w = global.display.focus_window, record = this.records.get(w);
         if (!this.running || !record || this.drag || this.studio || Main.overview.visible || w.minimized || w.fullscreen) {
             this.windowActionHandle.hide(); return;
@@ -942,6 +1020,22 @@ export default class SnapTess extends Extension {
             rect.y + Math.max(8, Math.round((rect.height - 48) / 2)));
         this.stackWindowOverlays(w);
         this.windowActionHandle.show();
+        if (animate && this.settings.get_boolean('animations')) {
+            this.windowActionHandle.opacity = 0;
+            this.windowActionHandle.ease({opacity: 255, duration: 120, mode: Clutter.AnimationMode.EASE_OUT_QUAD});
+        } else this.windowActionHandle.opacity = 255;
+    }
+    showWindowActionTooltip(button) {
+        this.cancel(this.actionsTimer); this.actionsTimer = 0;
+        const text = button._snaptessTooltip;
+        if (!text || !this.windowActions.visible) return;
+        this.windowActionTooltip.text = text;
+        this.windowActionTooltip.show();
+        const [, width] = this.windowActionTooltip.get_preferred_width(-1);
+        const [, height] = this.windowActionTooltip.get_preferred_height(width);
+        const [x, y] = button.get_transformed_position();
+        this.windowActionTooltip.set_position(Math.round(x - width - 8), Math.round(y + (button.height - height) / 2));
+        this.stackWindowOverlays(global.display.focus_window);
     }
     showWindowActions() {
         const w = global.display.focus_window, record = this.records.get(w);
@@ -950,14 +1044,18 @@ export default class SnapTess extends Extension {
         }
         const rect = record.floating ? w.get_frame_rect() : record.tileRect ?? w.get_frame_rect();
         this.actionWindow = w;
+        this.windowActionHandle.remove_all_transitions();
         this.windowActionHandle.hide();
         const height = 176;
         this.windowActions.set_position(rect.x + Math.max(4, rect.width - 52),
             rect.y + Math.max(8, Math.round((rect.height - height) / 2)));
         this.floatAction[record.floating ? 'add_style_class_name' : 'remove_style_class_name']('selected');
+        this.floatAction._snaptessTooltip = record.floating ? 'Tile window' : 'Float window';
         this.maximizeAction.child.icon_name = w.get_maximize_flags() ? 'window-restore-symbolic' : 'window-maximize-symbolic';
+        this.maximizeAction._snaptessTooltip = w.get_maximize_flags() ? 'Restore window' : 'Maximize window';
         this.stackWindowOverlays(w);
         const appearing = !this.windowActions.visible;
+        this.windowActions.remove_all_transitions();
         this.windowActions.show();
         if (appearing && this.settings.get_boolean('animations')) {
             this.windowActions.opacity = 0;
@@ -1091,7 +1189,7 @@ export default class SnapTess extends Extension {
         this.traceWindow(w, 'grab-begin');
         this.drag = {window: w, monitor: w.get_monitor(), target: null,
             checkpoint: this.captureCheckpoint()};
-        this.border.hide(); this.hideWindowActions();
+        this.border.hide(); this.hideWindowActions(); this.hideDragGuides();
         const tick = () => {
             if (!this.drag) return;
             if (!global.display.is_grabbed()) {
@@ -1116,6 +1214,9 @@ export default class SnapTess extends Extension {
                     this.drag.target = {monitor, index, window: targetWindow};
                     this.showRect(this.preview, rects[index]);
                     const from = slots.indexOf(w);
+                    const sourceRect = this.records.get(w)?.tileRect ?? (from >= 0 ? rects[from] : null);
+                    if (targetWindow === w) this.hideDragGuides();
+                    else this.showDragGuides(w, targetWindow, sourceRect, destination);
                     let arrow = '';
                     if (from >= 0 && from !== index) {
                         const a = rects[from], b = rects[index];
@@ -1133,7 +1234,9 @@ export default class SnapTess extends Extension {
                         this.previewLabel.show();
                     }
                 }
-            } else { this.drag.target = null; this.preview.hide(); this.previewLabel.hide(); }
+            } else {
+                this.drag.target = null; this.preview.hide(); this.previewLabel.hide(); this.hideDragGuides();
+            }
             this.dragTimer = this.later(32, tick);
         };
         tick();
@@ -1142,7 +1245,7 @@ export default class SnapTess extends Extension {
         if (!this.drag) return;
         this.cancel(this.dragTimer); this.dragTimer = 0;
         const {window: w, target, monitor: source, checkpoint} = this.drag;
-        this.drag = null; this.preview.hide(); this.previewLabel.hide();
+        this.drag = null; this.preview.hide(); this.previewLabel.hide(); this.hideDragGuides();
         if (!this.records.has(w)) return;
         if (target) {
             const key = this.key(target.monitor);
@@ -1232,14 +1335,20 @@ export default class SnapTess extends Extension {
             for (const id of r.signals) w.disconnect(id);
         }
         this.records.clear();
+        for (const guide of this.motionGuides) guide.destroy();
+        this.motionGuides.clear();
         this.border.destroy();
         this.windowActionHandle.destroy();
         this.windowActions.destroy();
+        this.windowActionTooltip.destroy();
         Main.layoutManager.removeChrome(this.preview); this.preview.destroy();
         Main.layoutManager.removeChrome(this.previewLabel); this.previewLabel.destroy();
         Main.layoutManager.removeChrome(this.swapFromGuide); this.swapFromGuide.destroy();
         Main.layoutManager.removeChrome(this.swapToGuide); this.swapToGuide.destroy();
         Main.layoutManager.removeChrome(this.swapArrow); this.swapArrow.destroy();
+        Main.layoutManager.removeChrome(this.dragSourceGuide); this.dragSourceGuide.destroy();
+        Main.layoutManager.removeChrome(this.dragTargetGuide); this.dragTargetGuide.destroy();
+        Main.layoutManager.removeChrome(this.dragFlow); this.dragFlow.destroy();
         this.indicator.destroy();
         this.settings = null;
     }

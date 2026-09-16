@@ -52,7 +52,7 @@ function harness() {
     });
     const app = new Runtime();
     Object.assign(app, {records: new Map(), spaces: new Map(), running: true, busy: false, drag: null,
-        settings: {get_strv: () => []}});
+        settings: {get_strv: () => [], get_boolean: () => false}});
     app.appId = () => 'test.desktop';
     app.later = (ms, fn) => { const id = nextId++; timers.set(id, {at: now + ms, fn}); return id; };
     app.cancel = id => timers.delete(id);
