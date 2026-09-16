@@ -94,7 +94,11 @@ export async function run() {
     assert(actorScaleX>0.999 && actorScaleY>0.999,'normal tile size restores the actor transform');
     const before=windows.slice(1).map(w=>geometry(w));
     const restoreTarget={...app.records.get(windows[0]).tileRect};
+    app.showWindowActionHandle();
+    assert(app.windowActionHandle.visible,'focused tiled window shows the action handle');
     windows[0].maximize(); await pause();
+    assert(!app.windowActionHandle.visible && !app.windowActions.visible,
+        'maximizing a focused window hides its contextual controls');
     assert(windows.slice(1).every((w,i)=>geometry(w)===before[i]),'maximize freezes other windows');
     windows[0].unmaximize();
     await Scripting.sleep(90);
@@ -111,6 +115,12 @@ export async function run() {
         Math.abs(restoredFrame.width-restoreTarget.width)<=1 && Math.abs(restoredFrame.height-restoreTarget.height)<=1,
         'progressive app geometry drift after maximize exit is pulled back into its tile');
     assert(!app.records.get(windows[0]).restorePending,'restore stabilization is bounded and finishes');
+    app.showWindowActionHandle();
+    assert(app.windowActionHandle.visible,'restored tiled window shows the action handle');
+    windows[0].make_fullscreen(); await pause();
+    assert(!app.windowActionHandle.visible && !app.windowActions.visible,
+        'fullscreen hides a previously visible action handle');
+    windows[0].unmake_fullscreen(); await pause();
     windows[0].minimize(); await pause();
     assert(app.groups.get(app.key(0)).filter(Boolean).length===3,'minimize compacts');
     windows[0].unminimize(); await pause();
