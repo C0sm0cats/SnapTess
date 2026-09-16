@@ -74,7 +74,7 @@ Maximizing or fullscreening a managed window freezes automatic layout changes on
 
 ## Contributing
 
-Report your GNOME version, app IDs, monitor resolutions/scales, and exact steps in [an issue](https://github.com/C0sm0cats/SnapTess/issues). Include whether the problem concerns Wayland or XWayland windows. See [CONTRIBUTING.md](CONTRIBUTING.md) for local checks.
+Report your GNOME version, app IDs, monitor resolutions/scales, and exact steps in [an issue](https://github.com/C0sm0cats/SnapTess/issues). Include whether the problem concerns Wayland or XWayland windows.
 
 ## Credits
 
