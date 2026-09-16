@@ -953,7 +953,7 @@ export default class SnapTess extends Extension {
             !this.windows(w.get_monitor()).includes(w)) {
             this.border.hide(); return;
         }
-        const borderColor = this.swapMode ? '#ff808b' : this.accentColor();
+        const borderColor = this.swapMode ? '#62a0ea' : this.accentColor();
         this.border.set_style(
             `background-color: transparent; background-image: none; border: 2px solid ${borderColor}; border-radius: 12px; box-shadow: none;`,
         );
