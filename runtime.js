@@ -11,10 +11,11 @@ import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js';
 import {layout, fitMinimumSize, frameScalePivot, nearestSlot, directionalSlot, reconcileSlots} from './lib/layout.js';
 import {Studio} from './lib/studio.js';
 
-const RUNTIME_REVISION = 8;
+const RUNTIME_REVISION = 9;
 const RESTORE_STABILIZE_MS = 1400;
 const RESTORE_QUIET_MS = 120;
 const MAX_RESTORE_MOVES = 8;
+const MAX_SIZE_REPAIRS = 1;
 
 export default class SnapTess extends Extension {
     enable() {
@@ -156,6 +157,7 @@ export default class SnapTess extends Extension {
         const record = {original: null, floating: false, space: this.activeSpace(w.get_monitor(), w.get_workspace()),
             parked: false, signals: [], monitor: w.get_monitor(), tileRect: null, visualScale: 1, scaleTimer: 0,
             backingRect: null, scaleNegotiated: false, placementMoves: 0, placing: false, restoreStarted: false, restoreMoves: 0,
+            sizeRepairs: 0, autoScale: false, repairResetTimer: 0,
             traceUntil: 0, traceSignals: [], traceTimer: 0, requestSequence: 0, effectActor: null, effectSignal: 0, specialState: this.isSpecialWindow(w),
             restorePending: false, restoreTimer: 0, settleTimer: 0, restoreUntil: 0, restoreQuietUntil: 0};
         this.records.set(w, record);
@@ -164,6 +166,7 @@ export default class SnapTess extends Extension {
         watch('unmanaged', () => {
             this.stopWindowTrace(record);
             this.cancel(record.scaleTimer); record.scaleTimer = 0;
+            this.cancel(record.repairResetTimer); record.repairResetTimer = 0;
             this.cancel(record.restoreTimer); record.restoreTimer = 0;
             this.cancel(record.settleTimer); record.settleTimer = 0;
             this.disconnectWindowEffects(record);
@@ -203,8 +206,10 @@ export default class SnapTess extends Extension {
         });
         watch('position-changed', () => {
             this.traceWindow(w, 'position-changed');
+            if (record.placementMoves) this.scheduleRepairBudgetReset(w);
             const monitor = w.get_monitor();
-            if (!this.busy && !this.drag && !record.placing && !record.restorePending && record.monitor !== monitor) {
+            if (!this.busy && !this.drag && !record.placing && !record.restorePending &&
+                (!this.running || record.floating || !record.tileRect) && record.monitor !== monitor) {
                 record.monitor = monitor;
                 record.space = this.activeSpace(monitor);
                 this.schedule(true);
@@ -618,6 +623,15 @@ export default class SnapTess extends Extension {
         const configured = this.settings.get_strv('scaled-apps');
         return configured.includes(this.appId(w)) || configured.includes(w.get_wm_class?.() ?? '');
     }
+    scheduleRepairBudgetReset(w) {
+        const record = this.records.get(w);
+        if (!record) return;
+        this.cancel(record.repairResetTimer);
+        record.repairResetTimer = this.later(RESTORE_STABILIZE_MS, () => {
+            record.repairResetTimer = 0;
+            record.placementMoves = 0;
+        });
+    }
     minimumSize(w) {
         if (typeof w.get_min_size !== 'function') return {width: 0, height: 0};
         try {
@@ -641,7 +655,7 @@ export default class SnapTess extends Extension {
         if (this.windowEffectActive(actor)) return; // effects-completed resumes us
         if (record.restorePending && !record.restoreStarted) return;
         const frame = w.get_frame_rect(), target = record.tileRect;
-        const scaled = this.scalesApp(w);
+        let scaled = this.scalesApp(w) || record.autoScale;
         if (scaled && !record.scaleNegotiated) {
             const fitted = fitMinimumSize(target, frame.width, frame.height);
             record.scaleNegotiated = fitted.scale < 0.999;
@@ -655,14 +669,30 @@ export default class SnapTess extends Extension {
         }
         // Ordinary client commits may move a window after its initial configure.
         // Repair position without renegotiating size, with a finite per-placement budget.
-        if (!record.restorePending && record.monitor === w.get_monitor() &&
-            record.placementMoves + record.restoreMoves < MAX_RESTORE_MOVES &&
+        if (!record.restorePending && record.restoreMoves < MAX_RESTORE_MOVES &&
+            record.placementMoves < MAX_RESTORE_MOVES &&
             (Math.abs(frame.x - target.x) > 1 || Math.abs(frame.y - target.y) > 1)) {
             record.placementMoves++;
             this.requestWindowGeometry(w, 'tile-position', target, true);
+            this.scheduleRepairBudgetReset(w);
+        }
+        const actual = w.get_frame_rect();
+        const sizeMismatch = Math.abs(actual.width - record.backingRect.width) > 1 ||
+            Math.abs(actual.height - record.backingRect.height) > 1;
+        if (!record.restorePending && !scaled && sizeMismatch) {
+            if (record.sizeRepairs < MAX_SIZE_REPAIRS) {
+                record.sizeRepairs++;
+                this.requestWindowGeometry(w, 'tile-size', record.backingRect);
+                this.scheduleWindowScale(w, 120);
+                return;
+            }
+            // The client rejected the requested size. Keep its accepted backing
+            // geometry and contain it visually instead of allowing overlap.
+            record.autoScale = true;
+            record.backingRect = {...actual};
+            scaled = true;
         }
         if (scaled) {
-            const actual = w.get_frame_rect();
             const scale = Math.max(0.05, Math.min(1,
                 target.width / Math.max(1, actual.width), target.height / Math.max(1, actual.height)));
             this.applyWindowScale(w, actor, scale, target);
@@ -709,6 +739,8 @@ export default class SnapTess extends Extension {
         if (!restoring) {
             record.placementMoves = 0;
             record.restoreMoves = 0;
+            record.sizeRepairs = 0;
+            this.cancel(record.repairResetTimer); record.repairResetTimer = 0;
             // Explicit arrangement (including a manual drop) owns a new target.
             this.cancel(record.restoreTimer); record.restoreTimer = 0;
             this.cancel(record.settleTimer); record.settleTimer = 0;
@@ -717,14 +749,21 @@ export default class SnapTess extends Extension {
             record.restoreQuietUntil = 0;
         }
         if (reusable) {
-            if (actor) this.scheduleWindowScale(w, 0);
+            if (actor) {
+                if ((this.scalesApp(w) || record.autoScale) && record.visualScale < 0.999)
+                    this.applyWindowScale(w, actor, record.visualScale, rect);
+                this.scheduleWindowScale(w, 0);
+            }
             return;
         }
-        const scaled = this.scalesApp(w);
+        const scaled = this.scalesApp(w) || record.autoScale;
         const preserveScale = scaled && actor && record.visualScale < 0.999;
         if (!preserveScale) this.resetWindowScale(w);
         record.tileRect = {...rect};
-        const minimum = scaled ? this.minimumSize(w) : null;
+        const configuredMinimum = this.scalesApp(w) ? this.minimumSize(w) : null;
+        const minimum = record.autoScale
+            ? {width: record.backingRect?.width ?? 0, height: record.backingRect?.height ?? 0}
+            : configuredMinimum;
         const fitted = scaled ? fitMinimumSize(rect, minimum.width, minimum.height) : {frame: rect, scale: 1};
         record.backingRect = {...fitted.frame};
         record.scaleNegotiated = !scaled;
@@ -732,7 +771,11 @@ export default class SnapTess extends Extension {
             this.applyWindowScale(w, actor, fitted.scale, rect);
             record.visualScale = fitted.scale;
         }
-        this.requestWindowGeometry(w, restoring ? 'restore' : 'place', record.backingRect);
+        const sameBackingSize = preserveScale &&
+            Math.abs(w.get_frame_rect().width - record.backingRect.width) <= 1 &&
+            Math.abs(w.get_frame_rect().height - record.backingRect.height) <= 1;
+        this.requestWindowGeometry(w, restoring ? 'restore' : 'place', record.backingRect, sameBackingSize);
+        if (preserveScale) this.applyWindowScale(w, actor, fitted.scale, rect);
         if (actor) this.scheduleWindowScale(w);
     }
     accentColor() {

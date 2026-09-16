@@ -11,7 +11,7 @@ const source = fs.readFileSync(new URL('../runtime.js', import.meta.url), 'utf8'
     .replaceAll('import.meta.url', JSON.stringify(new URL('../runtime.js', import.meta.url).href))
     .replace('export default class SnapTess', 'class SnapTess') + '\nSnapTess;';
 function harness() {
-    let now = 1000, nextId = 1, grabbed = false;
+    let now = 1000, nextId = 1, grabbed = false, monitor = 0;
     const timers = new Map(), signals = new Map(), actorSignals = new Map();
     const requests = [], scaleWrites = [], userOps = [];
     let frame = {x: 100, y: 50, width: 600, height: 400};
@@ -32,7 +32,7 @@ function harness() {
         get_buffer_rect: () => ({x: frame.x - 10, y: frame.y - 14, width: frame.width + 20, height: frame.height + 30}),
         get_compositor_private: () => actor,
         get_maximize_flags() { return this.flags; },
-        get_monitor: () => 0, get_workspace: () => workspace,
+        get_monitor: () => monitor, get_workspace: () => workspace,
         get_window_type: () => 0, is_override_redirect: () => false,
         is_on_all_workspaces: () => false, get_min_size: () => [false, 0, 0],
         connect(name, fn) { signals.set(name, fn); return nextId++; }, disconnect() {},
@@ -90,22 +90,23 @@ function harness() {
         requests.length = 0; scaleWrites.length = 0;
     }
     return {app, w, actor, record, requests, scaleWrites, userOps, slot, timers, advance, commit, special,
-        effectsDone, settleInitial, frame: () => frame, grab: value => { grabbed = value; }};
+        effectsDone, settleInitial, frame: () => frame, grab: value => { grabbed = value; },
+        monitor: value => { monitor = value; }};
 }
 
-test('successive asynchronous replies never trigger resize negotiation or actor scaling', () => {
+test('a late rejected size gets one bounded retry then automatic scale-to-fit', () => {
     const h = harness();
     h.app.place(h.w, h.slot);
     h.commit({...h.slot, width: 800, height: 600});
     h.advance(100);
-    assert.equal(h.requests.filter(r => r.type === 'resize').length, 1, 'only the explicit tile request');
+    assert.equal(h.requests.filter(r => r.type === 'resize').length, 2, 'one bounded size repair');
     for (let i = 0; i < 15; i++) {
         h.commit({width: 810 + i * 3, height: 550 + i * 2});
         h.advance(200);
     }
-    assert.equal(h.requests.length, 2, 'one native move-resize pair with no feedback requests');
-    assert.equal(h.actor.scale_x, 1);
-    assert.equal(h.actor.scale_y, 1);
+    assert.equal(h.requests.filter(r => r.type === 'resize').length, 2, 'no resize feedback loop');
+    assert.ok(h.actor.scale_x < 1);
+    assert.ok(h.actor.scale_y < 1);
     assert.equal(h.timers.size, 0);
 });
 
@@ -129,11 +130,12 @@ test('unmaximize preserves the backing plan across several size/position commits
     }
     h.advance(1600);
     assert.equal(h.record.restorePending, false);
-    assert.equal(h.requests.filter(r => r.type === 'resize').length, 1);
+    assert.equal(h.requests.filter(r => r.type === 'resize').length, 2,
+        'restoration stays position-only, then ordinary containment gets one bounded retry');
     assert.equal(h.frame().x, h.slot.x); assert.equal(h.frame().y, h.slot.y);
     const before = h.requests.length;
     for (let i = 0; i < 10; i++) { h.commit({width: 800 + i, height: 550 + i}); h.advance(200); }
-    assert.equal(h.requests.length, before, 'scale updates after the restore deadline never resize');
+    assert.equal(h.requests.length, before, 'later scale updates never create a resize feedback loop');
     assert.equal(h.timers.size, 0);
 });
 
@@ -207,15 +209,15 @@ test('ordinary delayed position drift is repaired without a resize', () => {
     assert.equal(h.requests.length, 1);
 });
 
-test('a clamped oversized backing window keeps native actor geometry', () => {
+test('a clamped oversized backing window is automatically contained in its tile', () => {
     const h = harness();
     const target = {...h.slot, x: 1200, y: 700, width: 400, height: 300};
     h.app.place(h.w, target);
     h.commit({x: 800, y: 500, width: 800, height: 600});
-    h.advance(200);
-    assert.equal(h.actor.scale_x, 1);
-    assert.equal(h.actor.translation_x, 0);
-    assert.equal(h.actor.translation_y, 0);
+    h.advance(300);
+    assert.equal(h.actor.scale_x, 0.5);
+    assert.equal(h.actor.translation_x, target.x - 800);
+    assert.equal(h.actor.translation_y, target.y - 500);
 });
 
 test('only configured applications use scale-to-fit fallback', () => {
@@ -248,6 +250,7 @@ test('moving a scaled exception keeps its fitted size during placement', () => {
     assert.ok(h.scaleWrites.every(([x, y]) => x === 0.5 && y === 0.5));
     assert.equal(h.actor.translation_x, second.x - first.x);
     assert.equal(h.actor.translation_y, second.y - first.y);
+    assert.deepEqual(h.requests.at(-1), {type: 'move', x: second.x, y: second.y});
 });
 
 test('resetting a scaled window clears its visual translation', () => {
@@ -292,7 +295,7 @@ test('moving a constrained window between equal slots keeps native scale', () =>
     ]);
 });
 
-test('post-grab validation removes every stale compositor transform', () => {
+test('post-grab validation restores automatic containment transforms', () => {
     const h = harness();
     const target = {...h.slot, width: 400, height: 300};
     h.app.place(h.w, target);
@@ -305,10 +308,32 @@ test('post-grab validation removes every stale compositor transform', () => {
     h.actor.translation_x = 90;
     h.actor.translation_y = 60;
     h.advance(400);
-    assert.equal(h.actor.scale_x, 1);
-    assert.equal(h.actor.scale_y, 1);
-    assert.equal(h.actor.translation_x, 0);
-    assert.equal(h.actor.translation_y, 0);
+    assert.equal(h.actor.scale_x, 0.5);
+    assert.equal(h.actor.scale_y, 0.5);
+    assert.equal(h.actor.translation_x, target.x - h.frame().x);
+    assert.equal(h.actor.translation_y, target.y - h.frame().y);
+});
+
+test('a managed asynchronous monitor drift keeps ownership of its target monitor', () => {
+    const h = harness(); h.settleInitial();
+    h.monitor(1);
+    h.commit({x: h.slot.x + 900});
+    h.advance(200);
+    assert.equal(h.record.monitor, 0);
+    assert.deepEqual(h.requests, [{type: 'move', x: h.slot.x, y: h.slot.y}]);
+});
+
+test('same-slot drop reapplies a scaled transform synchronously', () => {
+    const h = harness();
+    h.app.settings.get_strv = key => key === 'scaled-apps' ? ['test.desktop'] : [];
+    h.w.get_min_size = () => [true, 800, 600];
+    const target = {...h.slot, width: 400, height: 300};
+    h.app.place(h.w, target);
+    h.commit({width: 800, height: 600}); h.advance(200);
+    h.actor.set_scale(1, 1);
+    h.app.place(h.w, {...target});
+    assert.equal(h.actor.scale_x, 0.5);
+    assert.equal(h.actor.scale_y, 0.5);
 });
 
 test('ordinary position repairs have a finite budget reset by explicit placement', () => {
