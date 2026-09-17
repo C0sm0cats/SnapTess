@@ -16,9 +16,7 @@ Automatic window tiling for **GNOME Shell 50 · Wayland**.
 
 ![SnapTess arranging twelve real application windows in a tiled grid, with private content blurred](docs/snaptess-overview-blurred.png)
 
-SnapTess is a standalone GNOME Shell extension. No Python daemon, root access, or unsafe Shell mode. It starts paused: enabling the extension does not rearrange your windows.
-
-> **Compatibility:** GNOME Shell 50 on Wayland is the supported target.
+SnapTess is a standalone GNOME Shell extension. It starts paused: enabling it does not rearrange your windows.
 
 ## What it does
 
