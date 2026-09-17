@@ -94,6 +94,38 @@ function harness() {
         monitor: value => { monitor = value; }};
 }
 
+test('excluded applications match desktop IDs, aliases, and WM_CLASS', () => {
+    const h = harness();
+    h.w.get_wm_class = () => 'LegacyEditor';
+    h.app.appId = () => 'org.example.Editor.desktop';
+    const cases = [
+        ['org.example.Editor.desktop', 'desktop ID'],
+        ['org.example.Editor', 'non-desktop alias'],
+        ['legacyeditor.desktop', 'WM_CLASS alias'],
+        ['LEGACYEDITOR', 'legacy WM_CLASS value'],
+    ];
+    for (const [value, label] of cases) {
+        h.app.settings.get_strv = key => key === 'excluded-apps' ? [value] : [];
+        assert.equal(h.app.windows(0).length, 0, label);
+    }
+    h.app.settings.get_strv = () => ['unrelated.desktop'];
+    assert.equal(h.app.windows(0)[0], h.w);
+});
+
+test('scaled applications use the same identifier matching without changing saved rules', () => {
+    const h = harness();
+    h.w.get_wm_class = () => 'ONLYOFFICE';
+    h.app.appId = () => 'org.example.Editor.desktop';
+    const cases = ['ORG.EXAMPLE.EDITOR', 'onlyoffice.desktop', 'ONLYOFFICE'];
+    for (const value of cases) {
+        h.app.settings.get_strv = key => key === 'scaled-apps' ? [value] : [];
+        assert.equal(h.app.scalesApp(h.w), true, value);
+        assert.equal(h.app.settings.get_strv('scaled-apps')[0], value);
+    }
+    h.app.settings.get_strv = () => ['unrelated.desktop'];
+    assert.equal(h.app.scalesApp(h.w), false);
+});
+
 test('a late rejected size gets one bounded retry then automatic scale-to-fit', () => {
     const h = harness();
     h.app.place(h.w, h.slot);

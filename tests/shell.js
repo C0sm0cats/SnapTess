@@ -231,9 +231,15 @@ export async function run() {
     launcher.setenv('GI_TYPELIB_PATH','/usr/lib/gnome-shell/girepository-1.0',true);
     launcher.setenv('LD_LIBRARY_PATH','/usr/lib/gnome-shell',true);
     launcher.setenv('GSETTINGS_BACKEND','memory',true);
+    console.log('SNAPTESS_PREFS_TESTS_STARTING');
     const child=launcher.spawnv(['gjs','-m',Gio.File.new_for_uri(import.meta.url).get_parent().get_child('prefs.js').get_path()]);
-    await new Promise((resolve,reject)=>child.wait_check_async(null,(p,r)=>{
-        try { p.wait_check_finish(r); resolve(); } catch(e) { reject(e); }
-    }));
+    try {
+        await new Promise((resolve,reject)=>child.wait_check_async(null,(p,r)=>{
+            try { p.wait_check_finish(r); resolve(); } catch(e) { reject(e); }
+        }));
+    } catch (error) {
+        console.error(`SNAPTESS_PREFS_TESTS_FAILED: ${error}`);
+        throw error;
+    }
     console.log('SNAPTESS_SHELL_TESTS_PASSED');
 }
