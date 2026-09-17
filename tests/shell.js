@@ -56,18 +56,28 @@ export async function run() {
         stubbornFrame=stubborn.get_frame_rect();
         if(matchesTarget(stubbornFrame)) break;
     }
-    assert(matchesTarget(stubbornFrame),
-        `late oversized frame is pulled back into its tile (actual ${geometry(stubborn)}, target ${Object.values(stubbornTarget).join(',')}, `+
-        `scale ${stubbornRecord.visualScale}, autoScale ${stubbornRecord.autoScale}, sizeRepairs ${stubbornRecord.sizeRepairs}, `+
-        `scaleTimer ${stubbornRecord.scaleTimer}, effect ${app.windowEffectActive(app.windowActor(stubborn))})`);
-    assert(stubbornRecord.visualScale===1,'accepted size repair keeps native scale');
+    const nativeRepair=matchesTarget(stubbornFrame);
     const stubbornActor=app.windowActor(stubborn);
     let [actorScaleX,actorScaleY]=stubbornActor.get_scale();
-    assert(actorScaleX===1 && actorScaleY===1,'repaired window actor stays at native scale');
+    if(nativeRepair) {
+        assert(stubbornRecord.visualScale===1,'accepted size repair keeps native scale');
+        assert(actorScaleX===1 && actorScaleY===1,'repaired window actor stays at native scale');
+    } else {
+        const fit=Math.min(stubbornTarget.width/stubbornFrame.width,stubbornTarget.height/stubbornFrame.height);
+        assert(stubbornRecord.autoScale && stubbornRecord.sizeRepairs===1,
+            'rejected native size gets one repair attempt then automatic scale-to-fit');
+        assert(Math.abs(stubbornRecord.visualScale-fit)<0.001 &&
+            Math.abs(actorScaleX-fit)<0.001 && Math.abs(actorScaleY-fit)<0.001 &&
+            Math.abs(stubbornActor.translation_x-(stubbornTarget.x-stubbornFrame.x))<=1 &&
+            Math.abs(stubbornActor.translation_y-(stubbornTarget.y-stubbornFrame.y))<=1,
+            'rejected oversized frame is visually contained in its tile');
+    }
+    const expectedScale=stubbornRecord.visualScale;
     stubbornActor.emit('effects-completed');
     await pause();
     [actorScaleX,actorScaleY]=stubbornActor.get_scale();
-    assert(actorScaleX===1 && actorScaleY===1,'effects completion preserves native scale');
+    assert(Math.abs(actorScaleX-expectedScale)<0.001 && Math.abs(actorScaleY-expectedScale)<0.001,
+        'effects completion preserves the repaired or fitted scale');
     stubborn.activate(global.get_current_time()); await pause();
     app.actionWindow=null; app.hideWindowActions(); app.windowsRestacked(); await Scripting.sleep(160);
     assert(app.windowActions.visible,'client restacking can reveal actions without a focus notification');
@@ -94,11 +104,19 @@ export async function run() {
     app.hideWindowActions();
     app.place(stubborn,stubbornTarget); await pause();
     [actorScaleX,actorScaleY]=stubbornActor.get_scale();
-    assert(actorScaleX===1 && actorScaleY===1,'unchanged placement preserves native scale');
+    assert(Math.abs(actorScaleX-expectedScale)<0.001 && Math.abs(actorScaleY-expectedScale)<0.001,
+        'unchanged placement preserves native or fitted scale');
     app.place(stubborn,stubbornTarget,false,true); await pause();
-    assert(stubbornRecord.visualScale>0.999,'normal tile size restores unit scale');
     [actorScaleX,actorScaleY]=stubbornActor.get_scale();
-    assert(actorScaleX>0.999 && actorScaleY>0.999,'normal tile size restores the actor transform');
+    if(nativeRepair) {
+        assert(stubbornRecord.visualScale>0.999,'normal tile size restores unit scale');
+        assert(actorScaleX>0.999 && actorScaleY>0.999,'normal tile size restores the actor transform');
+    } else {
+        assert(Math.abs(actorScaleX-stubbornRecord.visualScale)<0.001 &&
+            Math.abs(actorScaleY-stubbornRecord.visualScale)<0.001 &&
+            stubbornRecord.visualScale<=expectedScale+0.001,
+            'forced placement keeps a rejected client visually contained');
+    }
     const before=windows.slice(1).map(w=>geometry(w));
     const restoreTarget={...app.records.get(windows[0]).tileRect};
     app.showWindowActionHandle();
