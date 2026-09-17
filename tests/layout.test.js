@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {layout, autoLayout, fitMinimumSize, frameScalePivot, nearestSlot, directionalSlot, reconcileSlots, PRESETS} from '../lib/layout.js';
 
-test('SmartGrid layout progression, including more than 15 windows', () => {
+test('automatic layout progression, including more than 15 windows', () => {
     assert.deepEqual([1,2,3,4,5,7,10,13].map(autoLayout), ['full','split','master','2x2','3x2','3x3','4x3','5x3']);
     assert.equal(layout({x:0,y:0,width:1920,height:1080}, 22).length,22);
 });
