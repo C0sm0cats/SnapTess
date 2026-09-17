@@ -216,6 +216,13 @@ export default class SnapTess extends Extension {
         return Shell.WindowTracker.get_default().get_window_app(w)?.get_id() ?? w.get_wm_class() ?? '';
     }
 
+    matchesAppRule(w, key) {
+        const normalize = value => typeof value === 'string'
+            ? value.trim().replace(/\.desktop$/i, '').toLowerCase() : '';
+        const identifiers = new Set([this.appId(w), w.get_wm_class?.()].map(normalize).filter(Boolean));
+        return this.settings.get_strv(key).some(value => identifiers.has(normalize(value)));
+    }
+
     isSpecialWindow(w) {
         return Boolean(w?.fullscreen || w?.get_maximize_flags?.());
     }
@@ -510,10 +517,9 @@ export default class SnapTess extends Extension {
 
     windows(monitor, space = this.activeSpace(monitor), includeMinimized = false) {
         const workspace = global.workspace_manager.get_active_workspace();
-        const excluded = this.settings.get_strv('excluded-apps');
         return [...this.records].filter(([w, r]) => this.eligible(w) && w.get_monitor() === monitor &&
             w.get_workspace() === workspace && r.space === space && !r.floating &&
-            !excluded.includes(this.appId(w)) && (includeMinimized || !w.minimized)).map(([w]) => w);
+            !this.matchesAppRule(w, 'excluded-apps') && (includeMinimized || !w.minimized)).map(([w]) => w);
     }
 
     snapshot(w) {
@@ -691,8 +697,7 @@ export default class SnapTess extends Extension {
         }
     }
     scalesApp(w) {
-        const configured = this.settings.get_strv('scaled-apps');
-        return configured.includes(this.appId(w)) || configured.includes(w.get_wm_class?.() ?? '');
+        return this.matchesAppRule(w, 'scaled-apps');
     }
     scheduleRepairBudgetReset(w) {
         const record = this.records.get(w);

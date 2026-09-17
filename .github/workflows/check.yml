@@ -4,7 +4,7 @@ permissions:
   contents: read
 jobs:
   test-and-package:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -16,8 +16,13 @@ jobs:
           node --check runtime.js
           node --check prefs.js
           node --check lib/studio.js
-      - run: sudo apt-get update && sudo apt-get install -y libglib2.0-bin gnome-shell
-      - run: ./scripts/build.sh
+      - name: Install GNOME Shell 50 test dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libglib2.0-bin gnome-shell gir1.2-adw-1 dbus-daemon
+          gnome-shell --version | grep -E '^GNOME Shell 50\.'
+      - name: GNOME Shell 50 and GTK preferences integration tests
+        run: ./scripts/test-shell.sh
       - uses: actions/upload-artifact@v4
         with:
           name: snaptess-extension
