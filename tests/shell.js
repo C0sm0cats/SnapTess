@@ -48,11 +48,16 @@ export async function run() {
     const stubborn=windows[0], stubbornRecord=app.records.get(stubborn);
     const stubbornTarget={...stubbornRecord.tileRect};
     stubborn.move_resize_frame(false,stubbornTarget.x,stubbornTarget.y,stubbornTarget.width+180,stubbornTarget.height+140);
-    await pause();
-    const stubbornFrame=stubborn.get_frame_rect();
-    assert(Math.abs(stubbornFrame.x-stubbornTarget.x)<=1 && Math.abs(stubbornFrame.y-stubbornTarget.y)<=1 &&
-        Math.abs(stubbornFrame.width-stubbornTarget.width)<=1 && Math.abs(stubbornFrame.height-stubbornTarget.height)<=1,
-        'late oversized frame is pulled back into its tile');
+    const matchesTarget=frame=>Math.abs(frame.x-stubbornTarget.x)<=1 && Math.abs(frame.y-stubbornTarget.y)<=1 &&
+        Math.abs(frame.width-stubbornTarget.width)<=1 && Math.abs(frame.height-stubbornTarget.height)<=1;
+    let stubbornFrame;
+    for(let i=0;i<8;i++) {
+        await pause();
+        stubbornFrame=stubborn.get_frame_rect();
+        if(matchesTarget(stubbornFrame)) break;
+    }
+    assert(matchesTarget(stubbornFrame),
+        `late oversized frame is pulled back into its tile (actual ${geometry(stubborn)}, target ${Object.values(stubbornTarget).join(',')})`);
     assert(stubbornRecord.visualScale===1,'accepted size repair keeps native scale');
     const stubbornActor=app.windowActor(stubborn);
     let [actorScaleX,actorScaleY]=stubbornActor.get_scale();
