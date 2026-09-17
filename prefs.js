@@ -4,6 +4,20 @@ import Gtk from 'gi://Gtk';
 import Gdk from 'gi://Gdk';
 import {ExtensionPreferences} from 'resource:///org/gnome/Shell/Extensions/js/extensions/prefs.js';
 
+function appAliases(id) {
+    const aliases = [id];
+    if (id.endsWith('.desktop')) aliases.push(id.slice(0, -8));
+    if (id === 'onlyoffice-desktopeditors.desktop') aliases.push('ONLYOFFICE');
+    return aliases;
+}
+
+function setAppRule(settings, key, ids, enabled) {
+    const matching = new Set(ids);
+    const values = settings.get_strv(key).filter(id => !matching.has(id));
+    if (enabled) values.push(ids[0]);
+    settings.set_strv(key, values);
+}
+
 export default class SnapTessPreferences extends ExtensionPreferences {
     fillPreferencesWindow(window) {
         const settings = this.getSettings();
@@ -24,13 +38,54 @@ export default class SnapTessPreferences extends ExtensionPreferences {
             ['compact-minimize', 'Close gaps when minimizing'], ['compact-close', 'Close gaps when closing']]) {
             const row = new Adw.SwitchRow({title}); settings.bind(key, row, 'active', Gio.SettingsBindFlags.DEFAULT); behavior.add(row);
         }
-        const excluded = new Adw.EntryRow({title: 'Floating app IDs (comma separated)', text: settings.get_strv('excluded-apps').join(', '), show_apply_button: true});
-        excluded.connect('apply', () => settings.set_strv('excluded-apps', excluded.text.split(',').map(s => s.trim()).filter(Boolean)));
-        behavior.add(excluded);
-        const scaled = new Adw.EntryRow({title: 'Scale-to-fit app IDs (comma separated)',
-            text: settings.get_strv('scaled-apps').join(', '), show_apply_button: true});
-        scaled.connect('apply', () => settings.set_strv('scaled-apps', scaled.text.split(',').map(s => s.trim()).filter(Boolean)));
-        behavior.add(scaled);
+        const applications = new Adw.PreferencesPage({title: 'Applications', icon_name: 'application-x-executable-symbolic'});
+        window.add(applications);
+        const appGroup = new Adw.PreferencesGroup({title: 'Application rules',
+            description: 'Search an application, then choose how SnapTess handles its windows.'});
+        applications.add(appGroup);
+        const search = new Adw.EntryRow({title: 'Search applications'});
+        appGroup.add(search);
+        const selected = new Set([...settings.get_strv('excluded-apps'), ...settings.get_strv('scaled-apps')]);
+        const appInfos = Gio.AppInfo.get_all().filter(info => {
+            const id = info.get_id();
+            return id && (info.should_show() || appAliases(id).some(alias => selected.has(alias)));
+        });
+        appInfos.sort((a, b) => {
+            const chosen = info => appAliases(info.get_id()).some(alias => selected.has(alias));
+            return Number(chosen(b)) - Number(chosen(a)) || a.get_display_name().localeCompare(b.get_display_name());
+        });
+        const listed = new Set();
+        const searchable = [];
+        const addApp = (id, name, icon = null, custom = false) => {
+            const ids = custom ? [id] : appAliases(id);
+            ids.forEach(alias => listed.add(alias));
+            const row = new Adw.ExpanderRow({title: name, subtitle: custom ? `${id} · Saved app ID` : id});
+            if (icon) row.add_prefix(new Gtk.Image({gicon: icon, pixel_size: 32}));
+            for (const [key, title, subtitle] of [
+                ['excluded-apps', 'Always floating', 'Keep its windows outside the tiled grid'],
+                ['scaled-apps', 'Allow scale-to-fit', 'Fit constrained windows; XWayland clicks may be offset'],
+            ]) {
+                const toggle = new Adw.SwitchRow({title, subtitle});
+                toggle.active = ids.some(alias => settings.get_strv(key).includes(alias));
+                toggle.connect('notify::active', () => setAppRule(settings, key, ids, toggle.active));
+                row.add_row(toggle);
+            }
+            appGroup.add(row);
+            searchable.push({row, text: `${name} ${id}`.toLocaleLowerCase()});
+        };
+        for (const info of appInfos) addApp(info.get_id(), info.get_display_name(), info.get_icon());
+        for (const id of selected) if (!listed.has(id)) addApp(id, id, null, true);
+        const noResults = new Adw.ActionRow({title: 'No matching applications', visible: searchable.length === 0});
+        appGroup.add(noResults);
+        search.connect('notify::text', () => {
+            const query = search.text.trim().toLocaleLowerCase();
+            let matches = 0;
+            for (const item of searchable) {
+                item.row.visible = !query || item.text.includes(query);
+                if (item.row.visible) matches++;
+            }
+            noResults.visible = matches === 0;
+        });
         const shortcuts = new Adw.PreferencesGroup({title: 'Keyboard shortcuts', description: 'GTK accelerator notation, e.g. <Control><Alt>t. Leave blank to disable.'});
         page.add(shortcuts);
         for (const [key, title] of [['toggle', 'Toggle tiling'], ['retile', 'Arrange again'], ['studio', 'Open Layout Studio'],
