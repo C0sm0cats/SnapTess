@@ -57,7 +57,9 @@ export async function run() {
         if(matchesTarget(stubbornFrame)) break;
     }
     assert(matchesTarget(stubbornFrame),
-        `late oversized frame is pulled back into its tile (actual ${geometry(stubborn)}, target ${Object.values(stubbornTarget).join(',')})`);
+        `late oversized frame is pulled back into its tile (actual ${geometry(stubborn)}, target ${Object.values(stubbornTarget).join(',')}, `+
+        `scale ${stubbornRecord.visualScale}, autoScale ${stubbornRecord.autoScale}, sizeRepairs ${stubbornRecord.sizeRepairs}, `+
+        `scaleTimer ${stubbornRecord.scaleTimer}, effect ${app.windowEffectActive(app.windowActor(stubborn))})`);
     assert(stubbornRecord.visualScale===1,'accepted size repair keeps native scale');
     const stubbornActor=app.windowActor(stubborn);
     let [actorScaleX,actorScaleY]=stubbornActor.get_scale();
