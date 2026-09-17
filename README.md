@@ -16,9 +16,9 @@ Automatic window tiling for **GNOME Shell 50 · Wayland**.
 
 ![SnapTess arranging twelve real application windows in a tiled grid, with private content blurred](docs/snaptess-overview-blurred.png)
 
-SnapTess brings the workflow of [SmartGrid for Windows](https://github.com/C0sm0cats/SmartGrid) to GNOME as a standalone extension. No Python daemon, root access, or unsafe Shell mode. It starts paused: enabling the extension does not rearrange your windows.
+SnapTess is a standalone GNOME Shell extension. No Python daemon, root access, or unsafe Shell mode. It starts paused: enabling the extension does not rearrange your windows.
 
-> **Compatibility:** GNOME Shell 50 on Wayland is the supported target. This is not a universal Linux window manager, and it does not claim exact Windows behavior. See the [porting matrix](docs/PORTING.md).
+> **Compatibility:** GNOME Shell 50 on Wayland is the supported target.
 
 ## What it does
 
@@ -78,4 +78,4 @@ Report your GNOME version, app IDs, monitor resolutions/scales, and exact steps 
 
 ## Credits
 
-Created by [C0sm0cats](https://github.com/C0sm0cats). Layout rules and workflow adapted from SmartGrid. MIT licensed; the original SmartGrid copyright notice is preserved in [LICENSE](LICENSE).
+Created by [C0sm0cats](https://github.com/C0sm0cats). MIT licensed; see [LICENSE](LICENSE).
