@@ -2,6 +2,7 @@ import Clutter from 'gi://Clutter';
 import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
 import Meta from 'gi://Meta';
+import Mtk from 'gi://Mtk';
 import Pango from 'gi://Pango';
 import Shell from 'gi://Shell';
 import St from 'gi://St';
@@ -12,8 +13,10 @@ import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js';
 import {layout, fitMinimumSize, frameScalePivot, nearestSlot, directionalSlot, reconcileSlots,
     activePinnedSlots, reserveAppSlots} from './lib/layout.js';
 import {Studio} from './lib/studio.js';
+import {WindowBorder} from './lib/window-border.js';
+import {radiusFromPixels, radiusStyle, visualFrameRect} from './lib/window-radius.js';
 
-const RUNTIME_REVISION = 31;
+const RUNTIME_REVISION = 32;
 const RESTORE_STABILIZE_MS = 1400;
 const RESTORE_QUIET_MS = 120;
 const MAX_RESTORE_MOVES = 8;
@@ -33,6 +36,7 @@ export default class SnapTess extends Extension {
         this.history = [];
         this.pendingCompact = false;
         this.busy = false;
+        this.radiusReadbackReady = false;
         this.drag = null;
         this.swapMode = false;
         this.loadProfiles();
@@ -57,7 +61,7 @@ export default class SnapTess extends Extension {
         this.indicator.menu.addMenuItem(this.spaceMenu);
         this.indicator.menu.addAction('Preferences', () => this.openPreferences());
         this.indicator.menu.addAction('Stop and restore windows', () => this.setRunning(false));
-        this.border = new St.Widget({style_class: 'snaptess-border', reactive: false, visible: false});
+        this.border = new WindowBorder();
         this.preview = new St.Widget({
             style_class: 'snaptess-preview',
             style: 'background-color: transparent; background-image: none; border: 2px solid #8ce8c3; border-radius: 16px;',
@@ -132,6 +136,12 @@ export default class SnapTess extends Extension {
             this.interfaceSettings = new Gio.Settings({schema_id: 'org.gnome.desktop.interface'});
             this.connect(this.interfaceSettings, 'changed::accent-color', () => this.updateBorder());
         } catch { this.interfaceSettings = null; }
+        try {
+            this.connect(St.ThemeContext.get_for_stage(global.stage), 'changed', () => {
+                for (const w of this.records.keys()) this.invalidateWindowRadius(w);
+                this.updateBorder();
+            });
+        } catch { /* theme context may not expose a change signal */ }
         this.bindings = {
             toggle: () => this.setRunning(!this.running), retile: () => { this.checkpoint(); this.tile(true); this.notifyStatus('Windows arranged'); },
             studio: () => this.openStudio(), floating: () => this.toggleFloating(),
@@ -239,10 +249,24 @@ export default class SnapTess extends Extension {
             parked: false, signals: [], monitor: w.get_monitor(), tileRect: null, visualScale: 1, scaleTimer: 0,
             backingRect: null, scaleMinimum: null, scaleNegotiated: false, placementMoves: 0, placing: false, restoreStarted: false, restoreMoves: 0,
             sizeRepairs: 0, sizeRejectUntil: 0, mismatchSize: null, mismatchSince: 0, repairResetTimer: 0,
+            windowRadius: null, radiusDirty: true, radiusAttempts: 0, radiusPending: false,
+            radiusTimer: 0, radiusTimerDelay: 0,
+            radiusFallbackTimer: 0, radiusFallbackReady: false,
+            radiusMonitor: w.get_monitor(), radiusGeneration: 0, radiusActorSignal: 0,
+            borderActorSignals: [],
             traceUntil: 0, traceSignals: [], traceTimer: 0, requestSequence: 0, effectActor: null, effectSignal: 0, specialState: this.isSpecialWindow(w),
             restorePending: false, restoreTimer: 0, settleTimer: 0, restoreUntil: 0, restoreQuietUntil: 0};
         this.records.set(w, record);
         this.watchWindowEffects(w);
+        const actor = this.windowActor(w);
+        if (actor) {
+            try { record.radiusActorSignal = actor.connect('first-frame', () => this.invalidateWindowRadius(w)); }
+            catch { /* existing actors may not expose first-frame */ }
+            for (const property of ['scale-x', 'scale-y', 'translation-x', 'translation-y'])
+                record.borderActorSignals.push(actor.connect(`notify::${property}`, () => {
+                    if (global.display.focus_window === w) this.updateBorder();
+                }));
+        }
         const watch = (signal, fn) => record.signals.push(w.connect(signal, fn));
         watch('unmanaged', () => {
             this.stopWindowTrace(record);
@@ -250,6 +274,10 @@ export default class SnapTess extends Extension {
             this.cancel(record.repairResetTimer); record.repairResetTimer = 0;
             this.cancel(record.restoreTimer); record.restoreTimer = 0;
             this.cancel(record.settleTimer); record.settleTimer = 0;
+            this.cancel(record.radiusTimer); record.radiusTimer = 0;
+            this.cancel(record.radiusFallbackTimer); record.radiusFallbackTimer = 0;
+            if (actor && record.radiusActorSignal) actor.disconnect(record.radiusActorSignal);
+            if (actor) for (const id of record.borderActorSignals) actor.disconnect(id);
             this.disconnectWindowEffects(record);
             if (record.motionGuide) { this.motionGuides.delete(record.motionGuide); record.motionGuide.destroy(); }
             for (const id of record.signals) w.disconnect(id);
@@ -300,15 +328,21 @@ export default class SnapTess extends Extension {
                 this.queueWindowRestore(w, 80);
             if (this.running && record.tileRect && !record.floating && !record.placing && !this.busy && !this.drag)
                 this.scheduleWindowScale(w);
+            if (record.radiusMonitor !== monitor) this.invalidateWindowRadius(w);
+            else if (record.radiusAttempts >= 3 && !record.radiusPending && !record.radiusTimer)
+                this.invalidateWindowRadius(w);
             if (global.display.focus_window === w) this.updateBorder();
         });
         watch('size-changed', () => {
             this.traceWindow(w, 'size-changed');
+            this.invalidateWindowRadius(w);
             if (record.restorePending && Date.now() >= record.restoreQuietUntil && !record.placing && !this.busy && !this.drag)
                 this.queueWindowRestore(w, 80);
             if (this.running && record.tileRect && !record.floating) this.scheduleWindowScale(w);
             if (global.display.focus_window === w) this.updateBorder();
         });
+        if (actor?.visible && !w.minimized)
+            this.queueWindowRadius(w, Math.min(1200, 240 + (this.records.size - 1) * 80));
     }
 
     specialWindowChanged(w, record) {
@@ -677,6 +711,8 @@ export default class SnapTess extends Extension {
             record.effectActor = actor;
             record.effectSignal = actor.connect('effects-completed', () => {
                 this.traceWindow(w, 'effects-completed');
+                if (!record.windowRadius && global.display.focus_window === w) this.invalidateWindowRadius(w);
+                if (global.display.focus_window === w) this.updateBorder();
                 if (!this.running || this.records.get(w) !== record || !record.tileRect || record.floating) return;
                 if (record.restorePending && !this.isSpecialWindow(w)) this.queueWindowRestore(w, 0);
                 else this.scheduleWindowScale(w, 0);
@@ -814,6 +850,7 @@ export default class SnapTess extends Extension {
             record.visualScale = 1;
             this.traceWindow(w, 'enforce-native-scale');
         }
+        if (global.display.focus_window === w) this.updateBorder();
     }
     scheduleWindowScale(w, delay = 90) {
         const record = this.records.get(w);
@@ -909,14 +946,19 @@ export default class SnapTess extends Extension {
     hideSwapGuides() {
         this.cancel(this.swapGuideTimer); this.swapGuideTimer = 0;
         this.swapFromGuide.hide(); this.swapToGuide.hide(); this.swapArrow.hide();
+        this.swapFromWindow = null; this.swapToWindow = null;
     }
     hideGuides() {
         this.border.hide(); this.preview.hide(); this.previewLabel.hide(); this.hideSwapGuides();
+        this.previewWindow = null;
         this.hideDragGuides(); this.hideWindowActions();
     }
-    showSwapGuides(from, to, direction) {
+    showSwapGuides(from, to, direction, sourceWindow = null, targetWindow = null) {
         this.hideSwapGuides();
         this.showRect(this.swapFromGuide, from); this.showRect(this.swapToGuide, to);
+        this.swapFromWindow = sourceWindow; this.swapToWindow = targetWindow;
+        this.setGuideRadius(this.swapFromGuide, sourceWindow, 14);
+        this.setGuideRadius(this.swapToGuide, targetWindow, 14);
         const arrows = {left: '←', right: '→', up: '↑', down: '↓'};
         this.swapArrow.text = arrows[direction] ?? '↔';
         this.swapArrow.set_position(Math.round((from.x + from.width / 2 + to.x + to.width / 2) / 2 - 18),
@@ -944,6 +986,114 @@ export default class SnapTess extends Extension {
             actor.ease({opacity: 255, duration: 140, mode: Clutter.AnimationMode.EASE_OUT_QUAD});
         } else if (appearing) actor.opacity = 255;
     }
+    invalidateWindowRadius(w) {
+        const record = this.records.get(w);
+        if (!record) return;
+        const hadRadius = Boolean(record.windowRadius);
+        this.cancel(record.radiusTimer); record.radiusTimer = 0;
+        record.radiusGeneration++;
+        record.radiusDirty = true;
+        // Keep failed attempts across repeated geometry notifications, or a
+        // client that never yields pixels can postpone the fallback forever.
+        if (hadRadius) {
+            record.radiusAttempts = 0;
+            record.radiusFallbackReady = false;
+            this.cancel(record.radiusFallbackTimer); record.radiusFallbackTimer = 0;
+        }
+        record.radiusPending = false;
+        record.radiusMonitor = w.get_monitor();
+        if (this.running && !w.minimized && global.display.focus_window !== w)
+            this.queueWindowRadius(w, hadRadius ? 120 : 240);
+        if (this.running && global.display.focus_window === w) this.updateBorder();
+    }
+    queueWindowRadius(w, delay = 0) {
+        const record = this.records.get(w);
+        if (!record || !record.radiusDirty || record.radiusPending || record.radiusAttempts >= 3) return;
+        if (record.radiusTimer) {
+            if (record.radiusTimerDelay <= delay) return;
+            this.cancel(record.radiusTimer);
+            record.radiusTimer = 0;
+        }
+        const generation = record.radiusGeneration;
+        record.radiusTimerDelay = delay;
+        record.radiusTimer = this.later(delay, () => {
+            record.radiusTimer = 0;
+            if (this.records.get(w) !== record || generation !== record.radiusGeneration) return;
+            record.radiusPending = true;
+            record.radiusAttempts++;
+            this.measureWindowRadius(w).then(radius => {
+                if (this.records.get(w) !== record || generation !== record.radiusGeneration) return;
+                record.radiusPending = false;
+                if (radius) {
+                    record.windowRadius = radius;
+                    record.radiusDirty = false;
+                    this.cancel(record.radiusFallbackTimer); record.radiusFallbackTimer = 0;
+                    record.radiusFallbackReady = false;
+                    this.updateBorder();
+                    for (const [guide, window, fallback] of [
+                        [this.swapFromGuide, this.swapFromWindow, 14],
+                        [this.swapToGuide, this.swapToWindow, 14],
+                        [this.dragSourceGuide, this.dragSourceWindow, 14],
+                        [this.dragTargetGuide, this.dragTargetWindow, 14],
+                        [this.preview, this.previewWindow, 16],
+                    ]) if (window === w && guide.visible) this.setGuideRadius(guide, w, fallback);
+                } else {
+                    this.queueWindowRadius(w, 500);
+                    if (record.radiusAttempts >= 3) this.updateBorder();
+                }
+            }).catch(error => {
+                if (this.records.get(w) !== record || generation !== record.radiusGeneration) return;
+                record.radiusPending = false;
+                console.debug(`[SnapTess] window radius fallback: ${error.message ?? error}`);
+                this.queueWindowRadius(w, 500);
+                if (record.radiusAttempts >= 3) this.updateBorder();
+            });
+        });
+    }
+    async measureWindowRadius(w) {
+        const actor = this.windowActor(w), frame = this.visualWindowRect(w);
+        if (!actor?.visible || frame.width < 3 || frame.height < 2 || this.windowEffectActive(actor)) return null;
+        const width = Math.min(256, Math.max(3, Math.floor(frame.width / 2)));
+        const height = Math.round(frame.height);
+        const content = actor.paint_to_content(new Mtk.Rectangle({
+            x: Math.round(frame.x), y: Math.round(frame.y), width, height,
+        }));
+        const texture = content?.get_texture?.();
+        if (!texture) return null;
+        if (!this.radiusReadbackReady) {
+            Gio._promisify(Shell.Screenshot, 'composite_to_stream');
+            this.radiusReadbackReady = true;
+        }
+        const stream = Gio.MemoryOutputStream.new_resizable();
+        try {
+            const pixbuf = await Shell.Screenshot.composite_to_stream(
+                texture, 0, 0, width, height, 1, null, 0, 0, 1, stream);
+            const radius = radiusFromPixels(pixbuf.get_pixels(), pixbuf.get_rowstride(),
+                pixbuf.get_n_channels(), pixbuf.get_width(), pixbuf.get_height(), pixbuf.get_has_alpha());
+            if (!radius) return null;
+            const scale = actor.get_scale()[0] || 1;
+            return {top: radius.top / scale, bottom: radius.bottom / scale};
+        } finally { stream.close(null); }
+    }
+    setGuideRadius(guide, w, fallback) {
+        const record = this.records.get(w);
+        if (record && !record.windowRadius) this.queueWindowRadius(w);
+        guide.set_style(`border-radius: ${radiusStyle(record?.windowRadius, fallback, record?.visualScale ?? 1)};`);
+    }
+    visualWindowRect(w) {
+        const frame = w.get_frame_rect(), actor = this.windowActor(w);
+        if (!actor) return frame;
+        const [scaleX, scaleY] = actor.get_scale();
+        const pivot = actor.get_pivot_point();
+        return visualFrameRect(frame, {x: actor.x, y: actor.y, width: actor.width, height: actor.height,
+            scaleX, scaleY, pivotX: Array.isArray(pivot) ? pivot[0] : pivot.x,
+            pivotY: Array.isArray(pivot) ? pivot[1] : pivot.y,
+            translationX: actor.translation_x, translationY: actor.translation_y});
+    }
+    borderMonitorScale(w) {
+        const themeScale = St.ThemeContext.get_for_stage(global.stage).get_scale_factor();
+        return themeScale === 1 ? global.display.get_monitor_scale(w.get_monitor()) : themeScale;
+    }
     animatePlacement(w, from, to) {
         if (!this.settings.get_boolean('animations') ||
             ['x', 'y', 'width', 'height'].every(key => Math.abs(from[key] - to[key]) <= 2)) return;
@@ -952,6 +1102,7 @@ export default class SnapTess extends Extension {
         const app = Shell.WindowTracker.get_default().get_window_app(w);
         const guide = new St.BoxLayout({style_class: 'snaptess-motion-guide', reactive: false,
             x_align: Clutter.ActorAlign.CENTER, y_align: Clutter.ActorAlign.CENTER});
+        this.setGuideRadius(guide, w, 14);
         guide.add_child(app?.create_icon_texture(24) ??
             new St.Icon({icon_name: 'application-x-executable-symbolic', icon_size: 24}));
         guide.add_child(new St.Label({text: app?.get_name() ?? 'Window'}));
@@ -968,12 +1119,16 @@ export default class SnapTess extends Extension {
     }
     hideDragGuides() {
         this.dragSourceGuide?.hide(); this.dragTargetGuide?.hide(); this.dragFlow?.hide();
+        this.dragSourceWindow = null; this.dragTargetWindow = null;
         this.dragFlowKey = null;
     }
     showDragGuides(w, targetWindow, source, target) {
         if (!source) return;
         this.showRect(this.dragSourceGuide, source);
         this.showRect(this.dragTargetGuide, target);
+        this.dragSourceWindow = w; this.dragTargetWindow = targetWindow;
+        this.setGuideRadius(this.dragSourceGuide, w, 14);
+        this.setGuideRadius(this.dragTargetGuide, targetWindow, 14);
         const key = `${target.x}:${target.y}:${targetWindow ? this.appId(targetWindow) : 'free'}`;
         if (this.dragFlowKey !== key) {
             this.dragFlowKey = key;
@@ -998,11 +1153,25 @@ export default class SnapTess extends Extension {
             !this.windows(w.get_monitor()).includes(w)) {
             this.border.hide(); return;
         }
+        if (record.radiusDirty) this.queueWindowRadius(w, record.windowRadius ? 120 : 0);
+        if (!record.windowRadius) {
+            if (record.radiusAttempts < 3 && !record.radiusFallbackReady && !record.radiusFallbackTimer) {
+                record.radiusFallbackTimer = this.later(1400, () => {
+                    record.radiusFallbackTimer = 0;
+                    record.radiusFallbackReady = true;
+                    this.updateBorder();
+                });
+            }
+            if (!record.radiusFallbackReady &&
+                (record.radiusPending || record.radiusTimer || record.radiusAttempts < 3)) {
+                this.border.hide();
+                return;
+            }
+        }
         const borderColor = this.swapMode ? '#62a0ea' : this.accentColor();
-        this.border.set_style(
-            `background-color: transparent; background-image: none; border: 2px solid ${borderColor}; border-radius: 12px; box-shadow: none;`,
-        );
-        this.showRect(this.border, record.tileRect ?? w.get_frame_rect());
+        const scale = this.windowActor(w)?.get_scale()?.[0] ?? 1;
+        this.border.setOutline(borderColor, record.windowRadius, scale);
+        this.border.setFrame(this.visualWindowRect(w), this.borderMonitorScale(w));
         this.stackWindowOverlays(w);
     }
     stackWindowOverlays(w) {
@@ -1198,7 +1367,7 @@ export default class SnapTess extends Extension {
         const rects = layout(this.area(w.get_monitor()), slots.length, this.options(w.get_monitor()));
         const to = directionalSlot(rects, from, direction);
         if (to < 0) return;
-        this.showSwapGuides(rects[from], rects[to], direction);
+        this.showSwapGuides(rects[from], rects[to], direction, w, slots[to]);
         if (!this.swapChanged) {
             this.checkpoint();
             this.swapChanged = true;
@@ -1339,6 +1508,8 @@ export default class SnapTess extends Extension {
                     const targetWindow = visualWindow ?? slots[index];
                     this.drag.target = {monitor, index, window: targetWindow};
                     this.showRect(this.preview, rects[index]);
+                    this.previewWindow = targetWindow;
+                    this.setGuideRadius(this.preview, targetWindow, 16);
                     const from = slots.indexOf(w);
                     const sourceRect = this.records.get(w)?.tileRect ?? (from >= 0 ? rects[from] : null);
                     if (targetWindow === w) this.hideDragGuides();
@@ -1484,6 +1655,11 @@ export default class SnapTess extends Extension {
         for (const [w, r] of this.records) {
             this.stopWindowTrace(r);
             this.disconnectWindowEffects(r);
+            this.cancel(r.radiusTimer);
+            this.cancel(r.radiusFallbackTimer);
+            const actor = this.windowActor(w);
+            if (actor && r.radiusActorSignal) actor.disconnect(r.radiusActorSignal);
+            if (actor) for (const id of r.borderActorSignals) actor.disconnect(id);
             for (const id of r.signals) w.disconnect(id);
         }
         this.records.clear();

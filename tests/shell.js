@@ -41,6 +41,91 @@ export async function run() {
         const a=rects[i],b=rects[j];
         assert(a.x+a.width<=b.x || b.x+b.width<=a.x || a.y+a.height<=b.y || b.y+b.height<=a.y,'non-overlapping native frames');
     }
+    windows[0].activate(global.get_current_time()); await pause();
+    const borderRadius=await app.measureWindowRadius(windows[0]);
+    const scaledActor=app.windowActor(windows[0]);
+    scaledActor.set_scale(0.5,0.5);
+    scaledActor.remove_all_transitions();
+    await Scripting.sleep(250);
+    const scaledRadius=await app.measureWindowRadius(windows[0]);
+    scaledActor.set_scale(1,1);
+    assert(scaledRadius && Math.abs(scaledRadius.top-borderRadius.top)<=3 &&
+        Math.abs(scaledRadius.bottom-borderRadius.bottom)<=3,
+        `a scaled window keeps its measured corners (${JSON.stringify(scaledRadius)})`);
+    assert(borderRadius && borderRadius.top>=0 && borderRadius.bottom>=0,
+        'GNOME Shell samples independent top and bottom corner radii');
+    const borderRecord=app.records.get(windows[0]);
+    app.invalidateWindowRadius(windows[0]);
+    assert(app.border.visible && borderRecord.windowRadius && borderRecord.radiusDirty,
+        'a known radius stays visible while the window is remeasured');
+    await Scripting.sleep(850);
+    assert(borderRecord.windowRadius && !borderRecord.radiusDirty && borderRecord.windowRadius.top>=0,
+        'a cleared window radius is measured again instead of caching the fallback');
+    assert(app.border.visible, 'focus border appears after the radius has been measured');
+    borderRecord.windowRadius=null;
+    borderRecord.radiusDirty=true;
+    borderRecord.radiusAttempts=0;
+    app.updateBorder();
+    assert(!app.border.visible && borderRecord.radiusTimer && borderRecord.radiusTimerDelay===0,
+        'an uncached focused window starts measurement without a fixed wait');
+    await Scripting.sleep(300);
+    assert(borderRecord.windowRadius && app.border.visible,
+        'the first measurement reveals the border without a provisional radius');
+    borderRecord.windowRadius=null;
+    borderRecord.radiusDirty=true;
+    borderRecord.radiusAttempts=3;
+    app.updateBorder();
+    assert(app.border.visible && app.border.topRadius===12,
+        'the fallback appears only after measurement retries are exhausted');
+    borderRecord.radiusAttempts=0;
+    const measureRadius=app.measureWindowRadius;
+    app.measureWindowRadius=async()=>null;
+    for(let i=0;i<3;i++) {
+        app.invalidateWindowRadius(windows[0]);
+        await Scripting.sleep(300);
+    }
+    assert(borderRecord.radiusAttempts===3 && app.border.visible,
+        'repeated invalidations cannot postpone the focus border indefinitely');
+    app.invalidateWindowRadius(windows[0]);
+    assert(app.border.visible, 'an exhausted fallback survives another geometry notification');
+    app.cancel(borderRecord.radiusFallbackTimer);
+    borderRecord.radiusFallbackTimer=0;
+    borderRecord.radiusFallbackReady=false;
+    borderRecord.radiusAttempts=0;
+    for(let i=0;i<16;i++) {
+        app.invalidateWindowRadius(windows[0]);
+        await Scripting.sleep(100);
+    }
+    assert(app.border.visible && (borderRecord.radiusFallbackReady || borderRecord.radiusAttempts>=3),
+        'rapid geometry notifications cannot hide the fallback indefinitely');
+    app.measureWindowRadius=measureRadius;
+    borderRecord.radiusAttempts=0;
+    borderRecord.windowRadius={top:0,bottom:20};
+    borderRecord.radiusDirty=false;
+    app.updateBorder();
+    const frame=app.visualWindowRect(windows[0]), bw=app.border.strokeWidth;
+    assert(app.border.topRadius===0 && app.border.bottomRadius===20,
+        'the painted border keeps square top corners and rounded bottom corners');
+    assert(Math.abs(app.border.x-(frame.x-bw))<=1 && Math.abs(app.border.y-(frame.y-bw))<=1 &&
+        Math.abs(app.border.width-(frame.width+2*bw))<=1,
+        'focus border follows the visible window frame with its stroke outset');
+    scaledActor.set_scale(0.7,0.7);
+    await Scripting.sleep(60);
+    const shrinking=app.visualWindowRect(windows[0]);
+    assert(Math.abs(app.border.width-(shrinking.width+2*bw))<=1 &&
+        Math.abs(app.border.height-(shrinking.height+2*bw))<=1,
+        'focus border follows compositor scale changes during restoration');
+    scaledActor.set_scale(1,1);
+    await Scripting.sleep(60);
+    const restored=app.visualWindowRect(windows[0]);
+    assert(Math.abs(app.border.width-(restored.width+2*bw))<=1 &&
+        Math.abs(app.border.height-(restored.height+2*bw))<=1,
+        'focus border returns to the full frame after an animation');
+    app.setGuideRadius(app.dragSourceGuide,windows[0],14);
+    assert(app.dragSourceGuide.get_style().includes('0px 0px 20px 20px'),
+        'drag source mirrors the independently measured top and bottom corners');
+    borderRecord.windowRadius=borderRadius;
+    app.updateBorder();
     app.showDragGuides(windows[0],windows[1],rects[0],rects[1]);
     assert(app.dragSourceGuide.visible && app.dragTargetGuide.visible && app.dragFlow.visible &&
         app.dragFlow.get_children().length===3,'drag feedback shows source, target and application flow');
@@ -150,6 +235,11 @@ export async function run() {
     windows[0].minimize(); await pause();
     assert(app.groups.get(app.key(0)).filter(Boolean).length===3,'minimize compacts');
     windows[0].unminimize(); await pause();
+    windows[0].activate(global.get_current_time()); await pause();
+    const unminimized=app.visualWindowRect(windows[0]);
+    assert(app.border.visible && Math.abs(app.border.width-(unminimized.width+2*app.border.strokeWidth))<=1 &&
+        Math.abs(app.border.height-(unminimized.height+2*app.border.strokeWidth))<=1,
+        'unminimized window has a full-size focus border');
     app.switchSpace(1,0);
     assert(app.spaceTransitions.size===1,'space switch uses the custom SnapTess transition');
     await pause();
