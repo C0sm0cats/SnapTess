@@ -13,11 +13,13 @@ import {layout, fitMinimumSize, frameScalePivot, nearestSlot, directionalSlot, r
     activePinnedSlots, reserveAppSlots} from './lib/layout.js';
 import {Studio} from './lib/studio.js';
 
-const RUNTIME_REVISION = 29;
+const RUNTIME_REVISION = 31;
 const RESTORE_STABILIZE_MS = 1400;
 const RESTORE_QUIET_MS = 120;
 const MAX_RESTORE_MOVES = 8;
-const MAX_SIZE_REPAIRS = 1;
+const MAX_SIZE_REPAIRS = 2;
+const SIZE_REJECTION_GRACE_MS = 1800;
+const SIZE_MISMATCH_STABLE_MS = 600;
 
 export default class SnapTess extends Extension {
     enable() {
@@ -236,7 +238,7 @@ export default class SnapTess extends Extension {
         const record = {original: null, floating: false, space: this.activeSpace(w.get_monitor(), w.get_workspace()),
             parked: false, signals: [], monitor: w.get_monitor(), tileRect: null, visualScale: 1, scaleTimer: 0,
             backingRect: null, scaleMinimum: null, scaleNegotiated: false, placementMoves: 0, placing: false, restoreStarted: false, restoreMoves: 0,
-            sizeRepairs: 0, autoScale: false, repairResetTimer: 0,
+            sizeRepairs: 0, sizeRejectUntil: 0, mismatchSize: null, mismatchSince: 0, repairResetTimer: 0,
             traceUntil: 0, traceSignals: [], traceTimer: 0, requestSequence: 0, effectActor: null, effectSignal: 0, specialState: this.isSpecialWindow(w),
             restorePending: false, restoreTimer: 0, settleTimer: 0, restoreUntil: 0, restoreQuietUntil: 0};
         this.records.set(w, record);
@@ -741,7 +743,7 @@ export default class SnapTess extends Extension {
         if (this.windowEffectActive(actor)) return; // effects-completed resumes us
         if (record.restorePending && !record.restoreStarted) return;
         const frame = w.get_frame_rect(), target = record.tileRect;
-        let scaled = this.scalesApp(w) || record.autoScale;
+        const scaled = this.scalesApp(w);
         if (scaled && !record.scaleNegotiated) {
             const reported = this.scalesApp(w) ? this.minimumSize(w) : null;
             if (reported?.width || reported?.height) record.scaleMinimum = reported;
@@ -769,19 +771,35 @@ export default class SnapTess extends Extension {
         const sizeMismatch = Math.abs(actual.width - record.backingRect.width) > 1 ||
             Math.abs(actual.height - record.backingRect.height) > 1;
         if (!record.restorePending && !scaled && sizeMismatch) {
+            const size = `${actual.width}:${actual.height}`;
+            if (record.mismatchSize !== size) {
+                record.mismatchSize = size;
+                record.mismatchSince = Date.now();
+            }
             if (record.sizeRepairs < MAX_SIZE_REPAIRS) {
                 record.sizeRepairs++;
                 this.requestWindowGeometry(w, 'tile-size', record.backingRect);
-                this.scheduleWindowScale(w, 120);
+                this.scheduleWindowScale(w, record.sizeRepairs === 1 ? 400 : 120);
                 return;
             }
-            // The client rejected the requested size. Keep its accepted backing
-            // geometry and contain it visually instead of allowing overlap.
-            record.autoScale = true;
-            record.backingRect = {...actual};
-            record.scaleMinimum = {width: actual.width, height: actual.height};
-            scaled = true;
+            if (Date.now() < record.sizeRejectUntil ||
+                Date.now() - record.mismatchSince < SIZE_MISMATCH_STABLE_MS) {
+                this.scheduleWindowScale(w, 250);
+                return;
+            }
+            // An unlisted client rejected its tile. Leave it native-sized and
+            // float it rather than silently enabling compositor scaling.
+            record.floating = true;
+            this.resetWindowScale(w, true);
+            if (record.original) {
+                this.busy = true;
+                try { this.restore(w, {...record.original, minimized: false}); }
+                finally { this.busy = false; }
+            }
+            this.schedule(true);
+            return;
         }
+        if (!sizeMismatch) { record.mismatchSize = null; record.mismatchSince = 0; }
         if (scaled) {
             const scale = Math.max(0.05, Math.min(1,
                 target.width / Math.max(1, actual.width), target.height / Math.max(1, actual.height)));
@@ -831,6 +849,9 @@ export default class SnapTess extends Extension {
             record.placementMoves = 0;
             record.restoreMoves = 0;
             record.sizeRepairs = 0;
+            record.sizeRejectUntil = Date.now() + SIZE_REJECTION_GRACE_MS;
+            record.mismatchSize = null;
+            record.mismatchSince = 0;
             this.cancel(record.repairResetTimer); record.repairResetTimer = 0;
             // Explicit arrangement (including a manual drop) owns a new target.
             this.cancel(record.restoreTimer); record.restoreTimer = 0;
@@ -841,14 +862,14 @@ export default class SnapTess extends Extension {
         }
         if (reusable) {
             if (actor) {
-                if ((this.scalesApp(w) || record.autoScale) && record.visualScale < 0.999)
+                if (this.scalesApp(w) && record.visualScale < 0.999)
                     this.applyWindowScale(w, actor, record.visualScale, rect);
                 this.scheduleWindowScale(w, 0);
             }
             return;
         }
         if (!restoring && previousTile) this.animatePlacement(w, previousTile, rect);
-        const scaled = this.scalesApp(w) || record.autoScale;
+        const scaled = this.scalesApp(w);
         const preserveScale = scaled && actor && record.visualScale < 0.999;
         if (!preserveScale) this.resetWindowScale(w);
         record.tileRect = {...rect};
