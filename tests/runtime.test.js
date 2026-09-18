@@ -11,7 +11,7 @@ const source = fs.readFileSync(new URL('../runtime.js', import.meta.url), 'utf8'
     .replaceAll('import.meta.url', JSON.stringify(new URL('../runtime.js', import.meta.url).href))
     .replace('export default class SnapTess', 'class SnapTess') + '\nSnapTess;';
 function harness() {
-    let now = 1000, nextId = 1, grabbed = false, monitor = 0;
+    let now = 1000, nextId = 1, grabbed = false, monitor = 0, pointer = [150, 80];
     const timers = new Map(), signals = new Map(), actorSignals = new Map();
     const requests = [], scaleWrites = [], userOps = [];
     let frame = {x: 100, y: 50, width: 600, height: 400};
@@ -48,7 +48,7 @@ function harness() {
         GLib: {file_get_contents() { throw new Error('trace disabled'); }},
         Main: {layoutManager: {monitors: [{}]}},
         Meta: {WindowType: {NORMAL: 0}, GrabOp: {MOVING: 1, KEYBOARD_MOVING: 2}},
-        global: {display: {is_grabbed: () => grabbed, focus_window: null},
+        global: {display: {is_grabbed: () => grabbed, focus_window: null}, get_pointer: () => pointer,
             workspace_manager: {get_active_workspace: () => workspace}, get_window_actors: () => [actor]},
     });
     const app = new Runtime();
@@ -92,8 +92,46 @@ function harness() {
     }
     return {app, w, actor, record, requests, scaleWrites, userOps, slot, timers, advance, commit, special,
         effectsDone, settleInitial, frame: () => frame, grab: value => { grabbed = value; },
-        monitor: value => { monitor = value; }};
+        monitor: value => { monitor = value; }, pointer: (x, y) => { pointer = [x, y]; }};
 }
+
+test('a titlebar click leaves drag feedback hidden and does not retile', () => {
+    const h = harness(); h.settleInitial(); h.grab(true);
+    h.app.captureCheckpoint = () => ({});
+    let borderHides = 0, actionHides = 0, tiles = 0, borders = 0;
+    h.app.border = {hide() { borderHides++; }};
+    h.app.hideWindowActions = () => actionHides++;
+    h.app.hideDragGuides = () => {};
+    h.app.preview = {hide() {}};
+    h.app.previewLabel = {hide() {}};
+    h.app.tile = () => tiles++;
+    h.app.updateBorder = () => borders++;
+    h.app.queueWindowActions = () => {};
+    h.app.grabBegin(h.w, 1);
+    h.pointer(157, 80); h.advance(64);
+    assert.equal(h.app.drag.started, false);
+    assert.equal(borderHides, 0);
+    assert.equal(actionHides, 0);
+    h.grab(false); h.app.grabEnd();
+    assert.equal(tiles, 0);
+    assert.equal(borders, 1);
+});
+
+test('drag feedback starts only after pointer movement crosses the threshold', () => {
+    const h = harness(); h.settleInitial(); h.grab(true);
+    h.app.captureCheckpoint = () => ({});
+    let borderHides = 0, actionHides = 0;
+    h.app.border = {hide() { borderHides++; }};
+    h.app.hideWindowActions = () => actionHides++;
+    h.app.hideDragGuides = () => {};
+    h.app.preview = {hide() {}};
+    h.app.previewLabel = {hide() {}};
+    h.app.grabBegin(h.w, 1);
+    h.pointer(159, 80); h.advance(32);
+    assert.equal(h.app.drag.started, true);
+    assert.equal(borderHides, 1);
+    assert.equal(actionHides, 1);
+});
 
 test('excluded applications match desktop IDs, aliases, and WM_CLASS', () => {
     const h = harness();

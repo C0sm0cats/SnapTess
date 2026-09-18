@@ -1148,7 +1148,7 @@ export default class SnapTess extends Extension {
     updateBorder() {
         const w = global.display.focus_window;
         const record = this.records.get(w);
-        if (!this.running || this.drag || this.studio || Main.overview.visible || !record || record.floating ||
+        if (!this.running || this.drag?.started || this.studio || Main.overview.visible || !record || record.floating ||
             w.minimized || w.fullscreen || w.get_maximize_flags() || !this.settings.get_boolean('active-border') ||
             !this.windows(w.get_monitor()).includes(w)) {
             this.border.hide(); return;
@@ -1482,9 +1482,10 @@ export default class SnapTess extends Extension {
         this.cancel(record.settleTimer); record.settleTimer = 0;
         record.restorePending = false;
         this.traceWindow(w, 'grab-begin');
+        const [startX, startY] = global.get_pointer();
         this.drag = {window: w, monitor: w.get_monitor(), target: null,
-            checkpoint: this.captureCheckpoint()};
-        this.border.hide(); this.hideWindowActions(); this.hideDragGuides();
+            checkpoint: this.captureCheckpoint(), startX, startY,
+            started: op === Meta.GrabOp.KEYBOARD_MOVING};
         const tick = () => {
             if (!this.drag) return;
             if (!global.display.is_grabbed()) {
@@ -1492,6 +1493,14 @@ export default class SnapTess extends Extension {
                 return;
             }
             const [x, y] = global.get_pointer();
+            if (!this.drag.started) {
+                if ((x - startX) ** 2 + (y - startY) ** 2 < 64) {
+                    this.dragTimer = this.later(32, tick);
+                    return;
+                }
+                this.drag.started = true;
+            }
+            this.border.hide(); this.hideWindowActions();
             const monitor = Main.layoutManager.monitors.findIndex(m => x >= m.x && x < m.x + m.width && y >= m.y && y < m.y + m.height);
             if (monitor >= 0) {
                 let slots = [...(this.groups.get(this.key(monitor)) ?? this.windows(monitor))];
@@ -1541,9 +1550,16 @@ export default class SnapTess extends Extension {
     grabEnd() {
         if (!this.drag) return;
         this.cancel(this.dragTimer); this.dragTimer = 0;
-        const {window: w, target, monitor: source, checkpoint} = this.drag;
+        const {window: w, target, monitor: source, checkpoint, startX, startY, started} = this.drag;
         this.drag = null; this.preview.hide(); this.previewLabel.hide(); this.hideDragGuides();
         if (!this.records.has(w)) return;
+        if (started === false) {
+            const [x, y] = global.get_pointer();
+            if ((x - startX) ** 2 + (y - startY) ** 2 >= 64) this.tile(true);
+            else this.updateBorder();
+            this.queueWindowActions(w);
+            return;
+        }
         if (target) {
             const key = this.key(target.monitor);
             const slots = [...(this.groups.get(key) ?? this.windows(target.monitor))];
