@@ -207,24 +207,28 @@ test('a saved app slot returns after close without undoing a live manual swap', 
     assert.equal(app.groups.get('0:0:0')[1], other);
 });
 
-test('a late rejected size gets one bounded retry then automatic scale-to-fit', () => {
+test('a persistently rejected size gets bounded retries then leaves tiling', () => {
     const h = harness();
+    h.app.schedule = () => {};
     h.app.place(h.w, h.slot);
     h.commit({...h.slot, width: 800, height: 600});
     h.advance(100);
-    assert.equal(h.requests.filter(r => r.type === 'resize').length, 2, 'one bounded size repair');
+    assert.equal(h.requests.filter(r => r.type === 'resize').length, 2, 'first bounded size repair');
     for (let i = 0; i < 15; i++) {
         h.commit({width: 810 + i * 3, height: 550 + i * 2});
         h.advance(200);
     }
-    assert.equal(h.requests.filter(r => r.type === 'resize').length, 2, 'no resize feedback loop');
-    assert.ok(h.actor.scale_x < 1);
-    assert.ok(h.actor.scale_y < 1);
+    assert.equal(h.requests.filter(r => r.type === 'resize').length, 3, 'no resize feedback loop');
+    assert.equal(h.record.floating, false, 'size changes defer rejection while the client is settling');
+    h.advance(1000);
+    assert.equal(h.record.floating, true);
+    assert.equal(h.actor.scale_x, 1);
+    assert.equal(h.actor.scale_y, 1);
     assert.equal(h.timers.size, 0);
 });
 
 test('unmaximize preserves the backing plan across several size/position commits and duplicate notifications', () => {
-    const h = harness(); h.settleInitial();
+    const h = harness(); h.app.schedule = () => {}; h.settleInitial();
     const backing = {...h.record.backingRect};
     h.special(3); h.commit({x: 0, y: 0, width: 1920, height: 1080});
     h.actor.__animationInfo = {}; h.special(0); h.advance(250);
@@ -243,12 +247,14 @@ test('unmaximize preserves the backing plan across several size/position commits
     }
     h.advance(1600);
     assert.equal(h.record.restorePending, false);
-    assert.equal(h.requests.filter(r => r.type === 'resize').length, 2,
-        'restoration stays position-only, then ordinary containment gets one bounded retry');
+    assert.equal(h.requests.filter(r => r.type === 'resize').length, 3,
+        'restoration stays position-only, then ordinary containment gets bounded retries');
     assert.equal(h.frame().x, h.slot.x); assert.equal(h.frame().y, h.slot.y);
     const before = h.requests.length;
     for (let i = 0; i < 10; i++) { h.commit({width: 800 + i, height: 550 + i}); h.advance(200); }
-    assert.equal(h.requests.length, before, 'later scale updates never create a resize feedback loop');
+    h.advance(1000);
+    assert.equal(h.requests.length, before, 'a floating client never creates a resize feedback loop');
+    assert.equal(h.record.floating, true);
     assert.equal(h.timers.size, 0);
 });
 
@@ -322,15 +328,43 @@ test('ordinary delayed position drift is repaired without a resize', () => {
     assert.equal(h.requests.length, 1);
 });
 
-test('a clamped oversized backing window is automatically contained in its tile', () => {
+test('an unlisted client rejecting its tile floats without compositor scaling', () => {
     const h = harness();
+    let reflows = 0;
+    h.app.schedule = compact => { assert.equal(compact, true); reflows++; };
+    h.w.unmaximize = () => {};
+    h.w.move_to_monitor = () => {};
+    h.w.unminimize = () => {};
+    h.record.original = h.app.snapshot(h.w);
     const target = {...h.slot, x: 1200, y: 700, width: 400, height: 300};
     h.app.place(h.w, target);
     h.commit({x: 800, y: 500, width: 800, height: 600});
-    h.advance(300);
-    assert.equal(h.actor.scale_x, 0.5);
-    assert.equal(h.actor.translation_x, target.x - 800);
-    assert.equal(h.actor.translation_y, target.y - 500);
+    h.advance(800);
+    assert.equal(h.record.floating, false, 'a slow resize remains tiled during the grace period');
+    h.advance(1500);
+    assert.equal(h.record.floating, true);
+    assert.equal(h.record.tileRect, null);
+    assert.equal(h.record.visualScale, 1);
+    assert.equal(h.actor.scale_x, 1);
+    assert.equal(h.actor.translation_x, 0);
+    assert.equal(h.actor.translation_y, 0);
+    assert.deepEqual(h.requests.at(-1), {type: 'resize', ...h.slot});
+    assert.equal(reflows, 1);
+});
+
+test('an unlisted client accepting a delayed resize remains tiled at native scale', () => {
+    const h = harness();
+    const target = {...h.slot, width: 400, height: 300};
+    h.app.place(h.w, target);
+    h.commit({width: 800, height: 600});
+    h.advance(850);
+    assert.equal(h.record.floating, false);
+    h.commit(target);
+    h.advance(1800);
+    assert.equal(h.record.floating, false);
+    assert.equal(h.actor.scale_x, 1);
+    assert.equal(h.record.visualScale, 1);
+    assert.equal(h.timers.size, 0);
 });
 
 test('only configured applications use scale-to-fit fallback', () => {
@@ -436,16 +470,17 @@ test('moving a constrained window between equal slots keeps native scale', () =>
     ]);
 });
 
-test('post-grab validation restores automatic containment transforms', () => {
+test('post-grab validation restores allowlisted scale-to-fit transforms', () => {
     const h = harness();
+    h.app.settings.get_strv = key => key === 'scaled-apps' ? ['test.desktop'] : [];
     const target = {...h.slot, width: 400, height: 300};
     h.app.place(h.w, target);
     h.commit({...target, width: 800, height: 600});
     h.advance(200);
-    assert.equal(h.actor.scale_x, 1);
+    assert.equal(h.actor.scale_x, 0.5);
     h.app.validateTransformsAfterGrab();
     h.advance(300);
-    h.actor.set_scale(0.5, 0.5);
+    h.actor.set_scale(1, 1);
     h.actor.translation_x = 90;
     h.actor.translation_y = 60;
     h.advance(400);

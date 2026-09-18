@@ -46,6 +46,7 @@ export async function run() {
         app.dragFlow.get_children().length===3,'drag feedback shows source, target and application flow');
     app.hideDragGuides();
     const stubborn=windows[0], stubbornRecord=app.records.get(stubborn);
+    app.settings.set_strv('scaled-apps', [...app.settings.get_strv('scaled-apps'), app.appId(stubborn)]);
     const stubbornTarget={...stubbornRecord.tileRect};
     stubborn.move_resize_frame(false,stubbornTarget.x,stubbornTarget.y,stubbornTarget.width+180,stubbornTarget.height+140);
     const matchesTarget=frame=>Math.abs(frame.x-stubbornTarget.x)<=1 && Math.abs(frame.y-stubbornTarget.y)<=1 &&
@@ -64,8 +65,8 @@ export async function run() {
         assert(actorScaleX===1 && actorScaleY===1,'repaired window actor stays at native scale');
     } else {
         const fit=Math.min(stubbornTarget.width/stubbornFrame.width,stubbornTarget.height/stubbornFrame.height);
-        assert(stubbornRecord.autoScale && stubbornRecord.sizeRepairs===1,
-            'rejected native size gets one repair attempt then automatic scale-to-fit');
+        assert(!stubbornRecord.floating,
+            'an allowlisted window remains tiled when its native size is rejected');
         assert(Math.abs(stubbornRecord.visualScale-fit)<0.001 &&
             Math.abs(actorScaleX-fit)<0.001 && Math.abs(actorScaleY-fit)<0.001 &&
             Math.abs(stubbornActor.translation_x-(stubbornTarget.x-stubbornFrame.x))<=1 &&
@@ -108,7 +109,7 @@ export async function run() {
         'unchanged placement preserves native or fitted scale');
     app.place(stubborn,stubbornTarget,false,true); await pause();
     [actorScaleX,actorScaleY]=stubbornActor.get_scale();
-    if(nativeRepair) {
+    if(matchesTarget(stubborn.get_frame_rect())) {
         assert(stubbornRecord.visualScale>0.999,'normal tile size restores unit scale');
         assert(actorScaleX>0.999 && actorScaleY>0.999,'normal tile size restores the actor transform');
     } else {
