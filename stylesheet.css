@@ -28,18 +28,21 @@
 .snaptess-eyebrow { color: #8ce8c3; font-size: 11px; font-weight: 800; letter-spacing: 3px; margin-bottom: 8px; }
 .snaptess-title { font-size: 27px; font-weight: 800; }
 .snaptess-brand { color: #8ce8c3; }
-.snaptess-modified-badge { background-color: #5a4326; border: 1px solid #f3bd72; border-radius: 8px; padding: 4px 8px; color: #ffe0ad; font-size: 9px; font-weight: 800; }
 .snaptess-toolbar { spacing: 7px; margin-bottom: 10px; }
 .snaptess-presets { spacing: 5px; margin-bottom: 8px; }
 .snaptess-chip { background-color: #242e38; border: 1px solid transparent; border-radius: 9px; padding: 7px 10px; font-size: 11px; color: #c1cdd1; }
 .snaptess-chip:hover, .snaptess-chip:focus { background-color: #35454c; color: white; }
 .snaptess-chip.selected { background-color: #28483f; border-color: #73cfa8; color: #b5f7db; }
+.snaptess-chip.unavailable { opacity: 0.4; }
+.snaptess-context-label { spacing: 6px; }
+.snaptess-dirty-dot { width: 6px; height: 6px; border-radius: 3px; background-color: #f3bd72; }
 .snaptess-canvas { background-color: #10161d; border-radius: 17px; border: 1px solid #2d3b44; }
 .snaptess-slot { background-color: #26343e; border: 1px solid #435761; border-radius: 12px; padding: 4px; }
 .snaptess-slot:hover, .snaptess-slot:focus { background-color: #314d4b; border-color: #8ce8c3; }
 .snaptess-slot.selected { background-color: #513a3f; border: 2px solid #ff9b91; }
 .snaptess-slot.active { border: 2px solid #68d9ff; box-shadow: inset 0 0 0 1px rgba(104,217,255,0.28); }
 .snaptess-slot.scaled { border-color: #d7a7ff; }
+.snaptess-slot.pinned { box-shadow: inset 0 0 0 2px #f3bd72; }
 .snaptess-slot.empty { background-color: #182129; border: 1px dashed #53646d; }
 .snaptess-slot.drop-target { background-color: #356358; border: 2px solid #b5f7db; }
 .snaptess-slot.dragging { background-color: #182129; border: 1px dashed #8ce8c3; }

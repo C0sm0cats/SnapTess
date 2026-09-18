@@ -7,7 +7,7 @@ import * as geometry from '../lib/layout.js';
 // Execute the actual runtime methods with asynchronous client commits and a
 // deterministic clock. GI imports alone are replaced; no duplicate restore code.
 const source = fs.readFileSync(new URL('../runtime.js', import.meta.url), 'utf8')
-    .replace(/^import .*;\n/gm, '')
+    .replace(/^import [^;]+;\n/gm, '')
     .replaceAll('import.meta.url', JSON.stringify(new URL('../runtime.js', import.meta.url).href))
     .replace('export default class SnapTess', 'class SnapTess') + '\nSnapTess;';
 function harness() {
@@ -46,6 +46,7 @@ function harness() {
         ...geometry, Extension: class {}, console,
         Date: class extends Date { static now() { return now; } },
         GLib: {file_get_contents() { throw new Error('trace disabled'); }},
+        Main: {layoutManager: {monitors: [{}]}},
         Meta: {WindowType: {NORMAL: 0}, GrabOp: {MOVING: 1, KEYBOARD_MOVING: 2}},
         global: {display: {is_grabbed: () => grabbed, focus_window: null},
             workspace_manager: {get_active_workspace: () => workspace}, get_window_actors: () => [actor]},
@@ -124,6 +125,86 @@ test('scaled applications use the same identifier matching without changing save
     }
     h.app.settings.get_strv = () => ['unrelated.desktop'];
     assert.equal(h.app.scalesApp(h.w), false);
+});
+
+test('applying multiple Studio contexts creates one undo checkpoint and preserves every profile', () => {
+    const h = harness(), app = h.app;
+    let monitor = 0, tileCalls = 0;
+    const first = h.w, second = {...h.w, id: 'second.desktop', minimized: true};
+    first.id = 'first.desktop';
+    first.get_monitor = () => monitor;
+    first.move_to_monitor = value => { monitor = value; };
+    first.minimize = () => { first.minimized = true; };
+    first.unminimize = () => { first.minimized = false; };
+    second.get_monitor = () => 0;
+    second.move_to_monitor = () => {};
+    second.minimize = () => { second.minimized = true; };
+    second.unminimize = () => { second.minimized = false; };
+    app.appId = w => w.id;
+    app.records = new Map([[first, {original: null, floating: false, space: 0, parked: false, monitor: 0}],
+        [second, {original: null, floating: false, space: 1, parked: true, monitor: 0}]]);
+    app.groups = new Map([['0:0:0', [first]], ['0:0:1', [second]]]);
+    app.history = []; app.profiles = {};
+    app.snapshot = () => ({});
+    app.restore = () => {};
+    app.workspaceIndex = () => 0;
+    app.key = (display, space) => `0:${display}:${space}`;
+    app.profileKey = (display, space) => `${display}:${space}`;
+    app.activeSpace = () => 0;
+    app.switchSpace = () => {};
+    app.tile = () => { tileCalls++; };
+    app.updatePanelStatus = () => {};
+    app.notifyStatus = () => {};
+    app.settings.set_string = () => {};
+
+    app.applyProfiles([
+        {monitor: 0, space: 0, preset: 'split', windows: [second], pinned: ['second.desktop']},
+        {monitor: 0, space: 1, preset: 'full', windows: [first], pinned: []},
+    ], {monitor: 0, space: 0});
+    assert.equal(app.history.length, 1);
+    assert.equal(tileCalls, 1);
+    assert.equal(app.groups.get('0:0:0')[0], second);
+    assert.equal(app.groups.get('0:0:1')[0], first);
+    assert.equal(app.profiles['0:0'].pinned[0], 'second.desktop');
+    assert.equal(app.profiles['0:1'].preset, 'full');
+    assert.equal(app.records.get(first).parked, true);
+    assert.equal(app.records.get(second).parked, false);
+
+    app.undo();
+    assert.equal(app.history.length, 0);
+    assert.equal(app.groups.get('0:0:0')[0], first);
+    assert.equal(app.groups.get('0:0:1')[0], second);
+    assert.equal(Object.keys(app.profiles).length, 0);
+});
+
+test('a saved app slot returns after close without undoing a live manual swap', () => {
+    const h = harness(), app = h.app;
+    const window = id => ({id, get_maximize_flags: () => 0});
+    const pinned = window('editor.desktop'), other = window('browser.desktop'), reopened = window('editor.desktop');
+    let live = [pinned, other];
+    app.appId = w => w.id;
+    app.windows = () => live;
+    app.key = () => '0:0:0';
+    app.profileKey = () => '0:0:0';
+    app.profiles = {'0:0:0': {preset: 'split', apps: ['editor.desktop', 'browser.desktop'],
+        pinned: ['editor.desktop']}};
+    app.groups = new Map([['0:0:0', [other, pinned]]]);
+    app.options = () => ({preset: 'split'});
+    app.area = () => ({x: 0, y: 0, width: 800, height: 600});
+    app.place = () => {};
+    app.updateBorder = () => {};
+    app.records = new Map([[pinned, {original: {}}], [other, {original: {}}], [reopened, {original: {}}]]);
+    app.tile(true);
+    assert.equal(app.groups.get('0:0:0')[0], other, 'manual swap remains visible');
+    assert.equal(app.groups.get('0:0:0')[1], pinned);
+    live = [other];
+    app.tile(true);
+    assert.equal(app.groups.get('0:0:0')[0], null, 'saved slot remains vacant after close');
+    assert.equal(app.groups.get('0:0:0')[1], other);
+    live = [other, reopened];
+    app.tile(true);
+    assert.equal(app.groups.get('0:0:0')[0], reopened, 'reopened app returns to its saved slot');
+    assert.equal(app.groups.get('0:0:0')[1], other);
 });
 
 test('a late rejected size gets one bounded retry then automatic scale-to-fit', () => {

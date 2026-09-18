@@ -9,7 +9,8 @@ import {Extension} from 'resource:///org/gnome/shell/extensions/extension.js';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import * as PanelMenu from 'resource:///org/gnome/shell/ui/panelMenu.js';
 import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js';
-import {layout, fitMinimumSize, frameScalePivot, nearestSlot, directionalSlot, reconcileSlots} from './lib/layout.js';
+import {layout, fitMinimumSize, frameScalePivot, nearestSlot, directionalSlot, reconcileSlots,
+    activePinnedSlots, reserveAppSlots} from './lib/layout.js';
 import {Studio} from './lib/studio.js';
 
 const RUNTIME_REVISION = 29;
@@ -208,8 +209,11 @@ export default class SnapTess extends Extension {
     }
 
     eligible(w) {
+        // GNOME marks windows on secondary displays as spanning workspaces when
+        // workspaces are primary-display-only; they are still ordinary windows.
         return w && w.get_window_type() === Meta.WindowType.NORMAL && !w.is_override_redirect() &&
-            !w.skip_taskbar && !w.is_on_all_workspaces();
+            !w.skip_taskbar && (!w.is_on_all_workspaces() ||
+                w.get_monitor() !== Main.layoutManager.primaryIndex);
     }
 
     appId(w) {
@@ -616,7 +620,8 @@ export default class SnapTess extends Extension {
                 const windows = this.windows(monitor);
                 if (!releaseMaximized && windows.some(w => w.fullscreen || w.get_maximize_flags())) continue;
                 const key = this.key(monitor);
-                let previous = this.groups.get(key);
+                const existingGroup = this.groups.get(key);
+                let previous = existingGroup;
                 if (!previous) {
                     const order = this.profiles[this.profileKey(monitor)]?.apps ?? [];
                     previous = [...windows].sort((a, b) => {
@@ -624,7 +629,12 @@ export default class SnapTess extends Extension {
                         return rank(a) - rank(b);
                     });
                 }
-                const slots = reconcileSlots(previous, windows, compact);
+                const savedPins = this.profiles[this.profileKey(monitor)]?.pinned;
+                // An explicit drag/swap may temporarily move a live pinned window.
+                // Reserve its saved slot again only when that window is absent or reopens.
+                const pinned = activePinnedSlots(existingGroup, windows, savedPins, w => this.appId(w));
+                const slots = reserveAppSlots(reconcileSlots(previous, windows, compact), pinned,
+                    w => this.appId(w), compact);
                 this.groups.set(key, slots);
                 const rects = layout(this.area(monitor), slots.length, this.options(monitor));
                 slots.forEach((w, i) => {
@@ -1396,24 +1406,50 @@ export default class SnapTess extends Extension {
         this.hideGuides(); this.studio.dialog.open();
     }
     applyProfile(monitor, space, preset, windows) {
+        this.applyProfiles([{monitor, space, preset, windows}]);
+    }
+
+    applyProfiles(changes, focus = changes.at(-1)) {
+        if (!changes.length) return;
         if (!this.running) this.setRunning(true);
         this.checkpoint();
-        this.switchSpace(space, monitor);
-        const live = windows.filter(w => this.records.has(w));
+        this.switchSpace(focus.space, focus.monitor);
+        const workspace = global.workspace_manager.get_active_workspace();
+        const claimed = new Set();
+        const plans = changes.map(change => ({...change, slots: change.windows.map(w => {
+            if (!w || !this.records.has(w) || w.get_workspace() !== workspace || claimed.has(w)) return null;
+            claimed.add(w); return w;
+        })}));
         this.busy = true;
         try {
-            for (const w of live) {
-                const r = this.records.get(w); r.original ??= this.snapshot(w);
-                r.floating = false; r.parked = false; r.space = space; r.monitor = monitor;
-                w.move_to_monitor(monitor); w.unminimize();
+            for (const [key, group] of this.groups)
+                if (key.startsWith(`${this.workspaceIndex()}:`))
+                    this.groups.set(key, group.filter(w => !claimed.has(w)));
+            for (const {monitor, space, preset, slots, pinned = []} of plans) {
+                for (const w of slots) {
+                    if (!w) continue;
+                    const r = this.records.get(w); r.original ??= this.snapshot(w);
+                    r.floating = false; r.space = space; r.monitor = monitor;
+                    w.move_to_monitor(monitor);
+                    if (w.get_monitor() !== monitor) {
+                        // A secondary-display window may be workspace-sticky, so
+                        // Mutter can ignore move_to_monitor until its frame moves.
+                        const area = this.area(monitor);
+                        w.move_frame(true, area.x + 12, area.y + 12);
+                    }
+                    r.parked = this.activeSpace(monitor) !== space;
+                    if (r.parked) w.minimize(); else w.unminimize();
+                }
+                this.groups.set(this.key(monitor, space), slots);
+                this.profiles[this.profileKey(monitor, space)] = {
+                    preset, apps: slots.filter(Boolean).map(w => this.appId(w)), pinned,
+                };
             }
         } finally { this.busy = false; }
-        this.groups.set(this.key(monitor, space), live);
-        this.profiles[this.profileKey(monitor, space)] = {preset, apps: live.map(w => this.appId(w))};
         this.settings.set_string('profiles', JSON.stringify(this.profiles));
         this.tile(true, true);
         this.updatePanelStatus();
-        this.notifyStatus(`Layout applied · ${live.length} windows`);
+        this.notifyStatus(`Layout applied · ${claimed.size} windows`);
     }
 
     disable() {

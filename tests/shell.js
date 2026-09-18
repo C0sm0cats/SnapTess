@@ -191,6 +191,21 @@ export async function run() {
     assert(app.groups.get(app.key(0)).indexOf(windows[0])===slotBefore,'undo reverts committed swap session');
     app.openStudio(); await pause();
     assert(app.studio?.canvas.get_children().length===4,'studio renders slots');
+    const initialPreset=app.studio.preset, initialUndo=app.studio.undoStack.length;
+    const initialCardWidth=app.studio.canvas.get_first_child().width;
+    assert(!app.studio.presets.get_children()[1].reactive,
+        'Full is unavailable when four windows need tiles');
+    app.studio.choosePreset('full');
+    assert(app.studio.preset===initialPreset && app.studio.undoStack.length===initialUndo,
+        'an unavailable layout cannot create a misleading draft');
+    app.studio.choosePreset('3x2');
+    assert(app.studio.canvas.get_first_child().width<initialCardWidth,
+        'a compatible layout updates the Studio preview immediately');
+    app.studio.undo();
+    const studioWidth=app.studio.width;
+    app.studio.width=700; app.studio.render();
+    assert(app.studio.presetMenu,'compact Studio renders the layout menu');
+    app.studio.width=studioWidth; app.studio.render();
     const unassigned=app.studio.draft.pop();
     app.studio.showLibrary=true; app.studio.render();
     const library=app.studio.canvas.get_first_child().get_child();
@@ -217,19 +232,80 @@ export async function run() {
         await new Shell.Screenshot().screenshot_area(m.x,m.y,m.width,m.height,stream);
         stream.close(null);
     }
-    app.studio.select(0); app.studio.select(1); app.studio.apply(); await pause();
+    const studio=app.studio, historyBeforeStudio=app.history.length;
+    studio.select(0);
+    assert(studio.pinButton.visible,'selected Studio window offers a reserved app slot');
+    const pinnedWindow=studio.draft[0];
+    const beforePinDirty=new Set(studio.dirtyContexts), beforePinUndo=studio.undoStack.length;
+    studio.togglePin();
+    assert(studio.pins[0]===app.appId(pinnedWindow),'Studio marks the selected app for its tile');
+    assert(studio.undoButton.visible && !studio.modifiedBadge,
+        'Studio exposes Undo without the prominent modified badge');
+    assert(studio.context.get_children().some(chip=>chip.get_child?.()?.get_children?.()
+        .some(child=>child.has_style_class_name?.('snaptess-dirty-dot'))),
+    'modified contexts use a discreet dot');
+    studio.undo();
+    assert(!studio.pins[0] && studio.undoStack.length===beforePinUndo &&
+        [...studio.dirtyContexts].every(key=>beforePinDirty.has(key)) &&
+        studio.dirtyContexts.size===beforePinDirty.size,
+        'Studio Undo restores the previous pin and draft state');
+    studio.togglePin();
+    studio.changeContext(0,1);
+    const priorPreset=studio.preset;
+    studio.choosePreset('full');
+    studio.undo();
+    assert(studio.preset===priorPreset && studio.dirtyContexts.size===beforePinDirty.size,
+        'Studio Undo restores a preset in another space without losing earlier edits');
+    studio.choosePreset('full');
+    studio.changeContext(0,0);
+    assert(studio.preset===studioPreset && studio.dirtyContexts.size===2,
+        'switching spaces preserves both layout drafts');
+    studio.select(0); studio.select(1);
+    studio.undo();
+    assert(studio.pins[0]===app.appId(pinnedWindow) && studio.draft[0]===pinnedWindow,
+        'Studio Undo restores a swap and its reserved app slot');
+    studio.select(1);
+    studio.reset(); studio.undo();
+    assert(studio.pins[1]===app.appId(pinnedWindow),
+        'Studio Undo restores the layout after Reset profile');
+    studio.apply(); await pause();
     assert(!app.studio,'studio closes after apply');
+    assert(app.history.length===Math.min(10,historyBeforeStudio+1),'all Studio changes share one undo checkpoint');
+    assert(app.profiles[app.profileKey(0,0)].pinned[1]===app.appId(pinnedWindow),
+        'reserved app slot follows a Studio swap');
+    assert(app.profiles[app.profileKey(0,1)].preset==='full','Apply saves changes from another space');
+    app.undo(); await pause();
+    assert(!app.profiles[app.profileKey(0,1)],'one undo restores the other space profile');
+    app.openStudio(); await pause();
+    const moveStudio=app.studio;
+    moveStudio.changeContext(0,1);
+    moveStudio.showLibrary=true; moveStudio.render();
+    moveStudio.canvas.get_first_child().get_child().get_first_child().emit('clicked',1);
+    assert(moveStudio.dirtyContexts.has('0:0') && moveStudio.dirtyContexts.has('0:1'),
+        'moving a window marks both source and destination drafts');
+    moveStudio.undo();
+    assert(moveStudio.dirtyContexts.size===0 && moveStudio.draft.length===0,
+        'Studio Undo restores both drafts after adding a window');
+    moveStudio.showLibrary=true; moveStudio.render();
+    moveStudio.canvas.get_first_child().get_child().get_first_child().emit('clicked',1);
+    const movedWindow=moveStudio.draft[0];
+    moveStudio.apply(); await pause();
+    assert(app.records.get(movedWindow).space===1 && app.groups.get(app.key(0,1)).includes(movedWindow) &&
+        !app.groups.get(app.key(0,0)).includes(movedWindow),
+        'Apply moves a window and updates both spaces together');
+    app.undo(); await pause();
+    assert(app.records.get(movedWindow).space===0 && app.groups.get(app.key(0,0)).includes(movedWindow),
+        'one undo restores a cross-space Studio assignment');
     if (Main.layoutManager.monitors.length > 1) {
         app.applyProfile(1,0,'auto',[windows[0]]); await pause();
         assert(windows[0].get_monitor()===1,'studio assignment moves across monitors');
         app.switchSpace(1,1); await pause();
         assert(windows[0].minimized && windows.slice(1).every(w=>!w.minimized),'spaces independent per monitor');
         app.switchSpace(0,1); await pause();
-        app.grabBegin(windows[0],Meta.GrabOp.MOVING);
-        app.drag.target={monitor:0,index:1}; app.grabEnd(); await pause();
-        assert(windows[0].get_monitor()===0,'drop moves to target monitor');
-        assert(app.groups.get(app.key(0)).filter(Boolean).length===4,'drop reflows target');
-        assert(app.groups.get(app.key(1)).filter(Boolean).length===0,'drop reflows source');
+        app.applyProfile(0,0,'auto',windows); await pause();
+        assert(windows[0].get_monitor()===0,'studio assignment returns to the primary monitor');
+        assert(app.groups.get(app.key(0)).filter(Boolean).length===4,'studio assignment reflows target');
+        assert(app.groups.get(app.key(1)).filter(Boolean).length===0,'studio assignment reflows source');
     }
     app.setRunning(false); await pause();
     windows.forEach((w,i)=>{

@@ -66,7 +66,7 @@ All shortcuts can be changed in Preferences. In swap mode, use the arrow keys an
 
 Spaces are **session-local window groups**, not replacement GNOME workspaces. Each native workspace has its own three groups per display. Windows opened in a group belong to that group. Manually opening a parked window from the dock brings it into the current group. Windows you minimized yourself remain minimized when switching groups.
 
-Layouts and application order are saved by native workspace index, monitor connector and space number. Profiles reorder **existing** windows; they do not launch applications or restore a desktop session after login. Multiple windows from the same app retain their current relative order.
+Layouts and application order are saved by native workspace index, monitor connector and space number. In Studio, select a window and choose **Keep this app in this tile** to reserve its place when it closes and reopens; the tile stays empty while the app is absent. Apply saves changes made across all edited displays and spaces as one undoable arrangement. Profiles reorder **existing** windows; they do not launch applications or restore a desktop session after login. Multiple windows from the same app retain their current relative order.
 
 Maximizing or fullscreening a managed window freezes automatic layout changes on that display. Restoring resumes tiling. Explicitly applying a layout can unmaximize windows; it never exits fullscreen. Applications can impose minimum client sizes, which GNOME still enforces. If a requested tile is smaller, SnapTess keeps the real client at an allowed size and uniformly scales its compositor actor into the slot, preventing overlap while preserving aspect ratio.
 

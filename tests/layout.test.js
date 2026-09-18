@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {layout, autoLayout, fitMinimumSize, frameScalePivot, nearestSlot, directionalSlot, reconcileSlots, PRESETS} from '../lib/layout.js';
+import {layout, autoLayout, fitMinimumSize, frameScalePivot, nearestSlot, directionalSlot, reconcileSlots,
+    activePinnedSlots, reserveAppSlots, PRESETS} from '../lib/layout.js';
 
 test('automatic layout progression, including more than 15 windows', () => {
     assert.deepEqual([1,2,3,4,5,7,10,13].map(autoLayout), ['full','split','master','2x2','3x2','3x3','4x3','5x3']);
@@ -61,6 +62,20 @@ test('compaction retains order and non-compact mode retains holes', () => {
     assert.deepEqual(reconcileSlots([a,null,c],[a,c,d],false),[a,d,c]);
     assert.deepEqual(reconcileSlots([a,b,c],[a,c],true),[a,c]);
     assert.deepEqual(reconcileSlots([a,b],[a,b,d],true),[a,b,d]);
+});
+test('reserved application slots survive closing and reopening without moving other apps', () => {
+    const editor = {app: 'editor.desktop'}, browser = {app: 'browser.desktop'}, replacement = {app: 'editor.desktop'};
+    const identify = w => w.app;
+    const pinned = [null, 'editor.desktop'];
+    assert.deepEqual(reserveAppSlots([browser, editor], pinned, identify), [browser, editor]);
+    assert.deepEqual(reserveAppSlots([browser], pinned, identify), [browser, null]);
+    assert.deepEqual(reserveAppSlots([browser, replacement], pinned, identify), [browser, replacement]);
+    assert.deepEqual(reserveAppSlots([browser, null, editor], [null, null, 'editor.desktop'], identify, false),
+        [browser, null, editor]);
+    assert.deepEqual(reserveAppSlots([browser, editor], [], identify), [browser, editor]);
+    assert.deepEqual(activePinnedSlots([browser, editor], [browser, editor], pinned, identify), pinned);
+    assert.deepEqual(activePinnedSlots([editor, browser], [editor, browser], pinned, identify), [null, null]);
+    assert.deepEqual(activePinnedSlots([editor, browser], [browser], pinned, identify), pinned);
 });
 test('invalid preset falls back and empty groups are empty', () => {
     const area={x:0,y:0,width:100,height:100};
