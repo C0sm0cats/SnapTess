@@ -22,7 +22,7 @@
 </key>
 <key name="excluded-apps" type="as"><default>[]</default><summary>Application IDs excluded from tiling</summary>
 </key>
-<key name="scaled-apps" type="as"><default>['discord', 'discord.desktop', 'ONLYOFFICE', 'onlyoffice-desktopeditors.desktop', 'cherrytree', 'cherrytree.desktop', 'brave-browser', 'brave-browser.desktop']</default><summary>Application IDs allowed to use compositor scaling</summary>
+<key name="scaled-apps" type="as"><default>['discord', 'discord.desktop', 'ONLYOFFICE', 'onlyoffice-desktopeditors.desktop', 'cherrytree', 'cherrytree.desktop', 'brave-browser', 'brave-browser.desktop', 'codex-desktop', 'codex-desktop.desktop', 'org.gnome.Calculator.desktop']</default><summary>Application IDs allowed to use compositor scaling</summary>
 </key>
 <key name="toggle" type="as"><default>['&lt;Control&gt;&lt;Alt&gt;t']</default><summary>Toggle</summary>
 </key>
