@@ -40,9 +40,6 @@
 .snaptess-slot { background-color: #26343e; border: 1px solid #435761; border-radius: 12px; padding: 4px; }
 .snaptess-slot:hover, .snaptess-slot:focus { background-color: #314d4b; border-color: #8ce8c3; }
 .snaptess-slot.selected { background-color: #513a3f; border: 2px solid #ff9b91; }
-.snaptess-slot.active { border: 2px solid #68d9ff; box-shadow: inset 0 0 0 1px rgba(104,217,255,0.28); }
-.snaptess-slot.scaled { border-color: #d7a7ff; }
-.snaptess-slot.pinned { box-shadow: inset 0 0 0 2px #57e389; }
 .snaptess-slot.empty { background-color: #182129; border: 1px dashed #53646d; }
 .snaptess-slot.drop-target { background-color: #356358; border: 2px solid #b5f7db; }
 .snaptess-slot.dragging { background-color: #182129; border: 1px dashed #8ce8c3; }
@@ -54,6 +51,7 @@
 .snaptess-slot-number { color: #8ce8c3; font-size: 14px; font-weight: 800; text-align: center; }
 .snaptess-app-name { font-size: 12px; font-weight: 700; text-align: center; color: #ecf4f2; }
 .snaptess-window-title { font-size: 10px; text-align: center; color: #a8b8be; }
+.snaptess-state-badges { spacing: 4px; }
 .snaptess-scale-badge { background-color: #563a68; border: 1px solid #d7a7ff; border-radius: 7px; padding: 2px 6px; color: #f0d9ff; font-size: 9px; font-weight: 700; }
 .snaptess-active-badge { background-color: #244b59; border-radius: 7px; padding: 2px 6px; color: #aeeaff; font-size: 8px; font-weight: 800; }
 .snaptess-pinned-badge { background-color: #24553a; border: 1px solid #57e389; border-radius: 7px; padding: 2px 6px; color: #bfffd2; font-size: 8px; font-weight: 800; }
