@@ -17,15 +17,26 @@ const appId = appInfo.get_id(), legacyId = appId.slice(0, -8);
 settings.set_strv('scaled-apps', [legacyId, appId, 'custom-test.window']);
 const window = new Adw.PreferencesWindow();
 prefs.fillPreferencesWindow(window);
-const entries = [], apps = [], groups = [];
+const entries = [], apps = [], groups = [], spins = [];
 function visit(widget) {
     if (widget instanceof Adw.EntryRow) entries.push(widget);
     if (widget instanceof Adw.ExpanderRow) apps.push(widget);
     if (widget instanceof Adw.PreferencesGroup) groups.push(widget);
+    if (widget instanceof Adw.SpinRow) spins.push(widget);
     for (let child = widget.get_first_child(); child; child = child.get_next_sibling()) visit(child);
 }
 visit(window);
 if (entries.length !== 11) throw new Error(`Expected search and 10 shortcut rows, got ${entries.length}`);
+const ratio = spins.find(row => row.title === 'Focus column width');
+if (!ratio || ratio.value !== Math.round(settings.get_double('master-ratio') * 100))
+    throw new Error('Focus ratio is not presented as a percentage');
+const originalRatio = settings.get_double('master-ratio');
+ratio.value = 65;
+if (Math.abs(settings.get_double('master-ratio') - 0.65) > 0.001)
+    throw new Error('Focus ratio percentage was not saved as a fraction');
+settings.set_double('master-ratio', 0.55);
+if (ratio.value !== 55) throw new Error('Focus ratio did not follow an external settings change');
+settings.set_double('master-ratio', originalRatio);
 const toggle = entries.find(row => row.title === 'Toggle tiling');
 const search = entries.find(row => row.title === 'Search applications');
 const appRow = apps.find(row => row.subtitle === appId);

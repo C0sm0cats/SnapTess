@@ -49,18 +49,21 @@ export default class SnapTess extends Extension {
         this.switchItem = new PopupMenu.PopupSwitchMenuItem('Arrange windows', false);
         this.switchItem.connect('toggled', (_item, value) => this.setRunning(value));
         this.indicator.menu.addMenuItem(this.switchItem);
-        this.indicator.menu.addAction('Layout Studio…', () => this.openStudio());
-        this.indicator.menu.addAction('Arrange again', () => { this.checkpoint(); this.tile(true); this.notifyStatus('Windows arranged'); });
-        this.indicator.menu.addAction('Float / tile focused window', () => this.toggleFloating());
-        this.indicator.menu.addAction('Swap mode · arrows · Enter accept · Esc cancel', () => this.toggleSwap());
-        this.indicator.menu.addAction('Undo last arrangement', () => this.undo());
+        this.studioItem = this.indicator.menu.addAction('Layout Studio…', () => this.openStudio());
+        this.arrangeItem = this.indicator.menu.addAction('Arrange again', () => { this.checkpoint(); this.tile(true); });
+        this.indicator.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
+        this.floatItem = this.indicator.menu.addAction('Float / tile focused window', () => this.toggleFloating());
+        this.swapItem = this.indicator.menu.addAction('Swap mode · arrows · Enter accept · Esc cancel', () => this.toggleSwap());
+        this.undoItem = this.indicator.menu.addAction('Undo last arrangement', () => this.undo());
         this.indicator.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
         this.spaceMenu = new PopupMenu.PopupSubMenuMenuItem('Monitor spaces');
         for (let i = 0; i < 3; i++)
             this.spaceMenu.menu.addAction(`Space ${i + 1}`, () => this.switchSpace(i));
         this.indicator.menu.addMenuItem(this.spaceMenu);
+        this.indicator.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
         this.indicator.menu.addAction('Preferences', () => this.openPreferences());
-        this.indicator.menu.addAction('Stop and restore windows', () => this.setRunning(false));
+        this.stopItem = this.indicator.menu.addAction('Stop and restore windows', () => this.setRunning(false));
+        this.indicator.menu.connect('open-state-changed', (_menu, open) => { if (open) this.updateMenuSensitivity(); });
         this.border = new WindowBorder();
         this.preview = new St.Widget({
             style_class: 'snaptess-preview',
@@ -92,7 +95,7 @@ export default class SnapTess extends Extension {
             this.windowActions.add_child(actor);
             return actor;
         };
-        this.floatAction = actionButton('Float or tile window', 'window-new-symbolic', () => {
+        this.floatAction = actionButton('Float or tile window', 'window-pop-out-symbolic', () => {
             this.toggleFloating(); this.hideWindowActions();
         });
         this.minimizeAction = actionButton('Minimize window', 'window-minimize-symbolic', () => {
@@ -143,7 +146,7 @@ export default class SnapTess extends Extension {
             });
         } catch { /* theme context may not expose a change signal */ }
         this.bindings = {
-            toggle: () => this.setRunning(!this.running), retile: () => { this.checkpoint(); this.tile(true); this.notifyStatus('Windows arranged'); },
+            toggle: () => this.setRunning(!this.running), retile: () => { this.checkpoint(); this.tile(true); },
             studio: () => this.openStudio(), floating: () => this.toggleFloating(),
             swap: () => this.toggleSwap(), undo: () => this.undo(), stop: () => this.setRunning(false),
             'space-1': () => this.switchSpace(0), 'space-2': () => this.switchSpace(1), 'space-3': () => this.switchSpace(2),
@@ -615,7 +618,6 @@ export default class SnapTess extends Extension {
         if (value) {
             for (const [w, r] of this.records) r.original = this.snapshot(w);
             this.tile(true, true);
-            if (!silent) this.notifyStatus('Automatic arrangement enabled');
         } else {
             this.cancel(this.pending); this.pending = 0;
             this.exitSwap(false); this.drag = null; this.hideGuides();
@@ -632,7 +634,6 @@ export default class SnapTess extends Extension {
                 }
             } finally { this.busy = false; }
             this.groups.clear(); this.spaces.clear(); this.history = [];
-            if (!silent) this.notifyStatus('Windows restored');
         }
         this.updatePanelStatus();
     }
@@ -936,12 +937,23 @@ export default class SnapTess extends Extension {
         try { return colors[this.interfaceSettings?.get_string('accent-color')] ?? '#8ce8c3'; }
         catch { return '#8ce8c3'; }
     }
-    notifyStatus(message) { try { Main.notify('SnapTess', message); } catch { /* unavailable in tests */ } }
+    updateMenuSensitivity() {
+        const w = global.display.focus_window, record = this.records.get(w);
+        const usable = Boolean(this.running && record && !w.minimized && !this.isSpecialWindow(w));
+        this.arrangeItem?.setSensitive(this.running);
+        this.floatItem?.setSensitive(usable);
+        const slots = usable && !record.floating ? this.groups.get(this.key(w.get_monitor())) ?? [] : [];
+        this.swapItem?.setSensitive(slots.filter(Boolean).length > 1);
+        this.undoItem?.setSensitive(this.running && this.history.length > 0);
+        this.spaceMenu?.setSensitive(this.running);
+        this.stopItem?.setSensitive(this.running);
+    }
     updatePanelStatus() {
         if (!this.statusItem) return;
         const monitor = this.currentMonitor(), space = this.activeSpace(monitor);
         const preset = this.options(monitor, space).preset;
         this.statusItem.label.text = `${this.running ? 'Active' : 'Paused'}  ·  ${preset}  ·  Space ${space + 1}`;
+        this.updateMenuSensitivity();
     }
     hideSwapGuides() {
         this.cancel(this.swapGuideTimer); this.swapGuideTimer = 0;
@@ -1268,6 +1280,7 @@ export default class SnapTess extends Extension {
         this.windowActions.set_position(rect.x + Math.max(4, rect.width - 52),
             rect.y + Math.max(8, Math.round((rect.height - height) / 2)));
         this.floatAction[record.floating ? 'add_style_class_name' : 'remove_style_class_name']('selected');
+        this.floatAction.child.icon_name = record.floating ? 'view-grid-symbolic' : 'window-pop-out-symbolic';
         this.floatAction._snaptessTooltip = record.floating ? 'Tile window' : 'Float window';
         this.maximizeAction.child.icon_name = w.get_maximize_flags() ? 'window-restore-symbolic' : 'window-maximize-symbolic';
         this.maximizeAction._snaptessTooltip = w.get_maximize_flags() ? 'Restore window' : 'Maximize window';
@@ -1657,7 +1670,6 @@ export default class SnapTess extends Extension {
         this.settings.set_string('profiles', JSON.stringify(this.profiles));
         this.tile(true, true);
         this.updatePanelStatus();
-        this.notifyStatus(`Layout applied · ${claimed.size} windows`);
     }
 
     disable() {
