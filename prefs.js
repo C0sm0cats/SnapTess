@@ -62,6 +62,9 @@ export default class SnapTessPreferences extends ExtensionPreferences {
         const listed = new Set();
         const searchable = [];
         const refreshGroups = () => {
+            const configuredCount = searchable.filter(item => item.configured).length;
+            configuredGroup.title = `Configured applications · ${configuredCount}`;
+            availableGroup.title = `Other applications · ${searchable.length - configuredCount}`;
             configuredGroup.visible = searchable.some(item => item.configured && item.row.visible);
             availableGroup.visible = searchable.some(item => !item.configured && item.row.visible);
         };
@@ -111,7 +114,8 @@ export default class SnapTessPreferences extends ExtensionPreferences {
             noResults.visible = matches === 0;
             refreshGroups();
         });
-        const shortcuts = new Adw.PreferencesGroup({title: 'Keyboard shortcuts', description: 'GTK accelerator notation, e.g. <Control><Alt>t. Leave blank to disable.'});
+        const shortcuts = new Adw.PreferencesGroup({title: 'Keyboard shortcuts',
+            description: 'Example: Ctrl + Alt + T. Leave blank to disable.'});
         page.add(shortcuts);
         for (const [key, title] of [['toggle', 'Toggle tiling'], ['retile', 'Arrange again'], ['studio', 'Open Layout Studio'],
             ['floating', 'Float focused window'], ['swap', 'Swap mode'], ['undo', 'Undo'],

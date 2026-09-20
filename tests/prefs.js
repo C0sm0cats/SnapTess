@@ -30,14 +30,16 @@ const toggle = entries.find(row => row.title === 'Toggle tiling');
 const search = entries.find(row => row.title === 'Search applications');
 const appRow = apps.find(row => row.subtitle === appId);
 if (!appRow) throw new Error(`Installed application ${appId} is missing from selector`);
-const configuredGroup = groups.find(group => group.title === 'Configured applications');
-const availableGroup = groups.find(group => group.title === 'Other applications');
+const configuredGroup = groups.find(group => group.title.startsWith('Configured applications ·'));
+const availableGroup = groups.find(group => group.title.startsWith('Other applications ·'));
 const belongsTo = (widget, group) => {
     for (let parent = widget.get_parent(); parent; parent = parent.get_parent()) if (parent === group) return true;
     return false;
 };
 if (!configuredGroup || !availableGroup || !belongsTo(appRow, configuredGroup))
     throw new Error('Configured applications are not visually separated');
+if (!/· \d+$/.test(configuredGroup.title) || !/· \d+$/.test(availableGroup.title))
+    throw new Error('Application section counts are missing');
 if (!apps.some(row => row.subtitle.includes('custom-test.window')))
     throw new Error('Previously configured custom app ID was lost');
 const switches = [];
