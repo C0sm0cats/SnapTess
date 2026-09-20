@@ -330,6 +330,12 @@ export async function run() {
     const beforePinDirty=new Set(studio.dirtyContexts), beforePinUndo=studio.undoStack.length;
     studio.togglePin();
     assert(studio.pins[0]===app.appId(pinnedWindow),'Studio marks the selected app for its tile');
+    assert(studio.pinButton.label.startsWith('Unpin this app'),
+        'Studio pin action reflects the selected pinned tile');
+    studio.selected=1; studio.updatePinButton();
+    assert(studio.pinButton.label.startsWith('Pin this app'),
+        'Studio pin action refreshes when selection moves to an unpinned tile');
+    studio.selected=0; studio.updatePinButton();
     assert(studio.undoButton.visible && !studio.modifiedBadge,
         'Studio exposes Undo without the prominent modified badge');
     assert(studio.context.get_children().some(chip=>chip.get_child?.()?.get_children?.()
@@ -351,11 +357,17 @@ export async function run() {
     studio.changeContext(0,0);
     assert(studio.preset===studioPreset && studio.dirtyContexts.size===2,
         'switching spaces preserves both layout drafts');
+    const beforeSelection=studio.draft[0];
     studio.select(0); studio.select(1);
+    assert(studio.selected===1 && studio.draft[0]===beforeSelection && studio.pinButton.label.startsWith('Pin this app'),
+        'clicking another tile changes selection without moving or pinning its application');
+    studio.drop({studio,index:0},1); await pause();
+    assert(studio.selected===1 && studio.pinButton.label.startsWith('Unpin this app'),
+        'drag-to-swap keeps the pinned destination selected and its action synchronized');
     studio.undo();
     assert(studio.pins[0]===app.appId(pinnedWindow) && studio.draft[0]===pinnedWindow,
         'Studio Undo restores a swap and its reserved app slot');
-    studio.select(1);
+    studio.drop({studio,index:0},1); await pause();
     studio.reset(); studio.undo();
     assert(studio.pins[1]===app.appId(pinnedWindow),
         'Studio Undo restores the layout after Reset profile');
