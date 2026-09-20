@@ -30,9 +30,16 @@ export default class SnapTessPreferences extends ExtensionPreferences {
             const row = new Adw.SpinRow({title, adjustment: new Gtk.Adjustment({lower: 0, upper: 64, step_increment: 1, page_increment: 4})});
             settings.bind(key, row, 'value', Gio.SettingsBindFlags.DEFAULT); appearance.add(row);
         }
-        const ratio = new Adw.SpinRow({title: 'Focus column width', subtitle: 'Fraction of the available width', digits: 2,
-            adjustment: new Gtk.Adjustment({lower: 0.25, upper: 0.75, step_increment: 0.05})});
-        settings.bind('master-ratio', ratio, 'value', Gio.SettingsBindFlags.DEFAULT); appearance.add(ratio);
+        const ratio = new Adw.SpinRow({title: 'Focus column width', subtitle: 'Percentage of the available width', digits: 0,
+            adjustment: new Gtk.Adjustment({lower: 25, upper: 75, step_increment: 5, page_increment: 5}),
+            value: Math.round(settings.get_double('master-ratio') * 100)});
+        ratio.connect('notify::value', () => settings.set_double('master-ratio', ratio.value / 100));
+        const ratioChanged = settings.connect('changed::master-ratio', () => {
+            const value = Math.round(settings.get_double('master-ratio') * 100);
+            if (Math.abs(ratio.value - value) > 0.01) ratio.value = value;
+        });
+        window.connect('destroy', () => settings.disconnect(ratioChanged));
+        appearance.add(ratio);
         const behavior = new Adw.PreferencesGroup({title: 'Keep your flow'}); page.add(behavior);
         for (const [key, title] of [['active-border', 'Highlight the focused window'], ['animations', 'Animate placement guides'],
             ['compact-minimize', 'Close gaps when minimizing'], ['compact-close', 'Close gaps when closing']]) {

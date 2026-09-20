@@ -34,14 +34,24 @@ export async function run() {
     const windows=[...app.records.keys()];
     assert(windows.length===4,`tracked four native windows, got ${windows.length}`);
     const originals=windows.map(w=>app.snapshot(w));
+    app.updateMenuSensitivity();
+    assert(!app.arrangeItem.sensitive && !app.floatItem.sensitive && !app.swapItem.sensitive &&
+        !app.undoItem.sensitive && !app.spaceMenu.sensitive && !app.stopItem.sensitive,
+        'tray disables arrangement actions while SnapTess is paused');
     app.setRunning(true); await pause();
     assert(app.groups.get(app.key(0)).length===4,'four tiled slots');
+    app.updateMenuSensitivity();
+    assert(app.arrangeItem.sensitive && app.spaceMenu.sensitive && app.stopItem.sensitive,
+        'tray enables global arrangement actions while SnapTess is active');
     let rects=windows.map(w=>w.get_frame_rect());
     for(let i=0;i<4;i++) for(let j=i+1;j<4;j++) {
         const a=rects[i],b=rects[j];
         assert(a.x+a.width<=b.x || b.x+b.width<=a.x || a.y+a.height<=b.y || b.y+b.height<=a.y,'non-overlapping native frames');
     }
     windows[0].activate(global.get_current_time()); await pause();
+    app.updateMenuSensitivity();
+    assert(app.floatItem.sensitive && app.swapItem.sensitive,
+        'tray enables focused-window actions when they are available');
     const borderRadius=await app.measureWindowRadius(windows[0]);
     const scaledActor=app.windowActor(windows[0]);
     scaledActor.set_scale(0.5,0.5);
@@ -171,6 +181,12 @@ export async function run() {
     app.showWindowActions();
     assert(app.windowActions.visible && app.windowActions.get_children().length===4,
         'focused window exposes four contextual actions');
+    assert(app.floatAction.child.icon_name==='window-pop-out-symbolic',
+        'a tiled window shows the distinct float action icon');
+    stubbornRecord.floating=true; app.showWindowActions();
+    assert(app.floatAction.child.icon_name==='view-grid-symbolic',
+        'a floating window shows the distinct return-to-grid action icon');
+    stubbornRecord.floating=false; app.showWindowActions();
     app.showWindowActionTooltip(app.floatAction);
     assert(app.windowActionTooltip.visible && app.windowActionTooltip.text.length>0,
         'window actions expose contextual tooltips');
