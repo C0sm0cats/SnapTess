@@ -17,10 +17,11 @@ const appId = appInfo.get_id(), legacyId = appId.slice(0, -8);
 settings.set_strv('scaled-apps', [legacyId, appId, 'custom-test.window']);
 const window = new Adw.PreferencesWindow();
 prefs.fillPreferencesWindow(window);
-const entries = [], apps = [];
+const entries = [], apps = [], groups = [];
 function visit(widget) {
     if (widget instanceof Adw.EntryRow) entries.push(widget);
     if (widget instanceof Adw.ExpanderRow) apps.push(widget);
+    if (widget instanceof Adw.PreferencesGroup) groups.push(widget);
     for (let child = widget.get_first_child(); child; child = child.get_next_sibling()) visit(child);
 }
 visit(window);
@@ -29,6 +30,14 @@ const toggle = entries.find(row => row.title === 'Toggle tiling');
 const search = entries.find(row => row.title === 'Search applications');
 const appRow = apps.find(row => row.subtitle === appId);
 if (!appRow) throw new Error(`Installed application ${appId} is missing from selector`);
+const configuredGroup = groups.find(group => group.title === 'Configured applications');
+const availableGroup = groups.find(group => group.title === 'Other applications');
+const belongsTo = (widget, group) => {
+    for (let parent = widget.get_parent(); parent; parent = parent.get_parent()) if (parent === group) return true;
+    return false;
+};
+if (!configuredGroup || !availableGroup || !belongsTo(appRow, configuredGroup))
+    throw new Error('Configured applications are not visually separated');
 if (!apps.some(row => row.subtitle.includes('custom-test.window')))
     throw new Error('Previously configured custom app ID was lost');
 const switches = [];
@@ -45,9 +54,11 @@ if (!scaled?.active || !floating) throw new Error('Application rules are missing
 scaled.active = false;
 if (settings.get_strv('scaled-apps').join(',') !== 'custom-test.window')
     throw new Error('Disabling scale-to-fit did not clear both app ID aliases');
+if (!belongsTo(appRow, availableGroup)) throw new Error('Cleared application did not move to Other applications');
 scaled.active = true;
 if (settings.get_strv('scaled-apps').join(',') !== `custom-test.window,${appId}`)
     throw new Error('Enabling scale-to-fit did not save the canonical app ID');
+if (!belongsTo(appRow, configuredGroup)) throw new Error('Configured application did not return to its section');
 floating.active = true;
 if (!settings.get_strv('excluded-apps').includes(appId)) throw new Error('Always floating was not saved');
 floating.active = false;
