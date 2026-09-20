@@ -45,6 +45,11 @@ export default class SnapTessPreferences extends ExtensionPreferences {
         applications.add(appGroup);
         const search = new Adw.EntryRow({title: 'Search applications'});
         appGroup.add(search);
+        const configuredGroup = new Adw.PreferencesGroup({title: 'Configured applications',
+            description: 'Applications with at least one SnapTess rule enabled.'});
+        const availableGroup = new Adw.PreferencesGroup({title: 'Other applications'});
+        applications.add(configuredGroup);
+        applications.add(availableGroup);
         const selected = new Set([...settings.get_strv('excluded-apps'), ...settings.get_strv('scaled-apps')]);
         const appInfos = Gio.AppInfo.get_all().filter(info => {
             const id = info.get_id();
@@ -56,27 +61,46 @@ export default class SnapTessPreferences extends ExtensionPreferences {
         });
         const listed = new Set();
         const searchable = [];
+        const refreshGroups = () => {
+            configuredGroup.visible = searchable.some(item => item.configured && item.row.visible);
+            availableGroup.visible = searchable.some(item => !item.configured && item.row.visible);
+        };
         const addApp = (id, name, icon = null, custom = false) => {
             const ids = custom ? [id] : appAliases(id);
             ids.forEach(alias => listed.add(alias));
             const row = new Adw.ExpanderRow({title: name, subtitle: custom ? `${id} · Saved app ID` : id});
             if (icon) row.add_prefix(new Gtk.Image({gicon: icon, pixel_size: 32}));
+            let item;
             for (const [key, title, subtitle] of [
                 ['excluded-apps', 'Always floating', 'Keep its windows outside the tiled grid'],
                 ['scaled-apps', 'Allow scale-to-fit', 'Fit constrained windows; XWayland clicks may be offset'],
             ]) {
                 const toggle = new Adw.SwitchRow({title, subtitle});
                 toggle.active = ids.some(alias => settings.get_strv(key).includes(alias));
-                toggle.connect('notify::active', () => setAppRule(settings, key, ids, toggle.active));
+                toggle.connect('notify::active', () => {
+                    setAppRule(settings, key, ids, toggle.active);
+                    const configured = ids.some(alias =>
+                        settings.get_strv('excluded-apps').includes(alias) ||
+                        settings.get_strv('scaled-apps').includes(alias));
+                    if (configured !== item.configured) {
+                        (item.configured ? configuredGroup : availableGroup).remove(row);
+                        (configured ? configuredGroup : availableGroup).add(row);
+                        item.configured = configured;
+                    }
+                    refreshGroups();
+                });
                 row.add_row(toggle);
             }
-            appGroup.add(row);
-            searchable.push({row, text: `${name} ${id}`.toLocaleLowerCase()});
+            item = {row, text: `${name} ${id}`.toLocaleLowerCase(),
+                configured: ids.some(alias => selected.has(alias))};
+            (item.configured ? configuredGroup : availableGroup).add(row);
+            searchable.push(item);
         };
         for (const info of appInfos) addApp(info.get_id(), info.get_display_name(), info.get_icon());
         for (const id of selected) if (!listed.has(id)) addApp(id, id, null, true);
         const noResults = new Adw.ActionRow({title: 'No matching applications', visible: searchable.length === 0});
         appGroup.add(noResults);
+        refreshGroups();
         search.connect('notify::text', () => {
             const query = search.text.trim().toLocaleLowerCase();
             let matches = 0;
@@ -85,6 +109,7 @@ export default class SnapTessPreferences extends ExtensionPreferences {
                 if (item.row.visible) matches++;
             }
             noResults.visible = matches === 0;
+            refreshGroups();
         });
         const shortcuts = new Adw.PreferencesGroup({title: 'Keyboard shortcuts', description: 'GTK accelerator notation, e.g. <Control><Alt>t. Leave blank to disable.'});
         page.add(shortcuts);
