@@ -307,14 +307,20 @@ export async function run() {
     scaledRecord.visualScale=0.8;
     app.studio.preset='4x3'; app.studio.showPreviews=true; app.studio.render(); await pause();
     const compactCard=app.studio.canvas.get_first_child();
-    const scaleBadge=compactCard.get_child().get_children().find(child =>
-        child.has_style_class_name?.('snaptess-scale-badge'));
+    const badgeRow=compactCard.get_child().get_children().find(child =>
+        child.has_style_class_name?.('snaptess-state-badges'));
+    const scaleBadge=badgeRow?.get_children().find(child => child.has_style_class_name?.('snaptess-scale-badge'));
     assert(compactCard.height<130 && scaleBadge,'compact preview card includes the scale badge');
     const [, cardY]=compactCard.get_transformed_position();
     const [, badgeY]=scaleBadge.get_transformed_position();
     const [, badgeHeight]=scaleBadge.get_transformed_size();
     assert(badgeY>=cardY && badgeY+badgeHeight<=cardY+compactCard.height,
         'scale badge stays fully inside a compact preview card');
+    const focusedCard=app.studio.canvas.get_children().find(card=>card.get_child()?.get_children?.().some(child=>
+        child.has_style_class_name?.('snaptess-state-badges') && child.get_children().some(badge=>
+            badge.has_style_class_name?.('snaptess-active-badge'))));
+    assert(focusedCard && !focusedCard.has_style_class_name('active'),
+        'the focused Studio window uses an ACTIVE badge without a competing outline');
     scaledRecord.visualScale=originalScale;
     app.studio.preset=studioPreset; app.studio.showPreviews=false; app.studio.render();
     if (GLib.getenv('SNAPTESS_SCREENSHOT')) {
