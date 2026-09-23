@@ -111,6 +111,7 @@ export default class SnapTess extends Extension {
             if (!this.records.has(w)) return;
             if (w.get_maximize_flags()) w.unmaximize(); else w.maximize();
             this.hideWindowActions();
+            if (global.display.focus_window === w) this.queueWindowActions(w, 180);
         });
         this.closeAction = actionButton('Close window', 'window-close-symbolic', () => {
             const w = global.display.focus_window;
@@ -169,9 +170,9 @@ export default class SnapTess extends Extension {
             if (event.type() !== Clutter.EventType.MOTION || this.windowActions.visible) return Clutter.EVENT_PROPAGATE;
             const w = global.display.focus_window, record = this.records.get(w);
             if (!this.running || !record || this.drag || this.studio || Main.overview.visible || w.minimized ||
-                this.isSpecialWindow(w))
+                w.fullscreen)
                 return Clutter.EVENT_PROPAGATE;
-            const rect = record.floating ? this.visualWindowRect(w) : record.tileRect ?? w.get_frame_rect();
+            const rect = this.windowActionsRect(w, record);
             const [x, y] = event.get_coords();
             if (x >= rect.x + rect.width - 48 && x <= rect.x + rect.width + 2 && y >= rect.y && y <= rect.y + rect.height)
                 this.showWindowActions();
@@ -367,7 +368,8 @@ export default class SnapTess extends Extension {
     specialWindowChanged(w, record) {
         const special = this.isSpecialWindow(w);
         if (special) {
-            if (global.display.focus_window === w || this.actionWindow === w) this.hideWindowActions();
+            if (w.fullscreen && (global.display.focus_window === w || this.actionWindow === w))
+                this.hideWindowActions();
             record.specialState = true;
             record.restorePending = false;
             record.restoreUntil = 0;
@@ -375,6 +377,11 @@ export default class SnapTess extends Extension {
             this.cancel(record.restoreTimer); record.restoreTimer = 0;
             this.cancel(record.settleTimer); record.settleTimer = 0;
             this.resetWindowScale(w);
+            if (!w.fullscreen && global.display.focus_window === w) {
+                this.updateWindowActionsPosition(w);
+                if (!this.windowActions.visible && !this.windowActionHandle.visible)
+                    this.queueWindowActions(w);
+            }
             return;
         }
         if (record.specialState) {
@@ -390,6 +397,7 @@ export default class SnapTess extends Extension {
                 this.finishWindowRestore(w);
             });
             this.queueWindowRestore(w, 180);
+            if (global.display.focus_window === w) this.queueWindowActions(w, 180);
             return;
         }
         // Both maximize properties notify for one transition. The second
@@ -456,6 +464,7 @@ export default class SnapTess extends Extension {
         record.restoreQuietUntil = 0;
         this.traceWindow(w, 'restore-finished');
         this.scheduleWindowScale(w, 0);
+        this.updateWindowActionsPosition(w);
     }
 
     restoreWindowPosition(w, record) {
@@ -1378,12 +1387,16 @@ export default class SnapTess extends Extension {
         this.windowActions.hide(); this.windowActions.opacity = 255; this.windowActions.translation_x = 0;
         this.windowActionHandle.hide(); this.windowActionTooltip.hide();
     }
+    windowActionsRect(w, record) {
+        return record.floating || record.restorePending || w.get_maximize_flags()
+            ? this.visualWindowRect(w) : record.tileRect ?? w.get_frame_rect();
+    }
     updateWindowActionsPosition(w) {
         if (global.display.focus_window !== w || this.actionWindow !== w) return;
         if (!this.windowActions.visible && !this.windowActionHandle.visible) return;
         const record = this.records.get(w);
         if (!record) return;
-        const rect = record.floating ? this.visualWindowRect(w) : record.tileRect ?? w.get_frame_rect();
+        const rect = this.windowActionsRect(w, record);
         if (this.windowActions.visible) {
             this.windowActions.set_position(rect.x + Math.max(4, rect.width - 52),
                 rect.y + Math.max(8, Math.round((rect.height - 176) / 2)));
@@ -1396,10 +1409,10 @@ export default class SnapTess extends Extension {
     showWindowActionHandle(animate = false) {
         const w = global.display.focus_window, record = this.records.get(w);
         if (!this.running || !record || this.drag || this.studio || Main.overview.visible || w.minimized ||
-            this.isSpecialWindow(w)) {
+            w.fullscreen) {
             this.windowActionHandle.hide(); return;
         }
-        const rect = record.floating ? this.visualWindowRect(w) : record.tileRect ?? w.get_frame_rect();
+        const rect = this.windowActionsRect(w, record);
         this.actionWindow = w;
         this.windowActionHandle.set_position(rect.x + Math.max(2, rect.width - 14),
             rect.y + Math.max(8, Math.round((rect.height - 48) / 2)));
@@ -1425,10 +1438,10 @@ export default class SnapTess extends Extension {
     showWindowActions() {
         const w = global.display.focus_window, record = this.records.get(w);
         if (!this.running || !record || this.drag || this.studio || Main.overview.visible || w.minimized ||
-            this.isSpecialWindow(w)) {
+            w.fullscreen) {
             this.hideWindowActions(); return;
         }
-        const rect = record.floating ? this.visualWindowRect(w) : record.tileRect ?? w.get_frame_rect();
+        const rect = this.windowActionsRect(w, record);
         this.actionWindow = w;
         this.windowActionHandle.remove_all_transitions();
         this.windowActionHandle.hide();
