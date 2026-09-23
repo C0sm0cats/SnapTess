@@ -4,5 +4,19 @@ cd "$(dirname "$0")/.."
 bash scripts/build.sh
 # A private bus and temporary XDG directories isolate this from your desktop.
 echo 'Running GNOME Shell 50 integration and GTK preferences tests'
-timeout 55s dbus-run-session -- gnome-shell-test-tool --headless --disable-animations \
+perf_helper=''
+for candidate in /usr/libexec/gnome-shell-perf-helper /usr/lib/gnome-shell-perf-helper; do
+    if [[ -x "$candidate" ]]; then perf_helper="$candidate"; break; fi
+done
+if [[ -z "$perf_helper" ]]; then
+    echo 'GNOME Shell PerfHelper is required for the headless test' >&2
+    exit 1
+fi
+test_data_home="$(mktemp -d)"
+trap 'rm -rf -- "$test_data_home"' EXIT
+mkdir -p "$test_data_home/dbus-1/services"
+printf '[D-BUS Service]\nName=org.gnome.Shell.PerfHelper\nExec=%s\n' "$perf_helper" > \
+    "$test_data_home/dbus-1/services/org.gnome.Shell.PerfHelper.service"
+XDG_DATA_HOME="$test_data_home" timeout 55s dbus-run-session -- \
+    gnome-shell-test-tool --headless --disable-animations \
     --extension dist/snaptess@c0sm0cats.github.io.shell-extension.zip tests/shell.js
