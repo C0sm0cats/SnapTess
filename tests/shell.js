@@ -267,6 +267,19 @@ export async function run() {
     windows[0].activate(global.get_current_time()); await pause();
     app.toggleFloating(); await pause();
     assert(app.records.get(windows[0]).floating,'floating enabled');
+    assert(app.windowActionHandle.visible,'floating leaves its action handle available without a focus change');
+    windows[0].move_frame(true,90,75); await pause();
+    let floatFrame=windows[0].get_frame_rect();
+    assert(Math.abs(app.windowActionHandle.x-(floatFrame.x+Math.max(2,floatFrame.width-14)))<=1 &&
+        Math.abs(app.windowActionHandle.y-(floatFrame.y+Math.max(8,Math.round((floatFrame.height-48)/2))))<=1,
+        'the handle follows a floating window after its geometry changes');
+    app.showWindowActions();
+    windows[0].move_frame(true,130,110); await pause();
+    floatFrame=windows[0].get_frame_rect();
+    assert(app.windowActions.visible &&
+        Math.abs(app.windowActions.x-(floatFrame.x+Math.max(4,floatFrame.width-52)))<=1 &&
+        Math.abs(app.windowActions.y-(floatFrame.y+Math.max(8,Math.round((floatFrame.height-176)/2))))<=1,
+        'the open palette follows subsequent floating-window movement');
     app.undo(); await pause();
     assert(!app.records.get(windows[0]).floating,'undo restores floating membership');
     const slotBefore=app.groups.get(app.key(0)).indexOf(windows[0]);

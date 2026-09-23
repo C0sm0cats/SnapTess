@@ -96,7 +96,7 @@ export default class SnapTess extends Extension {
             return actor;
         };
         this.floatAction = actionButton('Float or tile window', 'window-pop-out-symbolic', () => {
-            this.toggleFloating(); this.hideWindowActions();
+            this.toggleFloating();
         });
         this.minimizeAction = actionButton('Minimize window', 'window-minimize-symbolic', () => {
             const w = global.display.focus_window;
@@ -165,7 +165,7 @@ export default class SnapTess extends Extension {
             if (!this.running || !record || this.drag || this.studio || Main.overview.visible || w.minimized ||
                 this.isSpecialWindow(w))
                 return Clutter.EVENT_PROPAGATE;
-            const rect = record.floating ? w.get_frame_rect() : record.tileRect ?? w.get_frame_rect();
+            const rect = record.floating ? this.visualWindowRect(w) : record.tileRect ?? w.get_frame_rect();
             const [x, y] = event.get_coords();
             if (x >= rect.x + rect.width - 48 && x <= rect.x + rect.width + 2 && y >= rect.y && y <= rect.y + rect.height)
                 this.showWindowActions();
@@ -265,9 +265,12 @@ export default class SnapTess extends Extension {
         if (actor) {
             try { record.radiusActorSignal = actor.connect('first-frame', () => this.invalidateWindowRadius(w)); }
             catch { /* existing actors may not expose first-frame */ }
-            for (const property of ['scale-x', 'scale-y', 'translation-x', 'translation-y'])
+            for (const property of ['x', 'y', 'width', 'height', 'scale-x', 'scale-y',
+                'translation-x', 'translation-y'])
                 record.borderActorSignals.push(actor.connect(`notify::${property}`, () => {
-                    if (global.display.focus_window === w) this.updateBorder();
+                    if (global.display.focus_window === w) {
+                        this.updateBorder(); this.updateWindowActionsPosition(w);
+                    }
                 }));
         }
         const watch = (signal, fn) => record.signals.push(w.connect(signal, fn));
@@ -334,7 +337,9 @@ export default class SnapTess extends Extension {
             if (record.radiusMonitor !== monitor) this.invalidateWindowRadius(w);
             else if (record.radiusAttempts >= 3 && !record.radiusPending && !record.radiusTimer)
                 this.invalidateWindowRadius(w);
-            if (global.display.focus_window === w) this.updateBorder();
+            if (global.display.focus_window === w) {
+                this.updateBorder(); this.updateWindowActionsPosition(w);
+            }
         });
         watch('size-changed', () => {
             this.traceWindow(w, 'size-changed');
@@ -342,7 +347,9 @@ export default class SnapTess extends Extension {
             if (record.restorePending && Date.now() >= record.restoreQuietUntil && !record.placing && !this.busy && !this.drag)
                 this.queueWindowRestore(w, 80);
             if (this.running && record.tileRect && !record.floating) this.scheduleWindowScale(w);
-            if (global.display.focus_window === w) this.updateBorder();
+            if (global.display.focus_window === w) {
+                this.updateBorder(); this.updateWindowActionsPosition(w);
+            }
         });
         if (actor?.visible && !w.minimized)
             this.queueWindowRadius(w, Math.min(1200, 240 + (this.records.size - 1) * 80));
@@ -713,7 +720,9 @@ export default class SnapTess extends Extension {
             record.effectSignal = actor.connect('effects-completed', () => {
                 this.traceWindow(w, 'effects-completed');
                 if (!record.windowRadius && global.display.focus_window === w) this.invalidateWindowRadius(w);
-                if (global.display.focus_window === w) this.updateBorder();
+                if (global.display.focus_window === w) {
+                    this.updateBorder(); this.updateWindowActionsPosition(w);
+                }
                 if (!this.running || this.records.get(w) !== record || !record.tileRect || record.floating) return;
                 if (record.restorePending && !this.isSpecialWindow(w)) this.queueWindowRestore(w, 0);
                 else this.scheduleWindowScale(w, 0);
@@ -1238,13 +1247,29 @@ export default class SnapTess extends Extension {
         this.windowActions.hide(); this.windowActions.opacity = 255; this.windowActions.translation_x = 0;
         this.windowActionHandle.hide(); this.windowActionTooltip.hide();
     }
+    updateWindowActionsPosition(w) {
+        if (global.display.focus_window !== w || this.actionWindow !== w) return;
+        if (!this.windowActions.visible && !this.windowActionHandle.visible) return;
+        const record = this.records.get(w);
+        if (!record) return;
+        const rect = record.floating ? this.visualWindowRect(w) : record.tileRect ?? w.get_frame_rect();
+        if (this.windowActions.visible) {
+            this.windowActions.set_position(rect.x + Math.max(4, rect.width - 52),
+                rect.y + Math.max(8, Math.round((rect.height - 176) / 2)));
+            this.windowActionTooltip.hide();
+        }
+        if (this.windowActionHandle.visible)
+            this.windowActionHandle.set_position(rect.x + Math.max(2, rect.width - 14),
+                rect.y + Math.max(8, Math.round((rect.height - 48) / 2)));
+    }
     showWindowActionHandle(animate = false) {
         const w = global.display.focus_window, record = this.records.get(w);
         if (!this.running || !record || this.drag || this.studio || Main.overview.visible || w.minimized ||
             this.isSpecialWindow(w)) {
             this.windowActionHandle.hide(); return;
         }
-        const rect = record.floating ? w.get_frame_rect() : record.tileRect ?? w.get_frame_rect();
+        const rect = record.floating ? this.visualWindowRect(w) : record.tileRect ?? w.get_frame_rect();
+        this.actionWindow = w;
         this.windowActionHandle.set_position(rect.x + Math.max(2, rect.width - 14),
             rect.y + Math.max(8, Math.round((rect.height - 48) / 2)));
         this.stackWindowOverlays(w);
@@ -1272,7 +1297,7 @@ export default class SnapTess extends Extension {
             this.isSpecialWindow(w)) {
             this.hideWindowActions(); return;
         }
-        const rect = record.floating ? w.get_frame_rect() : record.tileRect ?? w.get_frame_rect();
+        const rect = record.floating ? this.visualWindowRect(w) : record.tileRect ?? w.get_frame_rect();
         this.actionWindow = w;
         this.windowActionHandle.remove_all_transitions();
         this.windowActionHandle.hide();
@@ -1315,6 +1340,8 @@ export default class SnapTess extends Extension {
         }
         this.tile(true);
         this.validateTransformsAfterGrab();
+        this.hideWindowActions();
+        if (global.display.focus_window === w) this.showWindowActionHandle();
     }
 
     toggleSwap() {
