@@ -76,6 +76,12 @@ test('reserved application slots survive closing and reopening without moving ot
     assert.deepEqual(activePinnedSlots([browser, editor], [browser, editor], pinned, identify), pinned);
     assert.deepEqual(activePinnedSlots([editor, browser], [editor, browser], pinned, identify), [null, null]);
     assert.deepEqual(activePinnedSlots([editor, browser], [browser], pinned, identify), pinned);
+    const secondEditor = {app: 'editor.desktop'};
+    assert.deepEqual(activePinnedSlots([editor, null], [editor],
+        ['editor.desktop', 'editor.desktop'], identify), ['editor.desktop', 'editor.desktop'],
+    'closing one of two pinned windows from the same app keeps its reserved slot');
+    assert.deepEqual(activePinnedSlots([null, secondEditor], [secondEditor],
+        ['editor.desktop', 'editor.desktop'], identify), ['editor.desktop', 'editor.desktop']);
 });
 test('invalid preset falls back and empty groups are empty', () => {
     const area={x:0,y:0,width:100,height:100};

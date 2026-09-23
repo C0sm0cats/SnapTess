@@ -10,7 +10,7 @@ import {Extension} from 'resource:///org/gnome/shell/extensions/extension.js';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import * as PanelMenu from 'resource:///org/gnome/shell/ui/panelMenu.js';
 import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js';
-import {layout, fitMinimumSize, frameScalePivot, nearestSlot, directionalSlot, reconcileSlots,
+import {layout, PRESETS, capacity, fitMinimumSize, frameScalePivot, nearestSlot, directionalSlot, reconcileSlots,
     activePinnedSlots, reserveAppSlots} from './lib/layout.js';
 import {Studio} from './lib/studio.js';
 import {WindowBorder} from './lib/window-border.js';
@@ -40,6 +40,9 @@ export default class SnapTess extends Extension {
         this.drag = null;
         this.swapMode = false;
         this.loadProfiles();
+        this.loadSavedLayouts();
+        this.deletedLayouts = [];
+        this.pendingLayoutApps = new Map();
         this.indicator = new PanelMenu.Button(0.0, 'SnapTess');
         this.icon = new Gio.FileIcon({file: this.dir.get_child('icons/snaptess-symbolic.svg')});
         this.indicator.add_child(new St.Icon({gicon: this.icon, style_class: 'system-status-icon'}));
@@ -155,7 +158,10 @@ export default class SnapTess extends Extension {
             Main.wm.addKeybinding(name, this.settings, Meta.KeyBindingFlags.NONE, Shell.ActionMode.NORMAL, callback);
         this.connect(global.display, 'window-created', (_d, w) => {
             this.track(w);
-            this.later(160, () => this.schedule(true));
+            for (const delay of [160, 500, 1200]) this.later(delay, () => {
+                if (!this.records.has(w)) return;
+                if (!this.claimLayoutWindow(w)) this.schedule(true);
+            });
         });
         this.connect(global.display, 'notify::focus-window', () => this.focusChanged());
         this.connect(global.display, 'restacked', () => this.windowsRestacked());
@@ -181,6 +187,7 @@ export default class SnapTess extends Extension {
         this.connect(Main.overview, 'hidden', () => { this.schedule(false); this.updateBorder(); });
         this.connect(this.settings, 'changed', (_s, key) => {
             if (key === 'profiles') this.loadProfiles();
+            if (key === 'saved-layouts') { this.loadSavedLayouts(); return; }
             this.schedule(true);
         });
         for (const actor of global.get_window_actors()) this.track(actor.meta_window);
@@ -249,7 +256,8 @@ export default class SnapTess extends Extension {
     track(w) {
         if (!this.eligible(w) || this.records.has(w)) return;
         const record = {original: null, floating: false, space: this.activeSpace(w.get_monitor(), w.get_workspace()),
-            parked: false, signals: [], monitor: w.get_monitor(), tileRect: null, visualScale: 1, scaleTimer: 0,
+            parked: false, restoreParked: false, signals: [], monitor: w.get_monitor(), tileRect: null,
+            visualScale: 1, scaleTimer: 0,
             backingRect: null, scaleMinimum: null, scaleNegotiated: false, placementMoves: 0, placing: false, restoreStarted: false, restoreMoves: 0,
             sizeRepairs: 0, sizeRejectUntil: 0, mismatchSize: null, mismatchSince: 0, repairResetTimer: 0,
             windowRadius: null, radiusDirty: true, radiusAttempts: 0, radiusPending: false,
@@ -294,6 +302,7 @@ export default class SnapTess extends Extension {
         });
         watch('notify::minimized', () => {
             if (this.busy) return;
+            if (record.restoreParked && !w.minimized) record.restoreParked = false;
             if (w.minimized && !record.parked) record.minimizeSlots = [...(this.groups.get(this.key(w.get_monitor())) ?? [])];
             else if (!w.minimized && record.minimizeSlots) {
                 const before = record.minimizeSlots.filter(item => item && this.records.has(item));
@@ -557,6 +566,123 @@ export default class SnapTess extends Extension {
             this.profiles = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
         } catch { this.profiles = {}; }
     }
+    loadSavedLayouts() {
+        try {
+            const layouts = JSON.parse(this.settings.get_string('saved-layouts'));
+            this.savedLayouts = Array.isArray(layouts) ? layouts.filter(item =>
+                typeof item?.id === 'string' && typeof item.name === 'string' &&
+                PRESETS.some(([id]) => id === item.preset) &&
+                Number.isInteger(item.slotCount) && item.slotCount > 0 && item.slotCount <= 30 &&
+                (item.preset === 'auto' || item.slotCount <= capacity(item.preset)) &&
+                Array.isArray(item.pinned) && item.pinned.length <= item.slotCount &&
+                item.pinned.every(id => id === null || typeof id === 'string')) : [];
+        } catch { this.savedLayouts = []; }
+    }
+    saveLayout(name, preset, windows, pins) {
+        name = name.trim().slice(0, 60);
+        if (!name || this.savedLayouts.some(layout => layout.name.toLowerCase() === name.toLowerCase())) return false;
+        const slotCount = Math.max(windows.length, pins.length, capacity(preset), 1);
+        if (slotCount > 30 || (preset !== 'auto' && slotCount > capacity(preset))) return false;
+        const pinned = Array.from({length: slotCount}, (_, i) => windows[i]
+            ? this.appId(windows[i]) || pins[i] || null : pins[i] || null);
+        const id = GLib.uuid_string_random();
+        this.savedLayouts.push({id, name, preset, slotCount, pinned});
+        this.settings.set_string('saved-layouts', JSON.stringify(this.savedLayouts));
+        this.deletedLayouts?.splice(0);
+        return id;
+    }
+    deleteSavedLayout(id) {
+        const index = this.savedLayouts.findIndex(layout => layout.id === id);
+        if (index < 0) return false;
+        const [layout] = this.savedLayouts.splice(index, 1);
+        this.deletedLayouts.push({layout, index});
+        if (this.deletedLayouts.length > 10) this.deletedLayouts.shift();
+        this.settings.set_string('saved-layouts', JSON.stringify(this.savedLayouts));
+        return true;
+    }
+    undoDeletedSavedLayout() {
+        const deleted = this.deletedLayouts.pop();
+        if (!deleted) return null;
+        const layout = {...deleted.layout};
+        if (this.savedLayouts.some(item => item.id === layout.id)) layout.id = GLib.uuid_string_random();
+        if (this.savedLayouts.some(item => item.name.toLowerCase() === layout.name.toLowerCase())) {
+            const base = layout.name.slice(0, 48);
+            let name = `${base} (restored)`, suffix = 2;
+            while (this.savedLayouts.some(item => item.name.toLowerCase() === name.toLowerCase()))
+                name = `${base} (restored ${suffix++})`;
+            layout.name = name;
+        }
+        this.savedLayouts.splice(Math.min(deleted.index, this.savedLayouts.length), 0, layout);
+        this.settings.set_string('saved-layouts', JSON.stringify(this.savedLayouts));
+        return layout;
+    }
+    layoutCandidates(monitor, space) {
+        return this.windows(monitor, space, true);
+    }
+    savedLayoutPlan(layout, monitor, space) {
+        const candidates = this.layoutCandidates(monitor, space), used = new Set();
+        const normalize = id => (id ?? '').replace(/\.desktop$/i, '').toLowerCase();
+        const slots = layout.pinned.map(id => {
+            if (!id) return null;
+            const found = candidates.find(w => !used.has(w) && normalize(this.appId(w)) === normalize(id));
+            if (found) used.add(found);
+            return found ?? null;
+        });
+        while (slots.length < layout.slotCount) slots.push(null);
+        const missing = [...new Set(layout.pinned.filter((id, i) => id && !slots[i]))];
+        return {slots, missing, extras: candidates.filter(w => !used.has(w) &&
+            (!w.minimized || this.records.get(w)?.parked || this.records.get(w)?.restoreParked))};
+    }
+    restoreSavedLayout(id, monitor, space) {
+        const layout = this.savedLayouts.find(item => item.id === id);
+        if (!layout) return false;
+        const workspace = global.workspace_manager.get_active_workspace();
+        const {slots, missing, extras} = this.savedLayoutPlan(layout, monitor, space);
+        this.applyProfiles([{monitor, space, preset: layout.preset, windows: slots,
+            pinned: [...layout.pinned], slotCount: layout.slotCount, parkUnused: extras}], {monitor, space});
+        const appSystem = Shell.AppSystem.get_default();
+        const unavailable = [];
+        for (const appId of missing) {
+            const key = appId.toLowerCase().replace(/\.desktop$/i, '');
+            if (this.pendingLayoutApps.has(key)) {
+                Object.assign(this.pendingLayoutApps.get(key), {monitor, space, workspace});
+                continue;
+            }
+            const app = appSystem.lookup_app(appId) ?? appSystem.lookup_app(`${appId}.desktop`);
+            const info = app?.get_app_info?.();
+            if (!info) { unavailable.push(appId); continue; }
+            const pending = {monitor, space, workspace};
+            this.pendingLayoutApps.set(key, pending);
+            try {
+                if (!info.launch([], null)) {
+                    this.pendingLayoutApps.delete(key); unavailable.push(appId);
+                }
+            } catch (error) {
+                this.pendingLayoutApps.delete(key); unavailable.push(appId);
+                console.warn(`[SnapTess] Could not launch ${appId}: ${error}`);
+            }
+            this.later(12000, () => {
+                if (this.pendingLayoutApps.get(key) !== pending) return;
+                this.pendingLayoutApps.delete(key);
+                Main.notify('SnapTess', `${appId} did not open a window. Its tile remains reserved.`);
+            });
+        }
+        if (unavailable.length) Main.notify('SnapTess', `Could not open: ${unavailable.join(', ')}. Their tiles remain reserved.`);
+        return true;
+    }
+    claimLayoutWindow(w) {
+        const key = this.appId(w).toLowerCase().replace(/\.desktop$/i, '');
+        const pending = this.pendingLayoutApps.get(key);
+        if (!pending || w.get_workspace() !== pending.workspace || !this.eligible(w)) return false;
+        this.pendingLayoutApps.delete(key);
+        const r = this.records.get(w);
+        r.space = pending.space; r.floating = false; r.restoreParked = false;
+        if (w.get_monitor() !== pending.monitor) w.move_to_monitor(pending.monitor);
+        r.parked = this.activeSpace(pending.monitor) !== pending.space;
+        if (r.parked) w.minimize();
+        this.schedule(true);
+        return true;
+    }
     options(monitor, space = this.activeSpace(monitor)) {
         return {preset: this.profiles[this.profileKey(monitor, space)]?.preset ?? 'auto',
             gap: this.settings.get_int('gap'), padding: this.settings.get_int('padding'),
@@ -583,7 +709,8 @@ export default class SnapTess extends Extension {
         if (!this.running) return;
         return {windows: new Map([...this.records.keys()].map(w => [w, this.snapshot(w)])),
             groups: new Map([...this.groups].map(([k, g]) => [k, [...g]])),
-            records: new Map([...this.records].map(([w, r]) => [w, {floating: r.floating, space: r.space, parked: r.parked}])),
+            records: new Map([...this.records].map(([w, r]) => [w, {floating: r.floating, space: r.space,
+                parked: r.parked, restoreParked: r.restoreParked}])),
             spaces: new Map([...this.spaces].map(([w, m]) => [w, new Map(m)])),
             profiles: JSON.stringify(this.profiles)};
     }
@@ -634,7 +761,7 @@ export default class SnapTess extends Extension {
                     this.cancel(r.restoreTimer); r.restoreTimer = 0;
                     this.cancel(r.settleTimer); r.settleTimer = 0;
                     r.restorePending = false; r.restoreUntil = 0; r.restoreQuietUntil = 0;
-                    if (r.parked) { w.unminimize(); r.parked = false; }
+                    if (r.parked || r.restoreParked) { w.unminimize(); r.parked = false; r.restoreParked = false; }
                     if (r.original) this.restore(w, r.original);
                     r.scaleMinimum = null;
                     r.original = null; r.space = 0;
@@ -673,12 +800,16 @@ export default class SnapTess extends Extension {
                         return rank(a) - rank(b);
                     });
                 }
-                const savedPins = this.profiles[this.profileKey(monitor)]?.pinned;
+                const profile = this.profiles[this.profileKey(monitor)];
+                const savedPins = profile?.pinned;
                 // An explicit drag/swap may temporarily move a live pinned window.
                 // Reserve its saved slot again only when that window is absent or reopens.
                 const pinned = activePinnedSlots(existingGroup, windows, savedPins, w => this.appId(w));
                 const slots = reserveAppSlots(reconcileSlots(previous, windows, compact), pinned,
                     w => this.appId(w), compact);
+                if (profile?.slotCount) {
+                    while (slots.length < profile.slotCount) slots.push(null);
+                }
                 this.groups.set(key, slots);
                 const rects = layout(this.area(monitor), slots.length, this.options(monitor));
                 slots.forEach((w, i) => {
@@ -1516,6 +1647,7 @@ export default class SnapTess extends Extension {
 
     grabBegin(w, op) {
         if (!this.running || !this.records.has(w) || this.records.get(w).floating ||
+            this.matchesAppRule(w, 'excluded-apps') ||
             ![Meta.GrabOp.MOVING, Meta.GrabOp.KEYBOARD_MOVING].includes(op)) return;
         const record = this.records.get(w);
         this.cancel(record.restoreTimer); record.restoreTimer = 0;
@@ -1673,11 +1805,17 @@ export default class SnapTess extends Extension {
             for (const [key, group] of this.groups)
                 if (key.startsWith(`${this.workspaceIndex()}:`))
                     this.groups.set(key, group.filter(w => !claimed.has(w)));
-            for (const {monitor, space, preset, slots, pinned = []} of plans) {
+            for (const {monitor, space, preset, slots, pinned = [], slotCount, parkUnused = []} of plans) {
+                for (const w of parkUnused) {
+                    if (!this.records.has(w)) continue;
+                    const r = this.records.get(w);
+                    r.restoreParked = true;
+                    if (!w.minimized) w.minimize();
+                }
                 for (const w of slots) {
                     if (!w) continue;
                     const r = this.records.get(w); r.original ??= this.snapshot(w);
-                    r.floating = false; r.space = space; r.monitor = monitor;
+                    r.floating = false; r.space = space; r.monitor = monitor; r.restoreParked = false;
                     w.move_to_monitor(monitor);
                     if (w.get_monitor() !== monitor) {
                         // A secondary-display window may be workspace-sticky, so
@@ -1691,15 +1829,18 @@ export default class SnapTess extends Extension {
                 this.groups.set(this.key(monitor, space), slots);
                 this.profiles[this.profileKey(monitor, space)] = {
                     preset, apps: slots.filter(Boolean).map(w => this.appId(w)), pinned,
+                    ...(slotCount ? {slotCount} : {}),
                 };
             }
         } finally { this.busy = false; }
         this.settings.set_string('profiles', JSON.stringify(this.profiles));
         this.tile(true, true);
         this.updatePanelStatus();
+        this.deletedLayouts?.splice(0);
     }
 
     disable() {
+        this.pendingLayoutApps.clear();
         this.studio?.dialog.destroy(); this.studio = null;
         this.setRunning(false, true);
         this.exitSwap();
