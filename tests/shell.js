@@ -224,8 +224,12 @@ export async function run() {
     app.showWindowActionHandle();
     assert(app.windowActionHandle.visible,'focused tiled window shows the action handle');
     windows[0].maximize(); await pause();
-    assert(!app.windowActionHandle.visible && !app.windowActions.visible,
-        'maximizing a focused window hides its contextual controls');
+    assert(app.windowActionHandle.visible || app.windowActions.visible,
+        'maximized focused window keeps its contextual controls');
+    const maximizedRect=app.visualWindowRect(windows[0]);
+    const visibleControl=app.windowActions.visible ? app.windowActions : app.windowActionHandle;
+    assert(visibleControl.x>=maximizedRect.x && visibleControl.x<maximizedRect.x+maximizedRect.width,
+        'maximized controls follow the visible window instead of its old tile');
     assert(windows.slice(1).every((w,i)=>geometry(w)===before[i]),'maximize freezes other windows');
     windows[0].unmaximize();
     await Scripting.sleep(90);
@@ -242,8 +246,8 @@ export async function run() {
         Math.abs(restoredFrame.width-restoreTarget.width)<=1 && Math.abs(restoredFrame.height-restoreTarget.height)<=1,
         'progressive app geometry drift after maximize exit is pulled back into its tile');
     assert(!app.records.get(windows[0]).restorePending,'restore stabilization is bounded and finishes');
-    app.showWindowActionHandle();
-    assert(app.windowActionHandle.visible,'restored tiled window shows the action handle');
+    assert(app.windowActionHandle.visible || app.windowActions.visible,
+        'restored tiled window regains its contextual controls automatically');
     windows[0].make_fullscreen(); await pause();
     assert(!app.windowActionHandle.visible && !app.windowActions.visible,
         'fullscreen hides a previously visible action handle');
