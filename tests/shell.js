@@ -434,6 +434,102 @@ export async function run() {
     app.undo(); await pause();
     assert(app.records.get(movedWindow).space===0 && app.groups.get(app.key(0,0)).includes(movedWindow),
         'one undo restores a cross-space Studio assignment');
+    app.openStudio(); await pause();
+    const savedStudio=app.studio;
+    savedStudio.drafts.set('0:0',[windows[0],windows[1]]);
+    savedStudio.draftPins.set('0:0',[]);
+    savedStudio.preset='split';
+    savedStudio.nameEntry.set_text('Test pair');
+    savedStudio.saveCurrentLayout();
+    const saved=app.savedLayouts.find(item=>item.name==='Test pair');
+    assert(saved?.preset==='split' && saved.slotCount===2 &&
+        saved.pinned[0]===app.appId(windows[0]) && saved.pinned[1]===app.appId(windows[1]),
+    'Studio saves a named template independently of the current space profile');
+    assert(savedStudio.previewSavedId===saved.id && savedStudio.canvas.get_n_children()===2 &&
+        savedStudio.savedActions.visible,'Studio previews the selected saved layout before restore');
+    assert(savedStudio.savedPicker.has_style_class_name('selected') &&
+        !savedStudio.currentViewButton.has_style_class_name('selected') &&
+        savedStudio.savedPicker.label.includes('Test pair') && savedStudio.savedChooserList,
+    'saved layouts use a separate vertical picker rather than current-space list chips');
+    const savedHeaderCount=savedStudio.savedHeader.get_n_children();
+    const extraLayouts=[];
+    for (let i=0;i<5;i++) extraLayouts.push(app.saveLayout(`Long saved layout name ${i} with extra detail`,
+        'full',[windows[0]],[]));
+    savedStudio.render();
+    assert(savedStudio.savedHeader.get_n_children()===savedHeaderCount &&
+        savedStudio.savedPicker.label.length<35 && !savedStudio.savedChooser.visible,
+    'many long names do not widen the Studio toolbar');
+    savedStudio.savedPicker.emit('clicked',1); await pause();
+    assert(savedStudio.savedChooser.visible && savedStudio.savedChooserList.get_n_children()===6,
+        'saved layouts open as a vertical list inside the Studio modal');
+    if (GLib.getenv('SNAPTESS_MENU_SCREENSHOT')) {
+        const stream=Gio.File.new_for_path(GLib.getenv('SNAPTESS_MENU_SCREENSHOT'))
+            .replace(null,false,Gio.FileCreateFlags.NONE,null);
+        const m=Main.layoutManager.monitors[0];
+        await new Shell.Screenshot().screenshot_area(m.x,m.y,m.width,m.height,stream);
+        stream.close(null);
+    }
+    const targetRow=savedStudio.savedChooserList.get_children()[1];
+    assert(targetRow.reactive && savedStudio.savedChooser.get_parent()===savedStudio.dialog.contentLayout,
+        'saved-layout rows receive input inside the modal dialog');
+    targetRow.emit('clicked',1);
+    assert(savedStudio.previewSavedId===extraLayouts[0] && !savedStudio.showSavedChooser,
+        'selecting a row inside the Studio modal opens its saved-layout preview');
+    savedStudio.savedPicker.emit('clicked',1);
+    savedStudio.savedChooserList.get_first_child().emit('clicked',1);
+    assert(savedStudio.previewSavedId===saved.id,'the original saved layout remains selectable');
+    for (const id of extraLayouts) app.deleteSavedLayout(id);
+    savedStudio.render();
+    if (GLib.getenv('SNAPTESS_SAVED_SCREENSHOT')) {
+        const stream=Gio.File.new_for_path(GLib.getenv('SNAPTESS_SAVED_SCREENSHOT'))
+            .replace(null,false,Gio.FileCreateFlags.NONE,null);
+        const m=Main.layoutManager.monitors[0];
+        await new Shell.Screenshot().screenshot_area(m.x,m.y,m.width,m.height,stream);
+        stream.close(null);
+    }
+    const plan=app.savedLayoutPlan(saved,0,0);
+    assert(plan.slots.filter(Boolean).length===2 && plan.extras.length===2,
+        'restore plan reuses matching windows and identifies surplus windows');
+    savedStudio.dialog.close();
+    const beforeRestore=JSON.stringify(app.profiles[app.profileKey(0,0)]);
+    app.restoreSavedLayout(saved.id,0,0); await pause();
+    assert(app.deletedLayouts.length===0,'restoring a layout retires stale Undo delete actions');
+    assert(windows[2].minimized && windows[3].minimized &&
+        app.records.get(windows[2]).restoreParked && app.records.get(windows[3]).restoreParked &&
+        app.profiles[app.profileKey(0,0)].slotCount===2,
+    'explicit restore minimizes extras without closing them and keeps the template capacity');
+    app.undo(); await pause();
+    assert(!windows[2].minimized && !windows[3].minimized &&
+        JSON.stringify(app.profiles[app.profileKey(0,0)])===beforeRestore,
+    'Undo restores the previous space profile and surplus windows');
+    app.deleteSavedLayout(saved.id);
+    assert(!app.savedLayouts.some(item=>item.id===saved.id),'saved templates can be deleted independently');
+    app.openStudio(); await pause();
+    assert(app.studio.undoDeleteButton.visible &&
+        app.studio.undoDeleteButton.accessible_name.includes('Test pair') &&
+        app.studio.undoDeleteButton.get_parent()===app.studio.savedActions &&
+        app.studio.savedSummary.text.includes('Deleted'),
+        'Studio shows contextual Undo beside the deleted-layout feedback');
+    if (GLib.getenv('SNAPTESS_DELETED_SCREENSHOT')) {
+        const stream=Gio.File.new_for_path(GLib.getenv('SNAPTESS_DELETED_SCREENSHOT'))
+            .replace(null,false,Gio.FileCreateFlags.NONE,null);
+        const m=Main.layoutManager.monitors[0];
+        await new Shell.Screenshot().screenshot_area(m.x,m.y,m.width,m.height,stream);
+        stream.close(null);
+    }
+    app.studio.undoDeleteButton.emit('clicked',1);
+    assert(app.savedLayouts.some(item=>item.id===saved.id) && app.studio.previewSavedId===saved.id,
+        'Undo delete restores the template and its preview');
+    assert(app.studio.deleteButton.visible && app.studio.deleteButton.get_parent()===app.studio.savedActions,
+        'Delete layout sits beside the selected-layout summary');
+    app.studio.dialog.close();
+    app.deleteSavedLayout(saved.id);
+    app.openStudio(); await pause();
+    app.studio.apply(); await pause();
+    app.openStudio(); await pause();
+    assert(!app.studio.undoDeleteButton.visible && !app.studio.savedActions.visible,
+        'Apply retires stale deleted-layout feedback');
+    app.studio.dialog.close();
     if (Main.layoutManager.monitors.length > 1) {
         app.applyProfile(1,0,'auto',[windows[0]]); await pause();
         assert(windows[0].get_monitor()===1,'studio assignment moves across monitors');
@@ -451,6 +547,7 @@ export async function run() {
         assert(r.x===s.x && r.y===s.y && r.width===s.width && r.height===s.height,'stop restores original geometry');
     });
     app.setRunning(true); await pause();
+    const reloadLayoutId=app.saveLayout('Reload test','full',[windows[0]],[]);
     const firstRuntimeClass=app.constructor;
     await Main.extensionManager.disableExtension(loader.uuid); await pause();
     assert(!Main.panel.statusArea[loader.uuid],'disable removes indicator');
@@ -459,6 +556,9 @@ export async function run() {
     const reloadedEntry=Main.extensionManager.lookup(loader.uuid);
     const reloaded=await waitRuntime(reloadedEntry.stateObj);
     assert(reloaded,'runtime reloads after disable/enable');
+    assert(reloaded.savedLayouts.some(item=>item.id===reloadLayoutId),
+        'named layouts persist independently across extension reloads');
+    reloaded.deleteSavedLayout(reloadLayoutId);
     assert(hotRoot.query_exists(null),'re-enable recreates hot reload staging');
     assert(reloaded.constructor!==firstRuntimeClass,'reload bypasses the GJS module cache');
     await Main.extensionManager.disableExtension(loader.uuid); await pause();

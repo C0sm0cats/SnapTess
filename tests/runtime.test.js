@@ -13,7 +13,7 @@ const source = fs.readFileSync(new URL('../runtime.js', import.meta.url), 'utf8'
 function harness() {
     let now = 1000, nextId = 1, grabbed = false, monitor = 0, pointer = [150, 80];
     const timers = new Map(), signals = new Map(), actorSignals = new Map();
-    const requests = [], scaleWrites = [], userOps = [];
+    const requests = [], scaleWrites = [], userOps = [], launches = [];
     let frame = {x: 100, y: 50, width: 600, height: 400};
     const slot = {...frame};
     const actor = {
@@ -46,7 +46,9 @@ function harness() {
         ...geometry, Extension: class {}, console,
         Date: class extends Date { static now() { return now; } },
         GLib: {file_get_contents() { throw new Error('trace disabled'); }},
-        Main: {layoutManager: {monitors: [{}]}},
+        Main: {layoutManager: {monitors: [{}]}, notify() {}},
+        Shell: {AppSystem: {get_default: () => ({lookup_app: id => id === 'test.desktop'
+            ? {get_app_info: () => ({launch: () => { launches.push(id); return true; }})} : null})}},
         Meta: {WindowType: {NORMAL: 0}, GrabOp: {MOVING: 1, KEYBOARD_MOVING: 2}},
         global: {display: {is_grabbed: () => grabbed, focus_window: null}, get_pointer: () => pointer,
             workspace_manager: {get_active_workspace: () => workspace}, get_window_actors: () => [actor]},
@@ -90,7 +92,7 @@ function harness() {
         app.place(w, slot); advance(150);
         requests.length = 0; scaleWrites.length = 0;
     }
-    return {app, w, actor, record, requests, scaleWrites, userOps, slot, timers, advance, commit, special,
+    return {app, w, actor, record, requests, scaleWrites, userOps, launches, slot, timers, advance, commit, special,
         effectsDone, settleInitial, frame: () => frame, grab: value => { grabbed = value; },
         monitor: value => { monitor = value; }, pointer: (x, y) => { pointer = [x, y]; }};
 }
@@ -131,6 +133,16 @@ test('drag feedback starts only after pointer movement crosses the threshold', (
     assert.equal(h.app.drag.started, true);
     assert.equal(borderHides, 1);
     assert.equal(actionHides, 1);
+});
+
+test('always-floating applications never start tile drag feedback', () => {
+    const h = harness(); h.settleInitial(); h.grab(true);
+    h.app.appId = () => 'org.gnucash.GnuCash.desktop';
+    h.app.settings.get_strv = key => key === 'excluded-apps' ? ['org.gnucash.GnuCash'] : [];
+    h.app.grabBegin(h.w, 1);
+    h.pointer(200, 140); h.advance(64);
+    assert.equal(h.app.drag, null);
+    assert.equal(h.timers.size, 0);
 });
 
 test('excluded applications match desktop IDs, aliases, and WM_CLASS', () => {
@@ -183,6 +195,7 @@ test('applying multiple Studio contexts creates one undo checkpoint and preserve
         [second, {original: null, floating: false, space: 1, parked: true, monitor: 0}]]);
     app.groups = new Map([['0:0:0', [first]], ['0:0:1', [second]]]);
     app.history = []; app.profiles = {};
+    app.deletedLayouts = [{layout: {id: 'old', name: 'Old layout'}, index: 0}];
     app.snapshot = () => ({});
     app.restore = () => {};
     app.workspaceIndex = () => 0;
@@ -200,6 +213,7 @@ test('applying multiple Studio contexts creates one undo checkpoint and preserve
         {monitor: 0, space: 1, preset: 'full', windows: [first], pinned: []},
     ], {monitor: 0, space: 0});
     assert.equal(app.history.length, 1);
+    assert.equal(app.deletedLayouts.length, 0, 'Apply retires an obsolete Undo delete');
     assert.equal(tileCalls, 1);
     assert.equal(app.groups.get('0:0:0')[0], second);
     assert.equal(app.groups.get('0:0:1')[0], first);
@@ -243,6 +257,42 @@ test('a saved app slot returns after close without undoing a live manual swap', 
     app.tile(true);
     assert.equal(app.groups.get('0:0:0')[0], reopened, 'reopened app returns to its saved slot');
     assert.equal(app.groups.get('0:0:0')[1], other);
+});
+
+test('explicit saved-layout restore launches a missing app once and claims its window', () => {
+    const h = harness(), app = h.app;
+    app.savedLayouts = [{id: 'pair', name: 'Pair', preset: 'split', slotCount: 2,
+        pinned: ['test.desktop', null]}];
+    app.pendingLayoutApps = new Map();
+    app.savedLayoutPlan = () => ({slots: [null, null], missing: ['test.desktop'], extras: []});
+    let applied = 0, scheduled = 0;
+    app.applyProfiles = () => { applied++; };
+    app.activeSpace = () => 0;
+    app.schedule = () => { scheduled++; };
+    assert.equal(app.restoreSavedLayout('pair', 0, 0), true);
+    assert.equal(app.restoreSavedLayout('pair', 0, 0), true);
+    assert.equal(applied, 2, 'each explicit restore applies its template');
+    assert.deepEqual(h.launches, ['test.desktop'], 'an in-flight app is not launched twice');
+    assert.equal(app.claimLayoutWindow(h.w), true);
+    assert.equal(app.pendingLayoutApps.size, 0);
+    assert.equal(h.record.space, 0);
+    assert.equal(scheduled, 1);
+});
+
+test('deleted named layouts undo in reverse order without touching space profiles', () => {
+    const h = harness(), app = h.app;
+    const first = {id: 'one', name: 'One'}, second = {id: 'two', name: 'Two'};
+    app.savedLayouts = [first, second];
+    app.deletedLayouts = [];
+    app.profiles = {space: {preset: 'split'}};
+    app.settings.set_string = () => {};
+    assert.equal(app.deleteSavedLayout('one'), true);
+    assert.equal(app.deleteSavedLayout('two'), true);
+    assert.equal(app.undoDeletedSavedLayout().id, 'two');
+    assert.equal(app.undoDeletedSavedLayout().id, 'one');
+    assert.deepEqual(app.savedLayouts.map(layout => layout.id), ['one', 'two']);
+    assert.equal(app.deletedLayouts.length, 0);
+    assert.equal(app.profiles.space.preset, 'split');
 });
 
 test('a persistently rejected size gets bounded retries then leaves tiling', () => {
