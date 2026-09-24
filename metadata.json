@@ -3,7 +3,7 @@
   "name": "SnapTess",
   "description": "Your windows, beautifully arranged. Automatic tiling, visual layouts, drag-to-swap and three spaces per monitor.",
   "shell-version": ["50"],
-  "version": 16,
+  "version": 17,
   "url": "https://github.com/C0sm0cats/SnapTess",
   "settings-schema": "org.gnome.shell.extensions.snaptess"
 }
