@@ -260,6 +260,42 @@ export async function run() {
     assert(app.border.visible && Math.abs(app.border.width-(unminimized.width+2*app.border.strokeWidth))<=1 &&
         Math.abs(app.border.height-(unminimized.height+2*app.border.strokeWidth))<=1,
         'unminimized window has a full-size focus border');
+    const originalAppId=app.appId.bind(app), pinId='snaptess-test-pinned.desktop';
+    const closedId='snaptess-test-closed.desktop';
+    const profileKey=app.profileKey(0,0), previousProfile=app.profiles[profileKey];
+    app.appId=w=>w===windows[0]?pinId:originalAppId(w);
+    app.profiles[profileKey]={...previousProfile,preset:'3x2',
+        pinned:[pinId,null,null,null,closedId],slotCount:5};
+    app.tile(true);
+    assert(app.pinnedPlaceholders.get('0:4')?.state==='CLOSED' && app.pinnedPlaceholders.size===1,
+        'only a genuinely vacant pinned tile shows the closed card');
+    windows[0].minimize(); await Scripting.sleep(250);
+    const placeholder=app.pinnedPlaceholders.get('0:0');
+    const pinRect=app.area(0);
+    assert(placeholder?.state==='MINIMIZED' && placeholder.button.visible &&
+        placeholder.button.x>=pinRect.x && placeholder.button.y>=pinRect.y &&
+        placeholder.button.x+placeholder.button.width<=pinRect.x+pinRect.width &&
+        placeholder.button.y+placeholder.button.height<=pinRect.y+pinRect.height,
+        'a minimized pinned app shows a card inside its vacant tile');
+    assert(global.window_group.get_children().indexOf(placeholder.button)<
+        global.window_group.get_children().indexOf(app.windowActor(windows[1])),
+        'the pinned card stays behind real windows');
+    assert(app.pinnedPlaceholders.size===2,'ordinary unpinned vacancies have no card');
+    if (GLib.getenv('SNAPTESS_PIN_SCREENSHOT')) {
+        const stream=Gio.File.new_for_path(GLib.getenv('SNAPTESS_PIN_SCREENSHOT'))
+            .replace(null,false,Gio.FileCreateFlags.NONE,null);
+        const m=Main.layoutManager.monitors[0];
+        await new Shell.Screenshot().screenshot_area(m.x,m.y,m.width,m.height,stream);
+        stream.close(null);
+    }
+    placeholder.button.emit('clicked',1); await Scripting.sleep(250);
+    assert(!windows[0].minimized && !app.pinnedPlaceholders.has('0:0'),
+        'clicking a minimized pinned card restores its window and removes the card');
+    if (previousProfile) app.profiles[profileKey]=previousProfile;
+    else delete app.profiles[profileKey];
+    app.appId=originalAppId;
+    app.tile(true);
+    assert(app.pinnedPlaceholders.size===0,'clearing pins removes every placeholder');
     app.switchSpace(1,0);
     assert(app.spaceTransitions.size===1,'space switch uses the custom SnapTess transition');
     await pause();
@@ -558,7 +594,8 @@ export async function run() {
     app.setRunning(false); await pause();
     windows.forEach((w,i)=>{
         const r=w.get_frame_rect(),s=originals[i];
-        assert(r.x===s.x && r.y===s.y && r.width===s.width && r.height===s.height,'stop restores original geometry');
+        assert(r.x===s.x && r.y===s.y && r.width===s.width && r.height===s.height,
+            `stop restores original geometry for ${i}: ${geometry(w)} vs ${[s.x,s.y,s.width,s.height].join(',')}`);
     });
     app.setRunning(true); await pause();
     const reloadLayoutId=app.saveLayout('Reload test','full',[windows[0]],[]);
