@@ -716,6 +716,11 @@ export async function run() {
     app.setRunning(false); await pause();
     assert(app.motionGuides.size===0 && app.spaceTransitions.size===0 && app.spaceDots.size===0,
         'pausing removes short-lived visual actors');
+    const restoredOriginals=()=>windows.every((w,i)=>{
+        const r=w.get_frame_rect(),s=originals[i];
+        return r.x===s.x && r.y===s.y && r.width===s.width && r.height===s.height;
+    });
+    for (let i=0;i<20 && !restoredOriginals();i++) await Scripting.sleep(100);
     windows.forEach((w,i)=>{
         const r=w.get_frame_rect(),s=originals[i];
         assert(r.x===s.x && r.y===s.y && r.width===s.width && r.height===s.height,
