@@ -849,6 +849,22 @@ export default class SnapTess extends Extension {
         this.pinnedPlaceholders.clear();
     }
 
+    pinnedSlotState(id, monitor, space, index, used = new Set()) {
+        const normalize = value => (value ?? '').replace(/\.desktop$/i, '').toLowerCase();
+        const workspace = global.workspace_manager.get_active_workspace();
+        const matches = [...this.records].filter(([w]) => normalize(this.appId(w)) === normalize(id));
+        const minimized = matches.filter(([w, record]) => !used.has(w) && w.minimized &&
+            !record.parked && !record.restoreParked && !record.floating && record.space === space &&
+            w.get_monitor() === monitor && w.get_workspace() === workspace);
+        const window = minimized.find(([w, record]) => record.minimizeSlots?.[index] === w)?.[0] ??
+            minimized[0]?.[0] ?? null;
+        if (window) return {window, state: 'MINIMIZED'};
+        const pending = this.pendingLayoutApps?.get(normalize(id));
+        if (pending?.monitor === monitor && pending.space === space && pending.workspace === workspace)
+            return {window: null, state: 'OPENING'};
+        return {window: null, state: matches.length ? 'OPEN ELSEWHERE' : 'CLOSED'};
+    }
+
     updatePinnedPlaceholders() {
         if (!this.pinnedPlaceholders) return;
         if (!this.running || this.studio || this.drag?.started || Main.overview.visible || this.spaceTransitions.size) {
@@ -867,18 +883,9 @@ export default class SnapTess extends Extension {
             for (let index = 0; index < pins.length; index++) {
                 const id = pins[index], rect = rects[index];
                 if (!id || slots[index] || !rect) continue;
-                const matches = [...this.records].filter(([w, record]) => !used.has(w) && w.minimized &&
-                    !record.parked && !record.restoreParked && !record.floating && record.space === space &&
-                    w.get_monitor() === monitor && w.get_workspace() === workspace &&
-                    normalize(this.appId(w)) === normalize(id));
-                const window = matches.find(([w, record]) => record.minimizeSlots?.[index] === w)?.[0] ??
-                    matches[0]?.[0] ?? null;
+                const {window, state} = this.pinnedSlotState(id, monitor, space, index, used);
                 if (window) used.add(window);
-                const pending = this.pendingLayoutApps.get(normalize(id));
-                const opening = !window && pending?.monitor === monitor && pending.space === space &&
-                    pending.workspace === workspace;
-                desired.set(`${monitor}:${index}`, {id, rect, monitor, space, window,
-                    state: window ? 'MINIMIZED' : opening ? 'OPENING' : 'CLOSED'});
+                desired.set(`${monitor}:${index}`, {id, rect, monitor, space, window, state});
             }
         }
         for (const [key, current] of this.pinnedPlaceholders) {
@@ -895,6 +902,7 @@ export default class SnapTess extends Extension {
                 const app = appSystem.lookup_app(entry.id) ?? appSystem.lookup_app(`${entry.id}.desktop`);
                 const name = app?.get_name() ?? entry.id.replace(/\.desktop$/i, '');
                 const available = Boolean(entry.window || app?.get_app_info?.());
+                const unavailable = entry.state === 'CLOSED' && !available;
                 const content = new St.BoxLayout({style_class: 'snaptess-pin-placeholder-content'});
                 content.add_child(app?.create_icon_texture(30) ??
                     new St.Icon({icon_name: 'application-x-executable-symbolic', icon_size: 30}));
@@ -904,19 +912,20 @@ export default class SnapTess extends Extension {
                 title.clutter_text.ellipsize = Pango.EllipsizeMode.END;
                 title.clutter_text.single_line_mode = true;
                 labels.add_child(title);
-                labels.add_child(new St.Label({text: `PINNED · ${available ? entry.state : 'UNAVAILABLE'}`,
+                labels.add_child(new St.Label({text: `PINNED · ${unavailable ? 'UNAVAILABLE' : entry.state}`,
                     style_class: 'snaptess-pin-placeholder-state'}));
                 content.add_child(labels);
-                const button = new St.Button({style_class: `snaptess-pin-placeholder${available ? '' : ' unavailable'}`,
-                    accessible_name: `${entry.window ? 'Restore window' : 'Open application'}: ${name}`,
-                    reactive: available && entry.state !== 'OPENING', can_focus: available && entry.state !== 'OPENING',
+                const actionable = entry.state === 'MINIMIZED' || (entry.state === 'CLOSED' && available);
+                const button = new St.Button({style_class: `snaptess-pin-placeholder${unavailable ? ' unavailable' : ''}`,
+                    accessible_name: `${entry.window ? 'Restore window' : actionable ? 'Open application' : entry.state}: ${name}`,
+                    reactive: actionable, can_focus: actionable,
                     child: content});
                 button.connect('clicked', () => {
                     if (this.pinnedPlaceholders.get(key)?.button !== button || !this.running || this.studio) return;
                     if (entry.window && this.records.has(entry.window) && entry.window.minimized) {
                         entry.window.unminimize();
                         entry.window.activate(global.get_current_time());
-                    } else if (!entry.window && !this.pendingLayoutApps.has(normalize(entry.id))) {
+                    } else if (entry.state === 'CLOSED' && !this.pendingLayoutApps.has(normalize(entry.id))) {
                         const info = app?.get_app_info?.();
                         if (!info) return;
                         const pending = {monitor: entry.monitor, space: entry.space, workspace};
