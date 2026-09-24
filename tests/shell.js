@@ -2,6 +2,7 @@ import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
 import Meta from 'gi://Meta';
 import Shell from 'gi://Shell';
+import St from 'gi://St';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import * as Scripting from 'resource:///org/gnome/shell/ui/scripting.js';
 export const METRICS = {};
@@ -261,7 +262,8 @@ export async function run() {
         Math.abs(app.border.height-(unminimized.height+2*app.border.strokeWidth))<=1,
         'unminimized window has a full-size focus border');
     const originalAppId=app.appId.bind(app), pinId='snaptess-test-pinned.desktop';
-    const closedId='snaptess-test-closed.desktop';
+    const closedId=['org.gnome.Shell.Extensions.desktop','org.gnome.Settings.desktop']
+        .find(id=>Shell.AppSystem.get_default().lookup_app(id)) ?? 'snaptess-test-closed.desktop';
     const profileKey=app.profileKey(0,0), previousProfile=app.profiles[profileKey];
     app.appId=w=>w===windows[0]?pinId:originalAppId(w);
     app.profiles[profileKey]={...previousProfile,preset:'3x2',
@@ -288,7 +290,30 @@ export async function run() {
         await new Shell.Screenshot().screenshot_area(m.x,m.y,m.width,m.height,stream);
         stream.close(null);
     }
-    placeholder.button.emit('clicked',1); await Scripting.sleep(250);
+    app.openStudio();
+    const reservedCards=app.studio.canvas.get_children();
+    const minimizedContent=reservedCards[0].get_child().get_children();
+    const closedContent=reservedCards[4].get_child().get_children();
+    const closedAvailable=Boolean(Shell.AppSystem.get_default().lookup_app(closedId)?.get_app_info?.());
+    assert(minimizedContent[0].text==='01' && !(minimizedContent[1].get_child() instanceof St.Label) &&
+        minimizedContent[1].get_child().width>=20 && minimizedContent[1].get_child().height>=20 &&
+        minimizedContent[2].has_style_class_name('snaptess-reserved-name') &&
+        minimizedContent[3].text==='PINNED · MINIMIZED',
+        'Studio shows the pinned app icon after its slot number and the minimized state');
+    assert(closedContent[0].text==='05' && !(closedContent[1].get_child() instanceof St.Label) &&
+        closedContent[3].text===`PINNED · ${closedAvailable?'CLOSED':'UNAVAILABLE'}`,
+        'Studio distinguishes a closed pinned app from a minimized one');
+    if (GLib.getenv('SNAPTESS_RESERVED_SCREENSHOT')) {
+        await Scripting.sleep(180);
+        const stream=Gio.File.new_for_path(GLib.getenv('SNAPTESS_RESERVED_SCREENSHOT'))
+            .replace(null,false,Gio.FileCreateFlags.NONE,null);
+        const m=Main.layoutManager.monitors[0];
+        await new Shell.Screenshot().screenshot_area(m.x,m.y,m.width,m.height,stream);
+        stream.close(null);
+    }
+    app.studio.dialog.close();
+    app.updatePinnedPlaceholders();
+    app.pinnedPlaceholders.get('0:0').button.emit('clicked',1); await Scripting.sleep(250);
     assert(!windows[0].minimized && !app.pinnedPlaceholders.has('0:0'),
         'clicking a minimized pinned card restores its window and removes the card');
     if (previousProfile) app.profiles[profileKey]=previousProfile;
@@ -492,8 +517,12 @@ export async function run() {
     const hasPinBadge=card=>card.get_child().get_children().some(child=>
         child.has_style_class_name?.('snaptess-state-badges') && child.get_children().some(badge=>
             badge.has_style_class_name('snaptess-pinned-badge')));
-    assert(hasPinBadge(savedCards[0]) && !hasPinBadge(savedCards[1]),
-        'saved preview shows PINNED only on the tile explicitly pinned in Current space');
+    assert(hasPinBadge(savedCards[0]) &&
+        !savedCards[1].get_child().get_children().some(child=>
+            child.has_style_class_name?.('snaptess-state-badges')) &&
+        savedStudio.savedSummary.text.includes('reuse') &&
+        savedStudio.savedSummary.text.includes('open'),
+        'saved preview shows only persisted PINNED badges and keeps restore effects in the summary');
     assert(savedStudio.savedPicker.has_style_class_name('selected') &&
         !savedStudio.currentViewButton.has_style_class_name('selected') &&
         savedStudio.savedPicker.label.includes('Test pair') && savedStudio.savedChooserList,
