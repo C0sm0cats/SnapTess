@@ -23,6 +23,7 @@ const MAX_RESTORE_MOVES = 8;
 const MAX_SIZE_REPAIRS = 2;
 const SIZE_REJECTION_GRACE_MS = 1800;
 const SIZE_MISMATCH_STABLE_MS = 600;
+const VISUAL = Object.freeze({quick: 140, move: 210, space: 230, osd: 1300, inset: 7});
 
 export default class SnapTess extends Extension {
     enable() {
@@ -39,6 +40,7 @@ export default class SnapTess extends Extension {
         this.radiusReadbackReady = false;
         this.drag = null;
         this.swapMode = false;
+        this.borderSwapActive = false;
         this.loadProfiles();
         this.loadSavedLayouts();
         this.deletedLayouts = [];
@@ -53,31 +55,34 @@ export default class SnapTess extends Extension {
         this.switchItem = new PopupMenu.PopupSwitchMenuItem('Arrange windows', false);
         this.switchItem.connect('toggled', (_item, value) => this.setRunning(value));
         this.indicator.menu.addMenuItem(this.switchItem);
-        this.studioItem = this.indicator.menu.addAction('Layout Studio…', () => this.openStudio());
-        this.arrangeItem = this.indicator.menu.addAction('Arrange again', () => { this.checkpoint(); this.tile(true); });
         this.indicator.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
+        this.monitorSection = new PopupMenu.PopupMenuSection();
+        this.monitorMenus = [];
+        this.indicator.menu.addMenuItem(this.monitorSection);
+        this.rebuildMonitorMenus();
+        this.indicator.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
+        this.focusHeading = new PopupMenu.PopupMenuItem('Focused window', {reactive: false,
+            style_class: 'snaptess-menu-heading'});
+        this.indicator.menu.addMenuItem(this.focusHeading);
         this.floatItem = this.indicator.menu.addAction('Float / tile focused window', () => this.toggleFloating());
-        this.swapItem = this.indicator.menu.addAction('Swap mode · arrows · Enter accept · Esc cancel', () => this.toggleSwap());
+        this.swapItem = this.indicator.menu.addAction('Swap focused window', () => this.toggleSwap());
+        this.swapItem.accessible_name = 'Swap focused window. Arrows move, Enter accepts, Escape cancels.';
         this.undoItem = this.indicator.menu.addAction('Undo last arrangement', () => this.undo());
         this.indicator.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
-        this.spaceMenu = new PopupMenu.PopupSubMenuMenuItem('Monitor spaces');
-        for (let i = 0; i < 3; i++)
-            this.spaceMenu.menu.addAction(`Space ${i + 1}`, () => this.switchSpace(i));
-        this.indicator.menu.addMenuItem(this.spaceMenu);
-        this.indicator.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
+        this.arrangeItem = this.indicator.menu.addAction('Arrange again', () => { this.checkpoint(); this.tile(true); });
+        this.studioItem = this.indicator.menu.addAction('Layout Studio…', () => this.openStudio());
         this.indicator.menu.addAction('Preferences', () => this.openPreferences());
+        this.indicator.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
         this.stopItem = this.indicator.menu.addAction('Stop and restore windows', () => this.setRunning(false));
         this.indicator.menu.connect('open-state-changed', (_menu, open) => { if (open) this.updateMenuSensitivity(); });
         this.border = new WindowBorder();
-        this.preview = new St.Widget({
-            style_class: 'snaptess-preview',
-            style: 'background-color: transparent; background-image: none; border: 2px solid #8ce8c3; border-radius: 16px;',
-            reactive: false,
-            visible: false,
-        });
+        this.previewContent = new St.BoxLayout({style_class: 'snaptess-target-content'});
+        this.preview = new St.Bin({style_class: 'snaptess-target-ghost', reactive: false,
+            visible: false, x_align: Clutter.ActorAlign.CENTER, y_align: Clutter.ActorAlign.CENTER,
+            child: this.previewContent});
         this.previewLabel = new St.Label({style_class: 'snaptess-preview-label', reactive: false, visible: false});
-        this.swapFromGuide = new St.Widget({style_class: 'snaptess-swap-guide source', reactive: false, visible: false});
-        this.swapToGuide = new St.Widget({style_class: 'snaptess-swap-guide target', reactive: false, visible: false});
+        this.swapFromGuide = new St.Widget({style_class: 'snaptess-source-ghost', reactive: false, visible: false});
+        this.swapToGuide = new St.Widget({style_class: 'snaptess-target-ghost', reactive: false, visible: false});
         this.swapArrow = new St.Label({style_class: 'snaptess-swap-arrow', reactive: false, visible: false});
         this.windowActions = new St.BoxLayout({orientation: Clutter.Orientation.VERTICAL,
             style_class: 'snaptess-window-actions', reactive: true, visible: false, width: 44, height: 176});
@@ -129,20 +134,15 @@ export default class SnapTess extends Extension {
         global.window_group.add_child(this.windowActionTooltip);
         this.motionGuides = new Set();
         this.spaceTransitions = new Set();
-        this.dragSourceGuide = new St.Widget({style_class: 'snaptess-drag-zone source', reactive: false, visible: false});
-        this.dragTargetGuide = new St.Widget({style_class: 'snaptess-drag-zone target', reactive: false, visible: false});
-        this.dragFlow = new St.BoxLayout({style_class: 'snaptess-drag-flow', reactive: false, visible: false});
+        this.spaceDots = new Set();
         Main.layoutManager.addChrome(this.preview);
         Main.layoutManager.addChrome(this.previewLabel);
         Main.layoutManager.addChrome(this.swapFromGuide);
         Main.layoutManager.addChrome(this.swapToGuide);
         Main.layoutManager.addChrome(this.swapArrow);
-        Main.layoutManager.addChrome(this.dragSourceGuide);
-        Main.layoutManager.addChrome(this.dragTargetGuide);
-        Main.layoutManager.addChrome(this.dragFlow);
         try {
             this.interfaceSettings = new Gio.Settings({schema_id: 'org.gnome.desktop.interface'});
-            this.connect(this.interfaceSettings, 'changed::accent-color', () => this.updateBorder());
+            this.connect(this.interfaceSettings, 'changed::accent-color', () => this.refreshAccentStyles());
         } catch { this.interfaceSettings = null; }
         try {
             this.connect(St.ThemeContext.get_for_stage(global.stage), 'changed', () => {
@@ -194,6 +194,7 @@ export default class SnapTess extends Extension {
         });
         for (const actor of global.get_window_actors()) this.track(actor.meta_window);
         this.updatePanelStatus();
+        this.refreshAccentStyles();
         this.writeRuntimeStatus();
     }
 
@@ -773,6 +774,8 @@ export default class SnapTess extends Extension {
         } else {
             this.cancel(this.pending); this.pending = 0;
             this.exitSwap(false); this.drag = null; this.hideGuides(); this.clearPinnedPlaceholders();
+            this.clearMotionGuides();
+            this.clearSpaceTransitions();
             this.busy = true;
             try {
                 for (const [w, r] of this.records) {
@@ -908,11 +911,13 @@ export default class SnapTess extends Extension {
                 const name = app?.get_name() ?? entry.id.replace(/\.desktop$/i, '');
                 const available = Boolean(entry.window || app?.get_app_info?.());
                 const unavailable = entry.state === 'CLOSED' && !available;
-                const content = new St.BoxLayout({style_class: 'snaptess-pin-placeholder-content'});
-                content.add_child(app?.create_icon_texture(30) ??
-                    new St.Icon({icon_name: 'application-x-executable-symbolic', icon_size: 30}));
+                const content = new St.BoxLayout({orientation: Clutter.Orientation.VERTICAL,
+                    style_class: 'snaptess-pin-placeholder-content',
+                    x_align: Clutter.ActorAlign.CENTER, y_align: Clutter.ActorAlign.CENTER});
+                content.add_child(app?.create_icon_texture(32) ??
+                    new St.Icon({icon_name: 'application-x-executable-symbolic', icon_size: 32}));
                 const labels = new St.BoxLayout({orientation: Clutter.Orientation.VERTICAL,
-                    style_class: 'snaptess-pin-placeholder-labels'});
+                    style_class: 'snaptess-pin-placeholder-labels', x_align: Clutter.ActorAlign.CENTER});
                 const title = new St.Label({text: name, style_class: 'snaptess-pin-placeholder-name'});
                 title.clutter_text.ellipsize = Pango.EllipsizeMode.END;
                 title.clutter_text.single_line_mode = true;
@@ -956,13 +961,16 @@ export default class SnapTess extends Extension {
                 current = {...entry, button, title};
                 this.pinnedPlaceholders.set(key, current);
             }
-            const width = Math.max(1, Math.min(216, entry.rect.width - 12));
-            const height = Math.max(1, Math.min(68, entry.rect.height - 12));
-            current.title.set_width(Math.max(24, width - 72));
+            const width = Math.max(1, entry.rect.width - VISUAL.inset * 2);
+            const height = Math.max(1, entry.rect.height - VISUAL.inset * 2);
+            current.title.set_width(Math.max(24, width - 32));
             current.button.set_size(width, height);
             current.button.set_position(Math.round(entry.rect.x + (entry.rect.width - width) / 2),
                 Math.round(entry.rect.y + (entry.rect.height - height) / 2));
-            if (width < 150 || height < 60) current.button.add_style_class_name('compact');
+            current.button.set_style(`border-radius: ${radiusStyle(
+                this.records.get(entry.window)?.windowRadius, 12,
+                this.records.get(entry.window)?.visualScale ?? 1)};`);
+            if (width < 150 || height < 125) current.button.add_style_class_name('compact');
             else current.button.remove_style_class_name('compact');
         }
         this.stackPinnedPlaceholders();
@@ -1226,8 +1234,39 @@ export default class SnapTess extends Extension {
     accentColor() {
         const colors = {blue: '#62a0ea', teal: '#5bc8af', green: '#57e389', yellow: '#f8e45c',
             orange: '#ffbe6f', red: '#ed333b', pink: '#f66151', purple: '#c061cb', slate: '#99c1f1'};
-        try { return colors[this.interfaceSettings?.get_string('accent-color')] ?? '#8ce8c3'; }
-        catch { return '#8ce8c3'; }
+        try { return colors[this.interfaceSettings?.get_string('accent-color')] ?? '#3584e4'; }
+        catch { return '#3584e4'; }
+    }
+    accentFill(alpha = 0.12) {
+        const hex = this.accentColor();
+        const rgb = [1, 3, 5].map(i => parseInt(hex.slice(i, i + 2), 16));
+        return `rgba(${rgb.join(',')},${alpha})`;
+    }
+    refreshAccentStyles() {
+        const accent = this.accentColor();
+        for (const guide of [this.preview, this.swapToGuide])
+            if (guide?.visible) this.setGuideRadius(guide,
+                guide === this.preview ? this.previewWindow : this.swapToWindow,
+                guide === this.preview ? 16 : 14);
+        this.swapArrow?.set_style(`border-color: ${accent};`);
+        this.previewLabel?.set_style(`border-color: ${accent};`);
+        this.indicator?.set_style(this.running ? `color: ${accent};` : null);
+        for (const dot of this.spaceDots ?? []) dot.set_style(`background-color: ${accent};`);
+        if (this.floatAction?.has_style_class_name('selected'))
+            this.floatAction.set_style(`background-color: ${this.accentFill(0.24)};`);
+        this.updateBorder();
+    }
+    rebuildMonitorMenus() {
+        for (const {menu} of this.monitorMenus) menu.destroy();
+        this.monitorMenus = [];
+        Main.layoutManager.monitors.forEach((_geometry, monitor) => {
+            const menu = new PopupMenu.PopupSubMenuMenuItem(`Display ${monitor + 1}`);
+            const spaces = Array.from({length: 3}, (_, space) =>
+                menu.menu.addAction(`Space ${space + 1}`, () => this.switchSpace(space, monitor)));
+            this.monitorSection.addMenuItem(menu);
+            this.monitorMenus.push({menu, spaces});
+        });
+        this.spaceMenu = this.monitorMenus[0]?.menu ?? null;
     }
     updateMenuSensitivity() {
         const w = global.display.focus_window, record = this.records.get(w);
@@ -1237,47 +1276,57 @@ export default class SnapTess extends Extension {
         const slots = usable && !record.floating ? this.groups.get(this.key(w.get_monitor())) ?? [] : [];
         this.swapItem?.setSensitive(slots.filter(Boolean).length > 1);
         this.undoItem?.setSensitive(this.running && this.history.length > 0);
-        this.spaceMenu?.setSensitive(this.running);
+        for (const {menu} of this.monitorMenus ?? []) menu.setSensitive(this.running);
         this.stopItem?.setSensitive(this.running);
     }
     updatePanelStatus() {
         if (!this.statusItem) return;
-        const monitor = this.currentMonitor(), space = this.activeSpace(monitor);
-        const preset = this.options(monitor, space).preset;
-        this.statusItem.label.text = `${this.running ? 'Active' : 'Paused'}  ·  ${preset}  ·  Space ${space + 1}`;
+        this.statusItem.label.text = `SnapTess  ·  ${this.running ? 'ON' : 'PAUSED'}`;
+        for (const [monitor, {menu, spaces}] of (this.monitorMenus ?? []).entries()) {
+            const space = this.activeSpace(monitor);
+            const preset = PRESETS.find(([id]) => id === this.options(monitor, space).preset)?.[1] ?? 'Auto';
+            menu.label.text = `Display ${monitor + 1}  ·  ${preset}  ·  Space ${space + 1}`;
+            spaces.forEach((item, index) => item.setOrnament(index === space
+                ? PopupMenu.Ornament.DOT : PopupMenu.Ornament.NONE));
+        }
+        this.indicator.set_style(this.running ? `color: ${this.accentColor()};` : null);
         this.updateMenuSensitivity();
     }
     hideSwapGuides() {
         this.cancel(this.swapGuideTimer); this.swapGuideTimer = 0;
-        this.swapFromGuide.hide(); this.swapToGuide.hide(); this.swapArrow.hide();
+        for (const actor of [this.swapFromGuide, this.swapToGuide, this.swapArrow]) {
+            actor.remove_all_transitions(); actor.hide(); actor.opacity = 255;
+        }
         this.swapFromWindow = null; this.swapToWindow = null;
     }
     hideGuides() {
         this.border.hide(); this.preview.hide(); this.previewLabel.hide(); this.hideSwapGuides();
         this.previewWindow = null;
-        this.hideDragGuides(); this.hideWindowActions();
+        this.hideWindowActions();
     }
-    showSwapGuides(from, to, direction, sourceWindow = null, targetWindow = null) {
+    setPreviewApp(w) {
+        if (!this.previewContent) return;
+        this.previewContent.destroy_all_children();
+        const app = Shell.WindowTracker.get_default().get_window_app(w);
+        this.previewContent.add_child(app?.create_icon_texture(24) ??
+            new St.Icon({icon_name: 'application-x-executable-symbolic', icon_size: 24}));
+        this.previewContent.add_child(new St.Label({text: app?.get_name() ?? 'Window'}));
+    }
+    showSwapGuides(from, to, sourceWindow = null, targetWindow = null) {
         this.hideSwapGuides();
         this.showRect(this.swapFromGuide, from); this.showRect(this.swapToGuide, to);
-        this.swapFromWindow = sourceWindow; this.swapToWindow = targetWindow;
+        this.swapFromWindow = sourceWindow; this.swapToWindow = sourceWindow;
         this.setGuideRadius(this.swapFromGuide, sourceWindow, 14);
-        this.setGuideRadius(this.swapToGuide, targetWindow, 14);
-        const arrows = {left: '←', right: '→', up: '↑', down: '↓'};
-        this.swapArrow.text = arrows[direction] ?? '↔';
-        this.swapArrow.set_position(Math.round((from.x + from.width / 2 + to.x + to.width / 2) / 2 - 18),
-            Math.round((from.y + from.height / 2 + to.y + to.height / 2) / 2 - 18));
+        this.setGuideRadius(this.swapToGuide, sourceWindow, 14);
+        this.swapArrow.text = targetWindow
+            ? `Swap · ${this.appId(targetWindow).replace(/\.desktop$/i, '')}` : 'Move here';
+        this.swapArrow.set_position(Math.round(to.x + 12), Math.round(to.y + 12));
         this.swapArrow.show();
-        if (this.settings.get_boolean('animations')) {
-            this.swapArrow.set_scale(0.7, 0.7);
-            this.swapArrow.ease({scale_x: 1.15, scale_y: 1.15, duration: 130,
-                mode: Clutter.AnimationMode.EASE_OUT_QUAD});
-        }
-        this.swapGuideTimer = this.later(420, () => {
+        this.swapGuideTimer = this.later(360, () => {
             this.swapGuideTimer = 0;
             for (const actor of [this.swapFromGuide, this.swapToGuide, this.swapArrow]) {
                 if (this.settings.get_boolean('animations'))
-                    actor.ease({opacity: 0, duration: 140, onComplete: () => { actor.hide(); actor.opacity = 255; }});
+                    actor.ease({opacity: 0, duration: VISUAL.quick, onComplete: () => { actor.hide(); actor.opacity = 255; }});
                 else actor.hide();
             }
         });
@@ -1287,7 +1336,7 @@ export default class SnapTess extends Extension {
         actor.set_position(rect.x, rect.y); actor.set_size(rect.width, rect.height); actor.show();
         if (appearing && this.settings.get_boolean('animations')) {
             actor.opacity = 0;
-            actor.ease({opacity: 255, duration: 140, mode: Clutter.AnimationMode.EASE_OUT_QUAD});
+            actor.ease({opacity: 255, duration: VISUAL.quick, mode: Clutter.AnimationMode.EASE_OUT_QUAD});
         } else if (appearing) actor.opacity = 255;
     }
     invalidateWindowRadius(w) {
@@ -1337,8 +1386,6 @@ export default class SnapTess extends Extension {
                     for (const [guide, window, fallback] of [
                         [this.swapFromGuide, this.swapFromWindow, 14],
                         [this.swapToGuide, this.swapToWindow, 14],
-                        [this.dragSourceGuide, this.dragSourceWindow, 14],
-                        [this.dragTargetGuide, this.dragTargetWindow, 14],
                         [this.preview, this.previewWindow, 16],
                     ]) if (window === w && guide.visible) this.setGuideRadius(guide, w, fallback);
                 } else {
@@ -1382,7 +1429,9 @@ export default class SnapTess extends Extension {
     setGuideRadius(guide, w, fallback) {
         const record = this.records.get(w);
         if (record && !record.windowRadius) this.queueWindowRadius(w);
-        guide.set_style(`border-radius: ${radiusStyle(record?.windowRadius, fallback, record?.visualScale ?? 1)};`);
+        const accent = guide === this.preview || guide === this.swapToGuide;
+        guide.set_style(`border-radius: ${radiusStyle(record?.windowRadius, fallback,
+            record?.visualScale ?? 1)};${accent ? `border-color: ${this.accentColor()}; background-color: ${this.accentFill()};` : ''}`);
     }
     visualWindowRect(w) {
         const frame = w.get_frame_rect(), actor = this.windowActor(w);
@@ -1403,59 +1452,46 @@ export default class SnapTess extends Extension {
             ['x', 'y', 'width', 'height'].every(key => Math.abs(from[key] - to[key]) <= 2)) return;
         const record = this.records.get(w);
         if (record?.motionGuide) { this.motionGuides.delete(record.motionGuide); record.motionGuide.destroy(); }
-        const app = Shell.WindowTracker.get_default().get_window_app(w);
-        const guide = new St.BoxLayout({style_class: 'snaptess-motion-guide', reactive: false,
-            x_align: Clutter.ActorAlign.CENTER, y_align: Clutter.ActorAlign.CENTER});
-        this.setGuideRadius(guide, w, 14);
-        guide.add_child(app?.create_icon_texture(24) ??
-            new St.Icon({icon_name: 'application-x-executable-symbolic', icon_size: 24}));
-        guide.add_child(new St.Label({text: app?.get_name() ?? 'Window'}));
+        const actor = this.windowActor(w);
+        let guide = null;
+        if (actor?.visible && !w.minimized && !this.windowEffectActive(actor) &&
+            !global.display.is_grabbed() && (record?.visualScale ?? 1) >= 0.999) {
+            try { guide = new Clutter.Clone({source: actor, reactive: false}); }
+            catch { /* An unavailable texture falls back to the application footprint. */ }
+        }
+        if (!guide) {
+            const app = Shell.WindowTracker.get_default().get_window_app(w);
+            guide = new St.BoxLayout({style_class: 'snaptess-placement-ghost', reactive: false,
+                x_align: Clutter.ActorAlign.CENTER, y_align: Clutter.ActorAlign.CENTER});
+            this.setGuideRadius(guide, w, 12);
+            guide.add_child(app?.create_icon_texture(24) ??
+                new St.Icon({icon_name: 'application-x-executable-symbolic', icon_size: 24}));
+            guide.add_child(new St.Label({text: app?.get_name() ?? 'Window'}));
+        }
         guide.set_position(from.x, from.y); guide.set_size(from.width, from.height);
+        guide.opacity = 145;
         global.window_group.add_child(guide);
         this.motionGuides.add(guide);
         if (record) record.motionGuide = guide;
-        guide.ease({x: to.x, y: to.y, width: to.width, height: to.height, opacity: 80,
-            duration: 230, mode: Clutter.AnimationMode.EASE_OUT_QUAD, onComplete: () => {
+        guide.ease({x: to.x, y: to.y, width: to.width, height: to.height, opacity: 0,
+            duration: VISUAL.move, mode: Clutter.AnimationMode.EASE_OUT_QUAD, onComplete: () => {
                 this.motionGuides.delete(guide);
                 if (record?.motionGuide === guide) record.motionGuide = null;
                 guide.destroy();
             }});
     }
-    hideDragGuides() {
-        this.dragSourceGuide?.hide(); this.dragTargetGuide?.hide(); this.dragFlow?.hide();
-        this.dragSourceWindow = null; this.dragTargetWindow = null;
-        this.dragFlowKey = null;
-    }
-    showDragGuides(w, targetWindow, source, target) {
-        if (!source) return;
-        this.showRect(this.dragSourceGuide, source);
-        this.showRect(this.dragTargetGuide, target);
-        this.dragSourceWindow = w; this.dragTargetWindow = targetWindow;
-        this.setGuideRadius(this.dragSourceGuide, w, 14);
-        this.setGuideRadius(this.dragTargetGuide, targetWindow, 14);
-        const key = `${target.x}:${target.y}:${targetWindow ? this.appId(targetWindow) : 'free'}`;
-        if (this.dragFlowKey !== key) {
-            this.dragFlowKey = key;
-            this.dragFlow.destroy_all_children();
-            const sourceApp = Shell.WindowTracker.get_default().get_window_app(w);
-            const targetApp = targetWindow ? Shell.WindowTracker.get_default().get_window_app(targetWindow) : null;
-            this.dragFlow.add_child(sourceApp?.create_icon_texture(22) ??
-                new St.Icon({icon_name: 'application-x-executable-symbolic', icon_size: 22}));
-            this.dragFlow.add_child(new St.Label({text: targetWindow ? '⇄' : '→'}));
-            if (targetWindow) this.dragFlow.add_child(targetApp?.create_icon_texture(22) ??
-                new St.Icon({icon_name: 'application-x-executable-symbolic', icon_size: 22}));
-            else this.dragFlow.add_child(new St.Icon({icon_name: 'view-grid-symbolic', icon_size: 22}));
-        }
-        this.dragFlow.set_position(Math.round(target.x + target.width / 2 - 42), target.y + target.height - 54);
-        this.dragFlow.show();
+    clearMotionGuides() {
+        for (const guide of this.motionGuides) guide.destroy();
+        this.motionGuides.clear();
+        for (const record of this.records.values()) record.motionGuide = null;
     }
     updateBorder() {
-        const w = global.display.focus_window;
+        const w = this.swapMode ? this.swapWindow : global.display.focus_window;
         const record = this.records.get(w);
         if (!this.running || this.drag?.started || this.studio || Main.overview.visible || !record || record.floating ||
             w.minimized || w.fullscreen || w.get_maximize_flags() || !this.settings.get_boolean('active-border') ||
             !this.windows(w.get_monitor()).includes(w)) {
-            this.border.hide(); return;
+            this.border.hide(); this.borderFocusWindow = null; return;
         }
         if (record.radiusDirty) this.queueWindowRadius(w, record.windowRadius ? 120 : 0);
         if (!record.windowRadius) {
@@ -1468,14 +1504,32 @@ export default class SnapTess extends Extension {
             }
             if (!record.radiusFallbackReady &&
                 (record.radiusPending || record.radiusTimer || record.radiusAttempts < 3)) {
-                this.border.hide();
+                this.border.hide(); this.borderFocusWindow = null;
                 return;
             }
         }
-        const borderColor = this.swapMode ? '#62a0ea' : this.accentColor();
+        const borderColor = this.accentColor();
+        const swapping = this.swapMode && this.swapWindow === w;
         const scale = this.windowActor(w)?.get_scale()?.[0] ?? 1;
+        const newFocus = this.borderFocusWindow !== w;
+        const modeChanged = this.borderSwapActive !== swapping;
+        if (newFocus || modeChanged) {
+            this.border.remove_all_transitions();
+            if (newFocus) this.border.opacity = this.settings.get_boolean('animations') ? 0 : swapping ? 255 : 205;
+        }
         this.border.setOutline(borderColor, record.windowRadius, scale);
-        this.border.setFrame(this.visualWindowRect(w), this.borderMonitorScale(w));
+        this.border.setFrame(this.visualWindowRect(w), this.borderMonitorScale(w), swapping);
+        this.borderFocusWindow = w;
+        this.borderSwapActive = swapping;
+        if ((newFocus || modeChanged) && this.settings.get_boolean('animations'))
+            this.border.ease({opacity: swapping ? 255 : newFocus ? 255 : 205, duration: VISUAL.quick,
+                mode: Clutter.AnimationMode.EASE_OUT_QUAD,
+                onComplete: () => {
+                    if (newFocus && this.borderFocusWindow === w && !this.borderSwapActive)
+                        this.border.ease({opacity: 205, duration: VISUAL.quick,
+                            mode: Clutter.AnimationMode.EASE_OUT_QUAD});
+                }});
+        else this.border.opacity = swapping ? 255 : 205;
         this.stackWindowOverlays(w);
     }
     stackWindowOverlays(w) {
@@ -1520,7 +1574,7 @@ export default class SnapTess extends Extension {
         this.actionsShowTimer = this.later(delay, () => {
             this.actionsShowTimer = 0;
             this.pendingActionWindow = null;
-            if (global.display.focus_window === w) this.showWindowActions();
+            if (global.display.focus_window === w) this.showWindowActionHandle();
         });
     }
     hideWindowActions() {
@@ -1593,6 +1647,7 @@ export default class SnapTess extends Extension {
         this.windowActions.set_position(rect.x + Math.max(4, rect.width - 52),
             rect.y + Math.max(8, Math.round((rect.height - height) / 2)));
         this.floatAction[record.floating ? 'add_style_class_name' : 'remove_style_class_name']('selected');
+        this.floatAction.set_style(record.floating ? `background-color: ${this.accentFill(0.24)};` : null);
         this.floatAction.child.icon_name = record.floating ? 'view-grid-symbolic' : 'window-pop-out-symbolic';
         this.floatAction._snaptessTooltip = record.floating ? 'Tile window' : 'Float window';
         this.maximizeAction.child.icon_name = w.get_maximize_flags() ? 'window-restore-symbolic' : 'window-maximize-symbolic';
@@ -1612,6 +1667,7 @@ export default class SnapTess extends Extension {
     focusChanged() {
         if (this.drag && !global.display.is_grabbed()) this.grabEnd();
         else {
+            this.hideWindowActions();
             this.updateBorder();
             const w = global.display.focus_window;
             if (w) this.queueWindowActions(w);
@@ -1674,6 +1730,7 @@ export default class SnapTess extends Extension {
             this.history = this.swapHistory ?? this.history;
             this.tile(false);
         }
+        this.hideSwapGuides();
         if (this.swapGrab) Main.popModal(this.swapGrab);
         this.swapGrab = null;
         this.swapActor?.destroy();
@@ -1695,7 +1752,7 @@ export default class SnapTess extends Extension {
         const rects = layout(this.area(w.get_monitor()), slots.length, this.options(w.get_monitor()));
         const to = directionalSlot(rects, from, direction);
         if (to < 0 || this.reservedPinnedSlot(w.get_monitor(), to, slots)) return;
-        this.showSwapGuides(rects[from], rects[to], direction, w, slots[to]);
+        this.showSwapGuides(rects[from], rects[to], w, slots[to]);
         if (!this.swapChanged) {
             this.checkpoint();
             this.swapChanged = true;
@@ -1707,21 +1764,44 @@ export default class SnapTess extends Extension {
     createSpaceTransition(monitor, oldSpace, newSpace, outgoing, incoming) {
         const geometry = Main.layoutManager.monitors[monitor];
         if (!geometry) return null;
-        for (const previous of this.spaceTransitions) previous.destroy();
-        this.spaceTransitions.clear();
+        for (const previous of this.spaceTransitions) if (previous._snaptessMonitor === monitor) {
+            this.spaceDots.delete(previous._snaptessDot);
+            this.spaceTransitions.delete(previous);
+            previous.destroy();
+        }
         const layer = new St.Widget({layout_manager: new Clutter.FixedLayout(), reactive: false,
             width: global.stage.width, height: global.stage.height});
+        layer._snaptessMonitor = monitor;
         const backdrop = new St.Widget({style_class: 'snaptess-space-backdrop', reactive: false});
         backdrop.set_position(geometry.x, geometry.y); backdrop.set_size(geometry.width, geometry.height);
         layer.add_child(backdrop);
         const direction = newSpace > oldSpace ? 1 : -1;
-        const shift = Math.round(geometry.width * 0.16);
+        const shift = Math.round(geometry.width * 0.09);
         const clones = [];
         const addClone = (w, entering) => {
             const actor = this.windowActor(w), record = this.records.get(w);
             if (!actor || !record) return;
             const rect = record.tileRect ?? w.get_frame_rect();
-            const clone = new Clutter.Clone({source: actor, reactive: false});
+            let clone = null;
+            if (actor.visible) {
+                try {
+                    const frame = this.visualWindowRect(w);
+                    const content = actor.paint_to_content(new Mtk.Rectangle({
+                        x: Math.round(frame.x), y: Math.round(frame.y),
+                        width: Math.max(1, Math.round(frame.width)),
+                        height: Math.max(1, Math.round(frame.height)),
+                    }));
+                    if (content?.get_texture?.()) clone = new Clutter.Actor({content, reactive: false});
+                } catch { /* A client without a paintable frame uses its icon instead. */ }
+            }
+            if (!clone) {
+                const app = Shell.WindowTracker.get_default().get_window_app(w);
+                clone = new St.BoxLayout({style_class: 'snaptess-placement-ghost', reactive: false,
+                    x_align: Clutter.ActorAlign.CENTER, y_align: Clutter.ActorAlign.CENTER});
+                clone.add_child(app?.create_icon_texture(32) ??
+                    new St.Icon({icon_name: 'application-x-executable-symbolic', icon_size: 32}));
+                clone.add_child(new St.Label({text: app?.get_name() ?? 'Window'}));
+            }
             clone.set_position(rect.x + (entering ? direction * shift : 0), rect.y);
             clone.set_size(rect.width, rect.height);
             clone.opacity = entering ? 0 : 255;
@@ -1730,51 +1810,66 @@ export default class SnapTess extends Extension {
         };
         outgoing.forEach(w => addClone(w, false));
         incoming.forEach(w => addClone(w, true));
-        const osdLabel = new St.Label({text: `SPACE ${newSpace + 1}`, style_class: 'snaptess-space-osd-label'});
-        osdLabel.clutter_text.ellipsize = Pango.EllipsizeMode.NONE;
-        osdLabel.clutter_text.single_line_mode = true;
-        osdLabel.clutter_text.set_line_alignment(Pango.Alignment.CENTER);
+        const osdContent = new St.BoxLayout({orientation: Clutter.Orientation.VERTICAL,
+            style_class: 'snaptess-space-osd-content', x_align: Clutter.ActorAlign.CENTER});
+        const dots = new St.BoxLayout({style_class: 'snaptess-space-dots', x_align: Clutter.ActorAlign.CENTER});
+        for (let i = 0; i < 3; i++) {
+            const dot = new St.Widget({style_class: `snaptess-space-dot${i === newSpace ? ' active' : ''}`,
+                width: 8, height: 8});
+            if (i === newSpace) { layer._snaptessDot = dot; this.spaceDots.add(dot); }
+            dots.add_child(dot);
+        }
+        osdContent.add_child(dots);
+        osdContent.add_child(new St.Label({text: `Space ${newSpace + 1} · Display ${monitor + 1}`,
+            style_class: 'snaptess-space-osd-label'}));
         const osd = new St.Bin({style_class: 'snaptess-space-osd', reactive: false,
             x_align: Clutter.ActorAlign.CENTER, y_align: Clutter.ActorAlign.CENTER,
-            child: osdLabel});
-        osd.set_position(Math.round(geometry.x + geometry.width / 2 - 140),
-            Math.round(geometry.y + geometry.height / 2 - 43));
-        osd.set_size(280, 86); layer.add_child(osd);
+            child: osdContent});
+        osd.set_position(Math.round(geometry.x + geometry.width / 2 - 90), geometry.y + 72);
+        osd.set_size(180, 64); layer.add_child(osd);
         global.window_group.add_child(layer);
         this.spaceTransitions.add(layer);
+        layer._snaptessDot?.set_style(`background-color: ${this.accentColor()};`);
         return {layer, backdrop, osd, clones, direction, shift};
     }
     playSpaceTransition(transition) {
         if (!transition) return;
         const {layer, backdrop, osd, clones, direction, shift} = transition;
         const animated = this.settings.get_boolean('animations');
-        const duration = animated ? 230 : 0;
+        const duration = animated ? VISUAL.space : 0;
         if (animated) {
             backdrop.opacity = 0;
-            backdrop.ease({opacity: 238, duration: 90, mode: Clutter.AnimationMode.EASE_OUT_QUAD});
-            osd.opacity = 0; osd.set_scale(0.92, 0.92);
-            osd.ease({opacity: 255, scale_x: 1, scale_y: 1, duration: 150,
+            backdrop.ease({opacity: 150, duration: 90, mode: Clutter.AnimationMode.EASE_OUT_QUAD});
+            osd.opacity = 0;
+            osd.ease({opacity: 255, duration: VISUAL.quick,
                 mode: Clutter.AnimationMode.EASE_OUT_QUAD});
-        }
-        for (const {clone, rect, entering} of clones) {
+        } else { backdrop.opacity = 0; for (const {clone} of clones) clone.opacity = 0; }
+        if (animated) for (const {clone, rect, entering} of clones) {
             clone.ease({x: entering ? rect.x : rect.x - direction * shift, opacity: entering ? 255 : 0,
                 duration, mode: Clutter.AnimationMode.EASE_OUT_QUAD});
         }
-        this.later(animated ? 260 : 700, () => {
+        if (animated) this.later(VISUAL.space, () => {
             if (!this.spaceTransitions.has(layer)) return;
-            backdrop.ease({opacity: 0, duration: animated ? 120 : 0, mode: Clutter.AnimationMode.EASE_OUT_QUAD});
-            for (const {clone} of clones) clone.ease({opacity: 0, duration: animated ? 120 : 0,
+            backdrop.ease({opacity: 0, duration: 110, mode: Clutter.AnimationMode.EASE_OUT_QUAD});
+            for (const {clone} of clones) clone.ease({opacity: 0, duration: 110,
                 mode: Clutter.AnimationMode.EASE_OUT_QUAD});
         });
-        this.later(animated ? 1050 : 1200, () => {
+        this.later(VISUAL.osd, () => {
             if (!this.spaceTransitions.has(layer)) return;
             const finish = () => {
-                this.spaceTransitions.delete(layer); layer.destroy(); this.updatePinnedPlaceholders();
+                this.spaceTransitions.delete(layer);
+                this.spaceDots.delete(layer._snaptessDot);
+                layer.destroy(); this.updatePinnedPlaceholders();
             };
-            if (animated) osd.ease({opacity: 0, scale_x: 0.96, scale_y: 0.96, duration: 150,
+            if (animated) osd.ease({opacity: 0, duration: 100,
                 mode: Clutter.AnimationMode.EASE_OUT_QUAD, onComplete: finish});
             else finish();
         });
+    }
+    clearSpaceTransitions() {
+        for (const layer of this.spaceTransitions) layer.destroy();
+        this.spaceTransitions.clear();
+        this.spaceDots.clear();
     }
 
     switchSpace(space, monitor = this.currentMonitor()) {
@@ -1798,7 +1893,6 @@ export default class SnapTess extends Extension {
             if (!this.spaces.has(workspace)) this.spaces.set(workspace, new Map());
             this.spaces.get(workspace).set(monitor, space);
         } finally { this.busy = false; }
-        this.spaceMenu.label.text = `Monitor spaces · ${space + 1}`;
         this.tile(false);
         this.updatePanelStatus();
         this.playSpaceTransition(transition);
@@ -1817,6 +1911,7 @@ export default class SnapTess extends Extension {
         this.drag = {window: w, monitor: w.get_monitor(), target: null,
             checkpoint: this.captureCheckpoint(), startX, startY,
             started: op === Meta.GrabOp.KEYBOARD_MOVING, blocked: false};
+        if (this.drag.started) this.setPreviewApp(w);
         const tick = () => {
             if (!this.drag) return;
             if (!global.display.is_grabbed()) {
@@ -1830,6 +1925,7 @@ export default class SnapTess extends Extension {
                     return;
                 }
                 this.drag.started = true;
+                this.setPreviewApp(w);
             }
             this.border.hide(); this.hideWindowActions();
             const monitor = Main.layoutManager.monitors.findIndex(m => x >= m.x && x < m.x + m.width && y >= m.y && y < m.y + m.height);
@@ -1842,7 +1938,7 @@ export default class SnapTess extends Extension {
                     if (this.reservedPinnedSlot(monitor, index, slots)) {
                         this.drag.target = null;
                         this.drag.blocked = true;
-                        this.preview.hide(); this.previewLabel.hide(); this.hideDragGuides();
+                        this.preview.hide(); this.previewLabel.hide();
                         this.dragTimer = this.later(32, tick);
                         return;
                     }
@@ -1856,32 +1952,22 @@ export default class SnapTess extends Extension {
                     const targetWindow = visualWindow ?? slots[index];
                     this.drag.target = {monitor, index, window: targetWindow};
                     this.showRect(this.preview, rects[index]);
-                    this.previewWindow = targetWindow;
-                    this.setGuideRadius(this.preview, targetWindow, 16);
-                    const from = slots.indexOf(w);
-                    const sourceRect = this.records.get(w)?.tileRect ?? (from >= 0 ? rects[from] : null);
-                    if (targetWindow === w) this.hideDragGuides();
-                    else this.showDragGuides(w, targetWindow, sourceRect, destination);
-                    let arrow = '';
-                    if (from >= 0 && from !== index) {
-                        const a = rects[from], b = rects[index];
-                        const dx = b.x - a.x, dy = b.y - a.y;
-                        arrow = Math.abs(dx) >= Math.abs(dy) ? (dx > 0 ? ' →' : ' ←') : (dy > 0 ? ' ↓' : ' ↑');
-                    }
+                    this.previewWindow = w;
+                    this.setGuideRadius(this.preview, w, 16);
                     if (targetWindow === w) {
                         this.previewLabel.hide();
                     } else {
                         const action = targetWindow
-                            ? `Swap with ${this.appId(targetWindow).replace(/\.desktop$/, '')}`
-                            : 'Move to free tile';
-                        this.previewLabel.text = `Tile ${String(index + 1).padStart(2, '0')}${arrow} · ${action}`;
+                            ? `Swap · ${this.appId(targetWindow).replace(/\.desktop$/i, '')}`
+                            : 'Move here';
+                        this.previewLabel.text = action;
                         this.previewLabel.set_position(rects[index].x + 12, rects[index].y + 12);
                         this.previewLabel.show();
                     }
                 }
             } else {
                 this.drag.blocked = false;
-                this.drag.target = null; this.preview.hide(); this.previewLabel.hide(); this.hideDragGuides();
+                this.drag.target = null; this.preview.hide(); this.previewLabel.hide();
             }
             this.dragTimer = this.later(32, tick);
         };
@@ -1891,7 +1977,7 @@ export default class SnapTess extends Extension {
         if (!this.drag) return;
         this.cancel(this.dragTimer); this.dragTimer = 0;
         const {window: w, target, monitor: source, checkpoint, startX, startY, started, blocked} = this.drag;
-        this.drag = null; this.preview.hide(); this.previewLabel.hide(); this.hideDragGuides();
+        this.drag = null; this.preview.hide(); this.previewLabel.hide();
         if (!this.records.has(w)) { this.updatePinnedPlaceholders(); return; }
         if (started === false) {
             const [x, y] = global.get_pointer();
@@ -1941,6 +2027,8 @@ export default class SnapTess extends Extension {
     }
 
     monitorsChanged() {
+        this.rebuildMonitorMenus();
+        this.updatePanelStatus();
         if (!this.running) return;
         this.exitSwap(false);
         this.clearPinnedPlaceholders();
@@ -2040,10 +2128,8 @@ export default class SnapTess extends Extension {
             for (const id of r.signals) w.disconnect(id);
         }
         this.records.clear();
-        for (const guide of this.motionGuides) guide.destroy();
-        this.motionGuides.clear();
-        for (const transition of this.spaceTransitions) transition.destroy();
-        this.spaceTransitions.clear();
+        this.clearMotionGuides();
+        this.clearSpaceTransitions();
         this.border.destroy();
         this.windowActionHandle.destroy();
         this.windowActions.destroy();
@@ -2053,9 +2139,6 @@ export default class SnapTess extends Extension {
         Main.layoutManager.removeChrome(this.swapFromGuide); this.swapFromGuide.destroy();
         Main.layoutManager.removeChrome(this.swapToGuide); this.swapToGuide.destroy();
         Main.layoutManager.removeChrome(this.swapArrow); this.swapArrow.destroy();
-        Main.layoutManager.removeChrome(this.dragSourceGuide); this.dragSourceGuide.destroy();
-        Main.layoutManager.removeChrome(this.dragTargetGuide); this.dragTargetGuide.destroy();
-        Main.layoutManager.removeChrome(this.dragFlow); this.dragFlow.destroy();
         this.indicator.destroy();
         this.settings = null;
     }

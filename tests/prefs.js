@@ -1,7 +1,7 @@
 import Adw from 'gi://Adw?version=1';
 import Gtk from 'gi://Gtk?version=4.0';
+import Gdk from 'gi://Gdk?version=4.0';
 import Gio from 'gi://Gio';
-import GLib from 'gi://GLib';
 
 Gio.resources_register(Gio.Resource.load('/usr/share/gnome-shell/org.gnome.Shell.Extensions.src.gresource'));
 const {default: Preferences} = await import('../prefs.js');
@@ -17,16 +17,23 @@ const appId = appInfo.get_id(), legacyId = appId.slice(0, -8);
 settings.set_strv('scaled-apps', [legacyId, appId, 'custom-test.window']);
 const window = new Adw.PreferencesWindow();
 prefs.fillPreferencesWindow(window);
-const entries = [], apps = [], groups = [], spins = [];
+const entries = [], apps = [], groups = [], spins = [], previews = [], shortcutLabels = [], recordButtons = [];
 function visit(widget) {
     if (widget instanceof Adw.EntryRow) entries.push(widget);
     if (widget instanceof Adw.ExpanderRow) apps.push(widget);
     if (widget instanceof Adw.PreferencesGroup) groups.push(widget);
     if (widget instanceof Adw.SpinRow) spins.push(widget);
+    if (widget instanceof Gtk.DrawingArea && widget.tooltip_text?.includes('Focus layout preview')) previews.push(widget);
+    if (widget instanceof Gtk.ShortcutLabel) shortcutLabels.push(widget);
+    if (widget instanceof Gtk.Button && widget.tooltip_text?.startsWith('Record ')) recordButtons.push(widget);
     for (let child = widget.get_first_child(); child; child = child.get_next_sibling()) visit(child);
 }
 visit(window);
 if (entries.length !== 11) throw new Error(`Expected search and 10 shortcut rows, got ${entries.length}`);
+if (previews.length !== 1 || shortcutLabels.length !== 10 || recordButtons.length !== 10)
+    throw new Error('Live layout preview or native shortcut controls are missing');
+if (previews[0].get_content_width() !== 220 || previews[0].get_content_height() !== 116)
+    throw new Error('Focus layout preview has no usable geometry');
 const ratio = spins.find(row => row.title === 'Focus column width');
 if (!ratio || ratio.value !== Math.round(settings.get_double('master-ratio') * 100))
     throw new Error('Focus ratio is not presented as a percentage');
@@ -85,7 +92,27 @@ toggle.text = 'invalid-shortcut'; toggle.emit('apply');
 if (settings.get_strv('toggle')[0] !== original) throw new Error('Invalid accelerator was saved');
 toggle.text = '<Super>t'; toggle.emit('apply');
 if (settings.get_strv('toggle')[0] !== '<Super>t') throw new Error('Valid accelerator was not saved');
+if (!shortcutLabels.some(label => label.accelerator === '<Super>t'))
+    throw new Error('Shortcut display did not follow an edited accelerator');
 toggle.text = ''; toggle.emit('apply');
 if (settings.get_strv('toggle').length !== 0) throw new Error('Shortcut could not be disabled');
+recordButtons[0].emit('clicked');
+if (recordButtons[0].icon_name !== 'media-playback-stop-symbolic')
+    throw new Error('Shortcut recorder did not enter capture mode');
+const controllers = recordButtons[0].observe_controllers();
+const recorder = Array.from({length: controllers.get_n_items()}, (_, i) => controllers.get_item(i))
+    .find(controller => controller instanceof Gtk.EventControllerKey);
+if (!recorder) throw new Error('Shortcut recorder has no keyboard controller');
+recorder.emit('key-pressed', Gdk.KEY_t, 0, Gdk.ModifierType.CONTROL_MASK);
+if (settings.get_strv('toggle')[0] !== '<Control>t')
+    throw new Error('Recorded shortcut was not saved');
+recordButtons[0].emit('clicked');
+recorder.emit('key-pressed', Gdk.KEY_Escape, 0, 0);
+if (settings.get_strv('toggle')[0] !== '<Control>t')
+    throw new Error('Cancelling shortcut capture changed the saved shortcut');
+recordButtons[0].emit('clicked');
+recorder.emit('key-pressed', Gdk.KEY_BackSpace, 0, 0);
+if (settings.get_strv('toggle').length !== 0)
+    throw new Error('Shortcut capture could not disable a binding');
 window.destroy();
 print('SNAPTESS_PREFS_TESTS_PASSED');

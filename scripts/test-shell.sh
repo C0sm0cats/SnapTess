@@ -17,6 +17,9 @@ trap 'rm -rf -- "$test_data_home"' EXIT
 mkdir -p "$test_data_home/dbus-1/services"
 printf '[D-BUS Service]\nName=org.gnome.Shell.PerfHelper\nExec=%s\n' "$perf_helper" > \
     "$test_data_home/dbus-1/services/org.gnome.Shell.PerfHelper.service"
+monitor_args=()
+if [[ "${SNAPTESS_TWO_MONITORS:-0}" == 1 ]]; then monitor_args=(--wrap "$PWD/scripts/two-monitors.sh"); fi
 XDG_DATA_HOME="$test_data_home" timeout 55s dbus-run-session -- \
     gnome-shell-test-tool --headless --disable-animations \
+    "${monitor_args[@]}" \
     --extension dist/snaptess@c0sm0cats.github.io.shell-extension.zip tests/shell.js

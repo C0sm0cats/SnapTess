@@ -3,6 +3,7 @@ import Gio from 'gi://Gio';
 import Gtk from 'gi://Gtk';
 import Gdk from 'gi://Gdk';
 import {ExtensionPreferences} from 'resource:///org/gnome/Shell/Extensions/js/extensions/prefs.js';
+import {layout} from './lib/layout.js';
 
 function appAliases(id) {
     const aliases = [id];
@@ -40,6 +41,39 @@ export default class SnapTessPreferences extends ExtensionPreferences {
         });
         window.connect('destroy', () => settings.disconnect(ratioChanged));
         appearance.add(ratio);
+        const previewRow = new Adw.ActionRow({title: 'Focus layout preview',
+            subtitle: 'Three windows · updates with spacing and column width'});
+        const preview = new Gtk.DrawingArea({valign: Gtk.Align.CENTER});
+        preview.set_content_width(220);
+        preview.set_content_height(116);
+        preview.set_tooltip_text('Live three-window Focus layout preview');
+        preview.set_draw_func((_area, cr, width, height) => {
+            const dark = Adw.StyleManager.get_default().dark;
+            cr.setSourceRGBA(...(dark ? [0.12, 0.16, 0.19, 1] : [0.90, 0.93, 0.95, 1]));
+            cr.rectangle(0, 0, width, height); cr.fill();
+            const factor = width / 800;
+            const rects = layout({x: 0, y: 0, width, height}, 3, {
+                preset: 'master', gap: Math.round(settings.get_int('gap') * factor),
+                padding: Math.round(settings.get_int('padding') * factor),
+                ratio: settings.get_double('master-ratio')});
+            rects.forEach((rect, index) => {
+                cr.setSourceRGBA(...(dark
+                    ? index === 0 ? [0.29, 0.51, 0.75, 1] : [0.37, 0.43, 0.48, 1]
+                    : index === 0 ? [0.26, 0.48, 0.70, 1] : [0.68, 0.75, 0.80, 1]));
+                cr.rectangle(rect.x, rect.y, rect.width, rect.height); cr.fill();
+            });
+        });
+        previewRow.add_suffix(preview);
+        appearance.add(previewRow);
+        const previewChanged = settings.connect('changed', (_s, key) => {
+            if (['gap', 'padding', 'master-ratio'].includes(key)) preview.queue_draw();
+        });
+        const styleManager = Adw.StyleManager.get_default();
+        const themeChanged = styleManager.connect('notify::dark', () => preview.queue_draw());
+        window.connect('destroy', () => {
+            settings.disconnect(previewChanged);
+            styleManager.disconnect(themeChanged);
+        });
         const behavior = new Adw.PreferencesGroup({title: 'Keep your flow'}); page.add(behavior);
         for (const [key, title] of [['active-border', 'Highlight the focused window'], ['animations', 'Animate placement guides'],
             ['compact-minimize', 'Close gaps when minimizing'], ['compact-close', 'Close gaps when closing']]) {
@@ -122,12 +156,17 @@ export default class SnapTessPreferences extends ExtensionPreferences {
             refreshGroups();
         });
         const shortcuts = new Adw.PreferencesGroup({title: 'Keyboard shortcuts',
-            description: 'Example: Ctrl + Alt + T. Leave blank to disable.'});
+            description: 'Record a combination, edit the text, or clear it to disable.'});
         page.add(shortcuts);
         for (const [key, title] of [['toggle', 'Toggle tiling'], ['retile', 'Arrange again'], ['studio', 'Open Layout Studio'],
             ['floating', 'Float focused window'], ['swap', 'Swap mode'], ['undo', 'Undo'],
             ['space-1', 'Monitor space 1'], ['space-2', 'Monitor space 2'], ['space-3', 'Monitor space 3'], ['stop', 'Stop and restore']]) {
             const row = new Adw.EntryRow({title, text: settings.get_strv(key)[0] ?? '', show_apply_button: true});
+            const shortcutLabel = new Gtk.ShortcutLabel({accelerator: row.text, disabled_text: 'Off'});
+            row.add_suffix(shortcutLabel);
+            const recordButton = new Gtk.Button({icon_name: 'media-record-symbolic',
+                valign: Gtk.Align.CENTER, tooltip_text: `Record ${title.toLowerCase()}`});
+            row.add_suffix(recordButton);
             row.connect('apply', () => {
                 const value = row.text.trim();
                 const [valid, keyval, mods] = Gtk.accelerator_parse(value);
@@ -136,7 +175,35 @@ export default class SnapTessPreferences extends ExtensionPreferences {
                     row.add_css_class('error'); window.add_toast(new Adw.Toast({title: 'Use a valid shortcut with Ctrl, Alt or Super.'})); return;
                 }
                 row.remove_css_class('error'); settings.set_strv(key, value ? [value] : []);
+                shortcutLabel.accelerator = value;
             });
+            let recording = false;
+            const finishRecording = () => {
+                recording = false;
+                recordButton.icon_name = 'media-record-symbolic';
+            };
+            recordButton.connect('clicked', () => {
+                recording = true;
+                recordButton.icon_name = 'media-playback-stop-symbolic';
+                recordButton.grab_focus();
+                window.add_toast(new Adw.Toast({title: 'Press a shortcut · Esc cancels · Backspace disables'}));
+            });
+            const controller = new Gtk.EventControllerKey();
+            controller.connect('key-pressed', (_controller, keyval, _keycode, state) => {
+                if (!recording) return false;
+                if (keyval === Gdk.KEY_Escape) { finishRecording(); return true; }
+                if (keyval === Gdk.KEY_BackSpace || keyval === Gdk.KEY_Delete) {
+                    row.text = ''; row.emit('apply'); finishRecording(); return true;
+                }
+                const mods = state & (Gdk.ModifierType.CONTROL_MASK | Gdk.ModifierType.ALT_MASK |
+                    Gdk.ModifierType.SUPER_MASK | Gdk.ModifierType.SHIFT_MASK);
+                if (!Gtk.accelerator_valid(keyval, mods) || !(mods &
+                    (Gdk.ModifierType.CONTROL_MASK | Gdk.ModifierType.ALT_MASK | Gdk.ModifierType.SUPER_MASK)))
+                    return true;
+                row.text = Gtk.accelerator_name(keyval, mods);
+                row.emit('apply'); finishRecording(); return true;
+            });
+            recordButton.add_controller(controller);
             shortcuts.add(row);
         }
         const info = new Adw.PreferencesGroup({title: 'Three spaces, per display',
