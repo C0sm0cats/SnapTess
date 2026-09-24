@@ -41,6 +41,7 @@ export default class SnapTess extends Extension {
         this.drag = null;
         this.swapMode = false;
         this.borderSwapActive = false;
+        this.stopRestoreEpoch = 0;
         this.loadProfiles();
         this.loadSavedLayouts();
         this.deletedLayouts = [];
@@ -765,6 +766,7 @@ export default class SnapTess extends Extension {
 
     setRunning(value, silent = false) {
         if (this.running === value) return;
+        const restoreEpoch = ++this.stopRestoreEpoch;
         this.running = value;
         this.switchItem.setToggleState(value);
         this.indicator[value ? 'add_style_class_name' : 'remove_style_class_name']('snaptess-on');
@@ -776,6 +778,7 @@ export default class SnapTess extends Extension {
             this.exitSwap(false); this.drag = null; this.hideGuides(); this.clearPinnedPlaceholders();
             this.clearMotionGuides();
             this.clearSpaceTransitions();
+            const pendingRestores = [];
             this.busy = true;
             try {
                 for (const [w, r] of this.records) {
@@ -783,14 +786,35 @@ export default class SnapTess extends Extension {
                     this.cancel(r.settleTimer); r.settleTimer = 0;
                     r.restorePending = false; r.restoreUntil = 0; r.restoreQuietUntil = 0;
                     if (r.parked || r.restoreParked) { w.unminimize(); r.parked = false; r.restoreParked = false; }
-                    if (r.original) this.restore(w, r.original);
+                    if (r.original) {
+                        const staleFrame = w.get_frame_rect();
+                        const original = r.original;
+                        this.restore(w, original);
+                        if (!original.tileRect && !original.maximized && !original.minimized &&
+                            ['x', 'y', 'width', 'height'].some(key => staleFrame[key] !== original[key]))
+                            pendingRestores.push({w, staleFrame, original});
+                    }
                     r.scaleMinimum = null;
                     r.original = null; r.space = 0;
                 }
             } finally { this.busy = false; }
+            this.scheduleStoppedRestoreRetries(pendingRestores, restoreEpoch);
             this.groups.clear(); this.spaces.clear(); this.history = [];
         }
         this.updatePanelStatus();
+    }
+
+    scheduleStoppedRestoreRetries(pending, epoch) {
+        if (!pending.length) return;
+        for (const delay of [220, 650]) this.later(delay, () => {
+            if (this.running || this.stopRestoreEpoch !== epoch || global.display.is_grabbed()) return;
+            for (const {w, staleFrame, original} of pending) {
+                if (!this.records.has(w) || w.fullscreen) continue;
+                const frame = w.get_frame_rect();
+                if (['x', 'y', 'width', 'height'].every(key => frame[key] === staleFrame[key]))
+                    this.requestWindowGeometry(w, 'original-state-retry', original);
+            }
+        });
     }
 
     schedule(compact) {
