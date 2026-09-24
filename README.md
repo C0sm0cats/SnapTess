@@ -25,6 +25,7 @@ SnapTess is a standalone GNOME Shell extension. It starts paused: enabling it do
 - **Drag to snap:** move a tiled window by its title bar, see the translucent target, and release. Same-display drops swap; cross-display drops insert and reflow both displays.
 - **Three spaces per display:** independent window groups within each native GNOME workspace. Switching parks windows with native minimization; stopping reveals and restores them.
 - **Stay in control:** floating windows, app exclusions, configurable compaction, maximize/fullscreen freeze, focused-window outline, animated guides, saved layout/app order, and ten-level arrangement undo.
+- **Pinned slots:** a compact card marks a reserved tile when its app is minimized or closed. Click it to restore the window or reopen the app; unpinned empty tiles stay clear.
 
 ## Install
 
