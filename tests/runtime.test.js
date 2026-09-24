@@ -26,6 +26,7 @@ function harness() {
         set_scale(x, y) { scaleWrites.push([x, y]); this.scale_x = x; this.scale_y = y; },
     };
     const workspace = {};
+    const shellMain = {layoutManager: {monitors: [{}]}, notify() {}};
     const w = {
         fullscreen: false, flags: 0, minimized: false,
         get_frame_rect: () => ({...frame}),
@@ -47,7 +48,7 @@ function harness() {
         Date: class extends Date { static now() { return now; } },
         GLib: {file_get_contents() { throw new Error('trace disabled'); },
             uuid_string_random: () => 'saved-layout-id'},
-        Main: {layoutManager: {monitors: [{}]}, notify() {}},
+        Main: shellMain,
         Shell: {AppSystem: {get_default: () => ({lookup_app: id => id === 'test.desktop'
             ? {get_app_info: () => ({launch: () => { launches.push(id); return true; }})} : null})}},
         Meta: {WindowType: {NORMAL: 0}, GrabOp: {MOVING: 1, KEYBOARD_MOVING: 2}},
@@ -94,6 +95,7 @@ function harness() {
         requests.length = 0; scaleWrites.length = 0;
     }
     return {app, w, actor, record, requests, scaleWrites, userOps, launches, slot, timers, advance, commit, special,
+        shellMain,
         effectsDone, settleInitial, frame: () => frame, grab: value => { grabbed = value; },
         monitor: value => { monitor = value; }, pointer: (x, y) => { pointer = [x, y]; }};
 }
@@ -144,6 +146,69 @@ test('always-floating applications never start tile drag feedback', () => {
     h.pointer(200, 140); h.advance(64);
     assert.equal(h.app.drag, null);
     assert.equal(h.timers.size, 0);
+});
+
+test('dragging over a vacant pinned tile keeps its card and rejects the drop', () => {
+    const h = harness(), app = h.app; h.settleInitial(); h.grab(true);
+    h.shellMain.layoutManager.monitors[0] = {x: 0, y: 0, width: 800, height: 600};
+    app.key = () => 'workspace'; app.profileKey = () => 'profile';
+    app.groups = new Map([['workspace', [h.w, null]]]);
+    app.profiles = {profile: {pinned: [null, 'reserved.desktop']}};
+    app.windows = () => [h.w];
+    app.area = () => ({x: 0, y: 0, width: 800, height: 600});
+    app.options = () => ({preset: 'split', gap: 0, padding: 0});
+    app.captureCheckpoint = () => ({});
+    let clears = 0, placements = 0, previews = 0;
+    app.pinnedPlaceholders = new Map([['0:1', {button: {destroy() { clears++; }}}]]);
+    app.border = {hide() {}}; app.hideWindowActions = () => {};
+    app.hideDragGuides = () => {};
+    app.preview = {hide() {}, show() { previews++; }};
+    app.previewLabel = {hide() {}};
+    app.queueWindowActions = () => {};
+    app.pushCheckpoint = () => assert.fail('reserved drop must not create undo history');
+    app.place = (w, rect) => { assert.equal(w, h.w); assert.deepEqual(rect, h.record.tileRect); placements++; };
+    const rects = geometry.layout(app.area(), 2, app.options());
+    const target = rects[1];
+    app.grabBegin(h.w, 1);
+    h.pointer(target.x + target.width / 2, target.y + target.height / 2); h.advance(32);
+    assert.equal(app.drag.blocked, true);
+    assert.equal(app.drag.target, null);
+    assert.equal(clears, 0);
+    assert.equal(app.pinnedPlaceholders.size, 1);
+    assert.equal(previews, 0);
+    app.updatePinnedPlaceholders();
+    assert.equal(app.pinnedPlaceholders.size, 1);
+    app.updatePinnedPlaceholders = () => {};
+    h.grab(false); app.grabEnd();
+    assert.equal(placements, 1);
+    assert.equal(app.groups.get('workspace')[1], null);
+});
+
+test('keyboard swap does not enter a vacant pinned tile', () => {
+    const h = harness(), app = h.app;
+    app.key = () => 'workspace'; app.profileKey = () => 'profile';
+    app.groups = new Map([['workspace', [h.w, null]]]);
+    app.profiles = {profile: {pinned: [null, 'reserved.desktop']}};
+    app.area = () => ({x: 0, y: 0, width: 800, height: 600});
+    app.options = () => ({preset: 'split', gap: 0, padding: 0});
+    app.swapWindow = h.w; app.swapKey = 'workspace'; app.swapChanged = false;
+    app.showSwapGuides = () => assert.fail('reserved slot must not show swap feedback');
+    app.checkpoint = () => assert.fail('reserved slot must not create undo history');
+    const rects = geometry.layout(app.area(), 2, app.options());
+    const direction = rects[1].x > rects[0].x ? 'right' : 'down';
+    app.swapDirection(direction);
+    assert.deepEqual(app.groups.get('workspace'), [h.w, null]);
+    assert.equal(app.swapChanged, false);
+    app.profiles.profile.pinned[1] = null;
+    let guides = 0, checkpoints = 0, tiles = 0;
+    app.showSwapGuides = () => guides++;
+    app.checkpoint = () => checkpoints++;
+    app.tile = () => tiles++;
+    app.swapDirection(direction);
+    assert.deepEqual(app.groups.get('workspace'), [null, h.w]);
+    assert.equal(guides, 1);
+    assert.equal(checkpoints, 1);
+    assert.equal(tiles, 1);
 });
 
 test('automatic reflow omits motion guides while explicit tiling keeps them', () => {

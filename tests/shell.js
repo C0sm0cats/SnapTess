@@ -283,6 +283,13 @@ export async function run() {
         global.window_group.get_children().indexOf(app.windowActor(windows[1])),
         'the pinned card stays behind real windows');
     assert(app.pinnedPlaceholders.size===2,'ordinary unpinned vacancies have no card');
+    assert(app.reservedPinnedSlot(0,0) && app.reservedPinnedSlot(0,4),
+        'minimized and closed pinned tiles are reserved drag and swap targets');
+    app.drag={started:true}; app.updatePinnedPlaceholders();
+    assert(app.pinnedPlaceholders.get('0:0')===placeholder &&
+        app.pinnedPlaceholders.get('0:4')?.button.visible,
+    'reserved tiles stay visible while a window is dragged');
+    app.drag=null;
     if (GLib.getenv('SNAPTESS_PIN_SCREENSHOT')) {
         const stream=Gio.File.new_for_path(GLib.getenv('SNAPTESS_PIN_SCREENSHOT'))
             .replace(null,false,Gio.FileCreateFlags.NONE,null);

@@ -865,9 +865,14 @@ export default class SnapTess extends Extension {
         return {window: null, state: matches.length ? 'OPEN ELSEWHERE' : 'CLOSED'};
     }
 
+    reservedPinnedSlot(monitor, index, slots = this.groups.get(this.key(monitor)) ?? []) {
+        return Boolean(this.profiles?.[this.profileKey(monitor)]?.pinned?.[index] && !slots[index]);
+    }
+
     updatePinnedPlaceholders() {
         if (!this.pinnedPlaceholders) return;
-        if (!this.running || this.studio || this.drag?.started || Main.overview.visible || this.spaceTransitions.size) {
+        if (this.drag?.started) return;
+        if (!this.running || this.studio || Main.overview.visible || this.spaceTransitions.size) {
             this.clearPinnedPlaceholders();
             return;
         }
@@ -1689,7 +1694,7 @@ export default class SnapTess extends Extension {
         if (from < 0) { this.exitSwap(false); return; }
         const rects = layout(this.area(w.get_monitor()), slots.length, this.options(w.get_monitor()));
         const to = directionalSlot(rects, from, direction);
-        if (to < 0) return;
+        if (to < 0 || this.reservedPinnedSlot(w.get_monitor(), to, slots)) return;
         this.showSwapGuides(rects[from], rects[to], direction, w, slots[to]);
         if (!this.swapChanged) {
             this.checkpoint();
@@ -1811,7 +1816,7 @@ export default class SnapTess extends Extension {
         const [startX, startY] = global.get_pointer();
         this.drag = {window: w, monitor: w.get_monitor(), target: null,
             checkpoint: this.captureCheckpoint(), startX, startY,
-            started: op === Meta.GrabOp.KEYBOARD_MOVING};
+            started: op === Meta.GrabOp.KEYBOARD_MOVING, blocked: false};
         const tick = () => {
             if (!this.drag) return;
             if (!global.display.is_grabbed()) {
@@ -1825,7 +1830,6 @@ export default class SnapTess extends Extension {
                     return;
                 }
                 this.drag.started = true;
-                this.clearPinnedPlaceholders();
             }
             this.border.hide(); this.hideWindowActions();
             const monitor = Main.layoutManager.monitors.findIndex(m => x >= m.x && x < m.x + m.width && y >= m.y && y < m.y + m.height);
@@ -1835,6 +1839,14 @@ export default class SnapTess extends Extension {
                 const rects = layout(this.area(monitor), slots.length, this.options(monitor));
                 const index = nearestSlot(rects, x, y);
                 if (index >= 0) {
+                    if (this.reservedPinnedSlot(monitor, index, slots)) {
+                        this.drag.target = null;
+                        this.drag.blocked = true;
+                        this.preview.hide(); this.previewLabel.hide(); this.hideDragGuides();
+                        this.dragTimer = this.later(32, tick);
+                        return;
+                    }
+                    this.drag.blocked = false;
                     const destination = rects[index];
                     const visualWindow = this.windows(monitor).find(candidate => {
                         if (candidate === w) return false;
@@ -1868,6 +1880,7 @@ export default class SnapTess extends Extension {
                     }
                 }
             } else {
+                this.drag.blocked = false;
                 this.drag.target = null; this.preview.hide(); this.previewLabel.hide(); this.hideDragGuides();
             }
             this.dragTimer = this.later(32, tick);
@@ -1877,13 +1890,20 @@ export default class SnapTess extends Extension {
     grabEnd() {
         if (!this.drag) return;
         this.cancel(this.dragTimer); this.dragTimer = 0;
-        const {window: w, target, monitor: source, checkpoint, startX, startY, started} = this.drag;
+        const {window: w, target, monitor: source, checkpoint, startX, startY, started, blocked} = this.drag;
         this.drag = null; this.preview.hide(); this.previewLabel.hide(); this.hideDragGuides();
         if (!this.records.has(w)) { this.updatePinnedPlaceholders(); return; }
         if (started === false) {
             const [x, y] = global.get_pointer();
             if ((x - startX) ** 2 + (y - startY) ** 2 >= 64) this.tile(true);
             else this.updateBorder();
+            this.queueWindowActions(w);
+            return;
+        }
+        if (blocked || target && this.reservedPinnedSlot(target.monitor, target.index)) {
+            this.place(w, this.records.get(w).tileRect);
+            this.updateBorder();
+            this.updatePinnedPlaceholders();
             this.queueWindowActions(w);
             return;
         }
