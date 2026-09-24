@@ -713,6 +713,11 @@ export async function run() {
         assert(app.groups.get(app.key(0)).filter(Boolean).length===4,'studio assignment reflows target');
         assert(app.groups.get(app.key(1)).filter(Boolean).length===0,'studio assignment reflows source');
     }
+    windows.forEach((w,i)=>{
+        const r=app.records.get(w)?.original,s=originals[i];
+        assert(r && r.x===s.x && r.y===s.y && r.width===s.width && r.height===s.height &&
+            r.tileRect===null, `stop retains original snapshot for ${i}: ${JSON.stringify(r)}`);
+    });
     app.setRunning(false); await pause();
     assert(app.motionGuides.size===0 && app.spaceTransitions.size===0 && app.spaceDots.size===0,
         'pausing removes short-lived visual actors');
