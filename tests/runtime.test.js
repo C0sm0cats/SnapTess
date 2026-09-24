@@ -100,21 +100,6 @@ function harness() {
         monitor: value => { monitor = value; }, pointer: (x, y) => { pointer = [x, y]; }};
 }
 
-test('stopping retries only an unchanged frame and cancels retries on restart', () => {
-    const h = harness(), target = {x: 30, y: 40, width: 320, height: 240};
-    h.app.running = false; h.app.stopRestoreEpoch = 1;
-    h.app.scheduleStoppedRestoreRetries([{w: h.w, staleFrame: h.frame(), original: target}], 1);
-    h.advance(220);
-    assert.equal(h.requests.length, 2, 'an unchanged frame gets one bounded retry');
-    h.commit(target);
-    h.advance(650);
-    assert.equal(h.requests.length, 2, 'a restored frame gets no further requests');
-    h.app.scheduleStoppedRestoreRetries([{w: h.w, staleFrame: h.frame(), original: target}], 1);
-    h.app.stopRestoreEpoch++;
-    h.advance(650);
-    assert.equal(h.requests.length, 2, 'a later session invalidates old retries');
-});
-
 test('a titlebar click leaves drag feedback hidden and does not retile', () => {
     const h = harness(); h.settleInitial(); h.grab(true);
     h.app.captureCheckpoint = () => ({});

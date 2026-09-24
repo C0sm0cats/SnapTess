@@ -23,6 +23,8 @@ jobs:
           gnome-shell --version | grep -E '^GNOME Shell 50\.'
       - name: GNOME Shell 50 and GTK preferences integration tests
         run: ./scripts/test-shell.sh
+      - name: GNOME Shell 50 two-monitor integration test
+        run: SNAPTESS_TWO_MONITORS=1 ./scripts/test-shell.sh
       - uses: actions/upload-artifact@v4
         with:
           name: snaptess-extension

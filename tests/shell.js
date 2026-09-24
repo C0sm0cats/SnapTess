@@ -19,7 +19,12 @@ export async function run() {
         assert(Main.layoutManager.monitors.length>=2,'two-monitor test environment did not start');
     await Scripting.sleep(1200);
     Main.overview.hide(); await pause();
-    const entry=Main.extensionManager.lookup('snaptess@c0sm0cats.github.io');
+    let entry;
+    for (let i=0;i<30;i++) {
+        entry=Main.extensionManager.lookup('snaptess@c0sm0cats.github.io');
+        if (entry?.stateObj) break;
+        await Scripting.sleep(100);
+    }
     assert(entry?.stateObj, `extension loaded (${JSON.stringify(entry?.errors)})`);
     const loader=entry.stateObj;
     const hotRoot=Gio.File.new_for_path(GLib.build_filenamev([
@@ -704,12 +709,14 @@ export async function run() {
     app.studio.dialog.close();
     if (Main.layoutManager.monitors.length > 1) {
         app.applyProfile(1,0,'auto',[windows[0]]); await pause();
-        assert(windows[0].get_monitor()===1,'studio assignment moves across monitors');
+        assert(windows[0].get_monitor()===1,
+            `studio assignment moves across monitors: frame ${geometry(windows[0])}, record ${JSON.stringify(app.records.get(windows[0])?.tileRect)}`);
         app.switchSpace(1,1); await pause();
         assert(windows[0].minimized && windows.slice(1).every(w=>!w.minimized),'spaces independent per monitor');
         app.switchSpace(0,1); await pause();
         app.applyProfile(0,0,'auto',windows); await pause();
-        assert(windows[0].get_monitor()===0,'studio assignment returns to the primary monitor');
+        assert(windows[0].get_monitor()===0,
+            `studio assignment returns to the primary monitor: frame ${geometry(windows[0])}, record ${JSON.stringify(app.records.get(windows[0])?.tileRect)}`);
         assert(app.groups.get(app.key(0)).filter(Boolean).length===4,'studio assignment reflows target');
         assert(app.groups.get(app.key(1)).filter(Boolean).length===0,'studio assignment reflows source');
     }
