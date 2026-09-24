@@ -584,7 +584,9 @@ export default class SnapTess extends Extension {
                 Number.isInteger(item.slotCount) && item.slotCount > 0 && item.slotCount <= 30 &&
                 (item.preset === 'auto' || item.slotCount <= capacity(item.preset)) &&
                 Array.isArray(item.pinned) && item.pinned.length <= item.slotCount &&
-                item.pinned.every(id => id === null || typeof id === 'string')) : [];
+                item.pinned.every(id => id === null || typeof id === 'string') &&
+                (item.apps === undefined || (Array.isArray(item.apps) && item.apps.length <= item.slotCount &&
+                    item.apps.every(id => id === null || typeof id === 'string')))) : [];
         } catch { this.savedLayouts = []; }
     }
     saveLayout(name, preset, windows, pins) {
@@ -592,10 +594,11 @@ export default class SnapTess extends Extension {
         if (!name || this.savedLayouts.some(layout => layout.name.toLowerCase() === name.toLowerCase())) return false;
         const slotCount = Math.max(windows.length, pins.length, capacity(preset), 1);
         if (slotCount > 30 || (preset !== 'auto' && slotCount > capacity(preset))) return false;
-        const pinned = Array.from({length: slotCount}, (_, i) => windows[i]
-            ? this.appId(windows[i]) || pins[i] || null : pins[i] || null);
+        const apps = Array.from({length: slotCount}, (_, i) =>
+            (windows[i] && this.appId(windows[i])) || pins[i] || null);
+        const pinned = Array.from({length: slotCount}, (_, i) => pins[i] || null);
         const id = GLib.uuid_string_random();
-        this.savedLayouts.push({id, name, preset, slotCount, pinned});
+        this.savedLayouts.push({id, name, preset, slotCount, apps, pinned});
         this.settings.set_string('saved-layouts', JSON.stringify(this.savedLayouts));
         this.deletedLayouts?.splice(0);
         return id;
@@ -631,14 +634,16 @@ export default class SnapTess extends Extension {
     savedLayoutPlan(layout, monitor, space) {
         const candidates = this.layoutCandidates(monitor, space), used = new Set();
         const normalize = id => (id ?? '').replace(/\.desktop$/i, '').toLowerCase();
-        const slots = layout.pinned.map(id => {
+        // Older templates used pinned for every saved app; keep their restore behavior.
+        const apps = layout.apps ?? layout.pinned;
+        const slots = apps.map(id => {
             if (!id) return null;
             const found = candidates.find(w => !used.has(w) && normalize(this.appId(w)) === normalize(id));
             if (found) used.add(found);
             return found ?? null;
         });
         while (slots.length < layout.slotCount) slots.push(null);
-        const missing = [...new Set(layout.pinned.filter((id, i) => id && !slots[i]))];
+        const missing = [...new Set(apps.filter((id, i) => id && !slots[i]))];
         return {slots, missing, extras: candidates.filter(w => !used.has(w) &&
             (!w.minimized || this.records.get(w)?.parked || this.records.get(w)?.restoreParked))};
     }

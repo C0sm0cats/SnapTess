@@ -441,16 +441,23 @@ export async function run() {
     app.openStudio(); await pause();
     const savedStudio=app.studio;
     savedStudio.drafts.set('0:0',[windows[0],windows[1]]);
-    savedStudio.draftPins.set('0:0',[]);
+    savedStudio.draftPins.set('0:0',[app.appId(windows[0]),null]);
     savedStudio.preset='split';
     savedStudio.nameEntry.set_text('Test pair');
     savedStudio.saveCurrentLayout();
     const saved=app.savedLayouts.find(item=>item.name==='Test pair');
     assert(saved?.preset==='split' && saved.slotCount===2 &&
-        saved.pinned[0]===app.appId(windows[0]) && saved.pinned[1]===app.appId(windows[1]),
-    'Studio saves a named template independently of the current space profile');
+        saved.apps[0]===app.appId(windows[0]) && saved.apps[1]===app.appId(windows[1]) &&
+        saved.pinned[0]===app.appId(windows[0]) && !saved.pinned[1],
+    'Studio saves both app placement and only the explicit pin');
     assert(savedStudio.previewSavedId===saved.id && savedStudio.canvas.get_n_children()===2 &&
         savedStudio.savedActions.visible,'Studio previews the selected saved layout before restore');
+    const savedCards=savedStudio.canvas.get_children();
+    const hasPinBadge=card=>card.get_child().get_children().some(child=>
+        child.has_style_class_name?.('snaptess-state-badges') && child.get_children().some(badge=>
+            badge.has_style_class_name('snaptess-pinned-badge')));
+    assert(hasPinBadge(savedCards[0]) && !hasPinBadge(savedCards[1]),
+        'saved preview shows PINNED only on the tile explicitly pinned in Current space');
     assert(savedStudio.savedPicker.has_style_class_name('selected') &&
         !savedStudio.currentViewButton.has_style_class_name('selected') &&
         savedStudio.savedPicker.label.includes('Test pair') && savedStudio.savedChooserList,
@@ -502,6 +509,9 @@ export async function run() {
         app.records.get(windows[2]).restoreParked && app.records.get(windows[3]).restoreParked &&
         app.profiles[app.profileKey(0,0)].slotCount===2,
     'explicit restore minimizes extras without closing them and keeps the template capacity');
+    assert(app.profiles[app.profileKey(0,0)].pinned[0]===app.appId(windows[0]) &&
+        !app.profiles[app.profileKey(0,0)].pinned[1],
+    'restoring a saved layout does not pin an unpinned app');
     app.undo(); await pause();
     assert(!windows[2].minimized && !windows[3].minimized &&
         JSON.stringify(app.profiles[app.profileKey(0,0)])===beforeRestore,
