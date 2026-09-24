@@ -1,3 +1,4 @@
+import Clutter from 'gi://Clutter';
 import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
 import Meta from 'gi://Meta';
@@ -14,9 +15,16 @@ async function waitRuntime(loader) {
     return loader.runtime;
 }
 export async function run() {
+    if (GLib.getenv('SNAPTESS_TWO_MONITORS'))
+        assert(Main.layoutManager.monitors.length>=2,'two-monitor test environment did not start');
     await Scripting.sleep(1200);
     Main.overview.hide(); await pause();
-    const entry=Main.extensionManager.lookup('snaptess@c0sm0cats.github.io');
+    let entry;
+    for (let i=0;i<30;i++) {
+        entry=Main.extensionManager.lookup('snaptess@c0sm0cats.github.io');
+        if (entry?.stateObj) break;
+        await Scripting.sleep(100);
+    }
     assert(entry?.stateObj, `extension loaded (${JSON.stringify(entry?.errors)})`);
     const loader=entry.stateObj;
     const hotRoot=Gio.File.new_for_path(GLib.build_filenamev([
@@ -41,6 +49,18 @@ export async function run() {
         'tray disables arrangement actions while SnapTess is paused');
     app.setRunning(true); await pause();
     assert(app.groups.get(app.key(0)).length===4,'four tiled slots');
+    assert(app.statusItem.label.text.includes('ON') && app.monitorMenus.length===Main.layoutManager.monitors.length &&
+        app.monitorMenus[0].menu.label.text.includes('Display 1') &&
+        app.monitorMenus[0].spaces.length===3,
+        'panel separates global state from monitor layout and Space controls');
+    if (GLib.getenv('SNAPTESS_PANEL_SCREENSHOT')) {
+        app.indicator.menu.open(); await Scripting.sleep(160);
+        const stream=Gio.File.new_for_path(GLib.getenv('SNAPTESS_PANEL_SCREENSHOT'))
+            .replace(null,false,Gio.FileCreateFlags.NONE,null);
+        const m=Main.layoutManager.monitors[0];
+        await new Shell.Screenshot().screenshot_area(m.x,m.y,m.width,m.height,stream);
+        stream.close(null); app.indicator.menu.close();
+    }
     app.updateMenuSensitivity();
     assert(app.arrangeItem.sensitive && app.spaceMenu.sensitive && app.stopItem.sensitive,
         'tray enables global arrangement actions while SnapTess is active');
@@ -49,6 +69,18 @@ export async function run() {
         const a=rects[i],b=rects[j];
         assert(a.x+a.width<=b.x || b.x+b.width<=a.x || a.y+a.height<=b.y || b.y+b.height<=a.y,'non-overlapping native frames');
     }
+    const addMotionGuide=app.motionGuides.add.bind(app.motionGuides);
+    let placementGhostKind=null;
+    app.motionGuides.add=guide=> {
+        placementGhostKind=guide instanceof Clutter.Clone ||
+            guide.has_style_class_name?.('snaptess-placement-ghost');
+        return addMotionGuide(guide);
+    };
+    app.animatePlacement(windows[0],rects[0],{...rects[0],x:rects[0].x+80});
+    app.motionGuides.add=addMotionGuide;
+    assert(placementGhostKind,'placement feedback uses a window clone or icon fallback');
+    await Scripting.sleep(240);
+    assert(app.motionGuides.size===0,'placement ghost is destroyed after its transition');
     windows[0].activate(global.get_current_time()); await pause();
     app.updateMenuSensitivity();
     assert(app.floatItem.sensitive && app.swapItem.sensitive,
@@ -132,15 +164,38 @@ export async function run() {
     assert(Math.abs(app.border.width-(restored.width+2*bw))<=1 &&
         Math.abs(app.border.height-(restored.height+2*bw))<=1,
         'focus border returns to the full frame after an animation');
-    app.setGuideRadius(app.dragSourceGuide,windows[0],14);
-    assert(app.dragSourceGuide.get_style().includes('0px 0px 20px 20px'),
-        'drag source mirrors the independently measured top and bottom corners');
+    app.setGuideRadius(app.preview,windows[0],14);
+    assert(app.preview.get_style().includes('0px 0px 20px 20px'),
+        'target ghost mirrors the independently measured top and bottom corners');
     borderRecord.windowRadius=borderRadius;
     app.updateBorder();
-    app.showDragGuides(windows[0],windows[1],rects[0],rects[1]);
-    assert(app.dragSourceGuide.visible && app.dragTargetGuide.visible && app.dragFlow.visible &&
-        app.dragFlow.get_children().length===3,'drag feedback shows source, target and application flow');
-    app.hideDragGuides();
+    app.setPreviewApp(windows[0]);
+    app.showRect(app.preview,rects[1]);
+    app.previewWindow=windows[0];
+    app.setGuideRadius(app.preview,windows[0],16);
+    assert(app.preview.visible && app.preview.has_style_class_name('snaptess-target-ghost') &&
+        app.previewContent.get_n_children()===2,
+        'drag feedback uses one accent target ghost with source application identity');
+    const originalAccent=app.accentColor.bind(app);
+    app.accentColor=()=> '#a051c3';
+    app.refreshAccentStyles();
+    assert(app.preview.get_style().includes('#a051c3') && app.border.strokeColor==='#a051c3',
+        'runtime accent changes recolor the ghost and focus border');
+    app.accentColor=originalAccent;
+    app.refreshAccentStyles();
+    if (GLib.getenv('SNAPTESS_DRAG_SCREENSHOT')) {
+        app.previewLabel.text='Swap · Test window';
+        app.previewLabel.set_position(rects[1].x+12,rects[1].y+12);
+        app.previewLabel.show();
+        await Scripting.sleep(90);
+        const stream=Gio.File.new_for_path(GLib.getenv('SNAPTESS_DRAG_SCREENSHOT'))
+            .replace(null,false,Gio.FileCreateFlags.NONE,null);
+        const m=Main.layoutManager.monitors[0];
+        await new Shell.Screenshot().screenshot_area(m.x,m.y,m.width,m.height,stream);
+        stream.close(null);
+        app.previewLabel.hide();
+    }
+    app.preview.hide();
     const stubborn=windows[0], stubbornRecord=app.records.get(stubborn);
     app.settings.set_strv('scaled-apps', [...app.settings.get_strv('scaled-apps'), app.appId(stubborn)]);
     const stubbornTarget={...stubbornRecord.tileRect};
@@ -177,7 +232,8 @@ export async function run() {
         'effects completion preserves the repaired or fitted scale');
     stubborn.activate(global.get_current_time()); await pause();
     app.actionWindow=null; app.hideWindowActions(); app.windowsRestacked(); await Scripting.sleep(160);
-    assert(app.windowActions.visible,'client restacking can reveal actions without a focus notification');
+    assert(app.windowActionHandle.visible && !app.windowActions.visible,
+        'client restacking reveals the subtle handle without opening the palette');
     app.hideWindowActions();
     app.showWindowActions();
     assert(app.windowActions.visible && app.windowActions.get_children().length===4,
@@ -330,12 +386,35 @@ export async function run() {
     assert(app.pinnedPlaceholders.size===0,'clearing pins removes every placeholder');
     app.switchSpace(1,0);
     assert(app.spaceTransitions.size===1,'space switch uses the custom SnapTess transition');
+    const spaceLayer=[...app.spaceTransitions][0];
+    assert(spaceLayer._snaptessMonitor===0 && spaceLayer._snaptessDot && app.spaceDots.has(spaceLayer._snaptessDot),
+        'Space OSD identifies the affected monitor and active Space');
+    assert(spaceLayer.get_n_children()>2,'Space transition retains outgoing window footprints');
+    await Scripting.sleep(650);
+    assert(app.spaceTransitions.has(spaceLayer),'Space OSD remains readable after the window transition');
     await pause();
     assert(windows.every(w=>w.minimized),'space parks windows');
     app.switchSpace(0,0);
     assert(app.spaceTransitions.size===1,'reverse space switch uses the custom transition');
+    if (GLib.getenv('SNAPTESS_SPACE_SCREENSHOT')) {
+        await Scripting.sleep(100);
+        const stream=Gio.File.new_for_path(GLib.getenv('SNAPTESS_SPACE_SCREENSHOT'))
+            .replace(null,false,Gio.FileCreateFlags.NONE,null);
+        const m=Main.layoutManager.monitors[0];
+        await new Shell.Screenshot().screenshot_area(m.x,m.y,m.width,m.height,stream);
+        stream.close(null);
+    }
     await pause();
     assert(windows.every(w=>!w.minimized),'space restores parked windows');
+    const animationSetting=app.settings.get_boolean('animations');
+    app.settings.set_boolean('animations',false);
+    const guideCount=app.motionGuides.size;
+    app.animatePlacement(windows[0],{x:0,y:0,width:200,height:100},{x:300,y:0,width:200,height:100});
+    assert(app.motionGuides.size===guideCount,'animations=false creates no placement actor');
+    app.showRect(app.preview,{x:0,y:0,width:120,height:80});
+    assert(app.preview.opacity===255,'animations=false leaves overlays fully opaque');
+    app.preview.hide();
+    app.settings.set_boolean('animations',animationSetting);
     windows[0].activate(global.get_current_time()); await pause();
     app.toggleFloating(); await pause();
     assert(app.records.get(windows[0]).floating,'floating enabled');
@@ -358,8 +437,12 @@ export async function run() {
     const direction=slotBefore%2===0?'right':'left';
     const reverse=direction==='right'?'left':'right';
     const historyBeforeSwap=app.history.length;
+    const normalSwapBorderWidth=app.border.strokeWidth;
     app.toggleSwap();
     assert(app.swapMode,'swap mode entered');
+    assert(app.border.visible && app.border.strokeWidth>normalSwapBorderWidth &&
+        app.border.bandWidth>0 && app.borderSwapActive,
+        'swap mode emphasizes the focused window immediately');
     app.swapDirection(direction); await pause();
     assert(app.groups.get(app.key(0)).indexOf(windows[0])!==slotBefore,'keyboard swap changes slot');
     const swapHistoryLength=app.history.length;
@@ -369,6 +452,10 @@ export async function run() {
     assert(app.history.length===swapHistoryLength,'multiple swap moves share one undo checkpoint');
     app.exitSwap(false); await pause();
     assert(!app.swapMode,'cancel exits swap mode');
+    assert(!app.swapFromGuide.visible && !app.swapToGuide.visible && !app.swapArrow.visible,
+        'cancel clears swap target feedback immediately');
+    assert(app.border.strokeWidth===normalSwapBorderWidth && app.border.bandWidth===0 && !app.borderSwapActive,
+        'cancel restores the normal focus outline');
     assert(app.groups.get(app.key(0)).indexOf(windows[0])===slotBefore,'cancel restores original slot');
     assert(app.history.length===historyBeforeSwap,'cancel removes swap undo checkpoint');
     app.toggleSwap();
@@ -377,6 +464,10 @@ export async function run() {
     assert(committedSlot!==slotBefore,'second swap session changes slot');
     app.exitSwap(true); await pause();
     assert(!app.swapMode,'commit exits swap mode');
+    assert(!app.swapFromGuide.visible && !app.swapToGuide.visible && !app.swapArrow.visible,
+        'commit clears swap target feedback immediately');
+    assert(app.border.strokeWidth===normalSwapBorderWidth && app.border.bandWidth===0 && !app.borderSwapActive,
+        'commit restores the normal focus outline');
     assert(app.groups.get(app.key(0)).indexOf(windows[0])===committedSlot,'commit keeps swapped slot');
     assert(app.history.length===historyBeforeSwap+1,'commit keeps one undo checkpoint');
     app.undo(); await pause();
@@ -618,16 +709,30 @@ export async function run() {
     app.studio.dialog.close();
     if (Main.layoutManager.monitors.length > 1) {
         app.applyProfile(1,0,'auto',[windows[0]]); await pause();
-        assert(windows[0].get_monitor()===1,'studio assignment moves across monitors');
+        assert(windows[0].get_monitor()===1,
+            `studio assignment moves across monitors: frame ${geometry(windows[0])}, record ${JSON.stringify(app.records.get(windows[0])?.tileRect)}`);
         app.switchSpace(1,1); await pause();
         assert(windows[0].minimized && windows.slice(1).every(w=>!w.minimized),'spaces independent per monitor');
         app.switchSpace(0,1); await pause();
         app.applyProfile(0,0,'auto',windows); await pause();
-        assert(windows[0].get_monitor()===0,'studio assignment returns to the primary monitor');
+        assert(windows[0].get_monitor()===0,
+            `studio assignment returns to the primary monitor: frame ${geometry(windows[0])}, record ${JSON.stringify(app.records.get(windows[0])?.tileRect)}`);
         assert(app.groups.get(app.key(0)).filter(Boolean).length===4,'studio assignment reflows target');
         assert(app.groups.get(app.key(1)).filter(Boolean).length===0,'studio assignment reflows source');
     }
+    windows.forEach((w,i)=>{
+        const r=app.records.get(w)?.original,s=originals[i];
+        assert(r && r.x===s.x && r.y===s.y && r.width===s.width && r.height===s.height &&
+            r.tileRect===null, `stop retains original snapshot for ${i}: ${JSON.stringify(r)}`);
+    });
     app.setRunning(false); await pause();
+    assert(app.motionGuides.size===0 && app.spaceTransitions.size===0 && app.spaceDots.size===0,
+        'pausing removes short-lived visual actors');
+    const restoredOriginals=()=>windows.every((w,i)=>{
+        const r=w.get_frame_rect(),s=originals[i];
+        return r.x===s.x && r.y===s.y && r.width===s.width && r.height===s.height;
+    });
+    for (let i=0;i<20 && !restoredOriginals();i++) await Scripting.sleep(100);
     windows.forEach((w,i)=>{
         const r=w.get_frame_rect(),s=originals[i];
         assert(r.x===s.x && r.y===s.y && r.width===s.width && r.height===s.height,

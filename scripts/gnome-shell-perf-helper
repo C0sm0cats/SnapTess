@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+set -euo pipefail
+exec "${SNAPTESS_PERF_HELPER:?}" --idle-timeout=120 "$@"
