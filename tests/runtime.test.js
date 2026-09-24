@@ -45,7 +45,8 @@ function harness() {
     const Runtime = vm.runInNewContext(source, {
         ...geometry, Extension: class {}, console,
         Date: class extends Date { static now() { return now; } },
-        GLib: {file_get_contents() { throw new Error('trace disabled'); }},
+        GLib: {file_get_contents() { throw new Error('trace disabled'); },
+            uuid_string_random: () => 'saved-layout-id'},
         Main: {layoutManager: {monitors: [{}]}, notify() {}},
         Shell: {AppSystem: {get_default: () => ({lookup_app: id => id === 'test.desktop'
             ? {get_app_info: () => ({launch: () => { launches.push(id); return true; }})} : null})}},
@@ -302,6 +303,34 @@ test('explicit saved-layout restore launches a missing app once and claims its w
     assert.equal(app.pendingLayoutApps.size, 0);
     assert.equal(h.record.space, 0);
     assert.equal(scheduled, 1);
+});
+
+test('saved layouts keep app placement separate from explicit pins and read legacy templates', () => {
+    const h = harness(), app = h.app;
+    const other = {id: 'other.desktop'};
+    app.appId = w => w === h.w ? 'test.desktop' : w.id;
+    app.savedLayouts = [];
+    app.deletedLayouts = [];
+    let stored;
+    app.settings.set_string = (key, value) => { stored = JSON.parse(value); };
+    app.layoutCandidates = () => [h.w, other];
+    const id = app.saveLayout('Pair', 'split', [h.w, other], ['test.desktop', null]);
+    assert.equal(id, 'saved-layout-id');
+    const saved = app.savedLayouts[0];
+    assert.deepEqual(Array.from(saved.apps), ['test.desktop', 'other.desktop']);
+    assert.deepEqual(Array.from(saved.pinned), ['test.desktop', null]);
+    assert.deepEqual(Array.from(stored[0].pinned), ['test.desktop', null]);
+    app.settings.get_string = () => JSON.stringify(stored);
+    app.loadSavedLayouts();
+    assert.deepEqual(Array.from(app.savedLayouts[0].pinned), ['test.desktop', null]);
+    const plan = app.savedLayoutPlan(saved, 0, 0);
+    assert.deepEqual(Array.from(plan.slots), [h.w, other]);
+    assert.deepEqual(Array.from(plan.missing), []);
+    app.layoutCandidates = () => [h.w];
+    assert.deepEqual(Array.from(app.savedLayoutPlan(saved, 0, 0).missing), ['other.desktop']);
+    const legacy = {slotCount: 2, pinned: ['test.desktop', 'other.desktop']};
+    app.layoutCandidates = () => [h.w, other];
+    assert.deepEqual(Array.from(app.savedLayoutPlan(legacy, 0, 0).slots), [h.w, other]);
 });
 
 test('deleted named layouts undo in reverse order without touching space profiles', () => {
