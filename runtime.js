@@ -788,11 +788,11 @@ export default class SnapTess extends Extension {
         this.pending = this.later(110, () => {
             this.pending = 0;
             const value = this.pendingCompact; this.pendingCompact = false;
-            this.tile(value);
+            this.tile(value, false, false);
         });
     }
 
-    tile(compact = true, releaseMaximized = false) {
+    tile(compact = true, releaseMaximized = false, motionGuides = true) {
         if (!this.running || this.busy || this.drag) return;
         this.busy = true;
         try {
@@ -826,7 +826,7 @@ export default class SnapTess extends Extension {
                     const record = this.records.get(w);
                     record.original ??= this.snapshot(w);
                     if (releaseMaximized) w.unmaximize();
-                    this.place(w, rects[i]);
+                    this.place(w, rects[i], false, false, motionGuides);
                 });
             }
         } finally { this.busy = false; }
@@ -1023,7 +1023,7 @@ export default class SnapTess extends Extension {
             }
         });
     }
-    place(w, rect, restoring = false, force = false) {
+    place(w, rect, restoring = false, force = false, motionGuides = true) {
         if (!rect || this.isSpecialWindow(w)) return;
         this.watchWindowEffects(w);
         const actor = this.windowActor(w), record = this.records.get(w);
@@ -1055,7 +1055,7 @@ export default class SnapTess extends Extension {
             }
             return;
         }
-        if (!restoring && previousTile) this.animatePlacement(w, previousTile, rect);
+        if (motionGuides && !restoring && previousTile) this.animatePlacement(w, previousTile, rect);
         const scaled = this.scalesApp(w);
         const preserveScale = scaled && actor && record.visualScale < 0.999;
         if (!preserveScale) this.resetWindowScale(w);

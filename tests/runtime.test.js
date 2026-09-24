@@ -145,6 +145,31 @@ test('always-floating applications never start tile drag feedback', () => {
     assert.equal(h.timers.size, 0);
 });
 
+test('automatic reflow omits motion guides while explicit tiling keeps them', () => {
+    const h = harness(), app = h.app, guides = [];
+    app.groups = new Map(); app.profiles = {};
+    app.windows = () => [h.w];
+    app.key = () => '0:0:0'; app.profileKey = () => '0:0:0';
+    app.options = () => ({preset: 'auto', gap: 0, padding: 0});
+    app.area = () => ({x: 0, y: 0, width: 800, height: 600});
+    app.place = (_w, _rect, _restoring, _force, motionGuides) => guides.push(motionGuides);
+    app.updateBorder = () => {};
+    Object.getPrototypeOf(app).schedule.call(app, true);
+    h.advance(110);
+    app.tile(true);
+    assert.deepEqual(guides, [false, true]);
+});
+
+test('placement keeps automatic motion guides hidden without disabling explicit guides', () => {
+    const h = harness(); h.settleInitial();
+    let guides = 0;
+    h.app.animatePlacement = () => guides++;
+    h.app.place(h.w, {...h.slot, x: 120}, false, false, false);
+    assert.equal(guides, 0);
+    h.app.place(h.w, {...h.slot, x: 140});
+    assert.equal(guides, 1);
+});
+
 test('excluded applications match desktop IDs, aliases, and WM_CLASS', () => {
     const h = harness();
     h.w.get_wm_class = () => 'LegacyEditor';
