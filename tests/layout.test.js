@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {layout, autoLayout, fitMinimumSize, frameScalePivot, nearestSlot, directionalSlot, reconcileSlots,
-    activePinnedSlots, reserveAppSlots, PRESETS} from '../lib/layout.js';
+    activePinnedSlots, reserveAppSlots, swapNeighbor, PRESETS} from '../lib/layout.js';
 
 test('automatic layout progression, including more than 15 windows', () => {
     assert.deepEqual([1,2,3,4,5,7,10,13].map(autoLayout), ['full','split','master','2x2','3x2','3x3','4x3','5x3']);
@@ -55,6 +55,14 @@ test('directional swap follows geometric neighbors', () => {
     assert.equal(directionalSlot(r,0,'down'),2);
     assert.equal(directionalSlot(r,3,'up'),1);
     assert.equal(nearestSlot(r,999,799),3);
+    assert.equal(swapNeighbor(r,0,'right'),1);
+    assert.equal(swapNeighbor(r,0,'down'),2);
+    assert.equal(swapNeighbor(r,0,'left'),-1);
+    const withHole=[{x:0,y:0,width:100,height:100},{x:110,y:0,width:100,height:100},
+        {x:220,y:0,width:100,height:100}];
+    assert.equal(swapNeighbor(withHole,0,'right'),1);
+    assert.equal(swapNeighbor(withHole,2,'left'),1);
+    assert.equal(swapNeighbor([{x:0,y:0,width:100,height:100},{x:110,y:110,width:100,height:100}],0,'right'),-1);
 });
 test('compaction retains order and non-compact mode retains holes', () => {
     const a={},b={},c={},d={};
