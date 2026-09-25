@@ -4,6 +4,7 @@
 .snaptess-target-content { background-color: rgba(24,30,37,0.52); border-radius: 8px; padding: 7px 10px; spacing: 8px; color: #eef3f4; font-size: 11px; font-weight: 700; }
 .snaptess-source-ghost { background-color: rgba(210,220,225,0.04); border: 1px solid rgba(210,220,225,0.45); border-radius: 12px; }
 .snaptess-preview-label, .snaptess-swap-arrow { background-color: rgba(24,30,37,0.93); border: 1px solid #78aef0; border-radius: 10px; padding: 6px 10px; color: #f0f4f6; font-size: 11px; font-weight: 700; box-shadow: 0 4px 18px rgba(0,0,0,0.22); }
+.snaptess-swap-hint { background-color: rgba(24,30,37,0.94); border: 1px solid #78aef0; border-radius: 13px; color: #78aef0; font-size: 16px; font-weight: 700; box-shadow: 0 3px 12px rgba(0,0,0,0.3); }
 .snaptess-panel-status { color: #dce5e8; font-size: 11px; font-weight: 700; }
 .snaptess-menu-heading { color: #9baeb6; font-size: 10px; font-weight: 700; }
 .snaptess-window-actions { background-color: rgba(24,30,37,0.95); border: 1px solid #55636b; border-radius: 10px; padding: 7px 3px; spacing: 3px; box-shadow: 0 4px 18px rgba(0,0,0,0.28); }

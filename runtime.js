@@ -11,7 +11,7 @@ import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import * as PanelMenu from 'resource:///org/gnome/shell/ui/panelMenu.js';
 import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js';
 import {layout, PRESETS, capacity, fitMinimumSize, frameScalePivot, nearestSlot, directionalSlot, reconcileSlots,
-    activePinnedSlots, reserveAppSlots} from './lib/layout.js';
+    activePinnedSlots, reserveAppSlots, swapNeighbor} from './lib/layout.js';
 import {Studio} from './lib/studio.js';
 import {WindowBorder} from './lib/window-border.js';
 import {radiusFromPixels, radiusStyle, visualFrameRect} from './lib/window-radius.js';
@@ -84,6 +84,15 @@ export default class SnapTess extends Extension {
         this.swapFromGuide = new St.Widget({style_class: 'snaptess-source-ghost', reactive: false, visible: false});
         this.swapToGuide = new St.Widget({style_class: 'snaptess-target-ghost', reactive: false, visible: false});
         this.swapArrow = new St.Label({style_class: 'snaptess-swap-arrow', reactive: false, visible: false});
+        this.swapHints = new Map();
+        for (const [direction, symbol] of [['left', '←'], ['right', '→'], ['up', '↑'], ['down', '↓']]) {
+            const hint = new St.Bin({style_class: 'snaptess-swap-hint', reactive: false,
+                visible: false, width: 26, height: 26,
+                child: new St.Label({text: symbol, x_align: Clutter.ActorAlign.CENTER,
+                    y_align: Clutter.ActorAlign.CENTER})});
+            this.swapHints.set(direction, hint);
+            Main.layoutManager.addChrome(hint);
+        }
         this.windowActions = new St.BoxLayout({orientation: Clutter.Orientation.VERTICAL,
             style_class: 'snaptess-window-actions', reactive: true, visible: false, width: 44, height: 176});
         this.windowActionTooltip = new St.Label({style_class: 'snaptess-window-action-tooltip',
@@ -170,7 +179,7 @@ export default class SnapTess extends Extension {
         this.connect(global.stage, 'captured-event', (_stage, event) => {
             if (event.type() !== Clutter.EventType.MOTION || this.windowActions.visible) return Clutter.EVENT_PROPAGATE;
             const w = global.display.focus_window, record = this.records.get(w);
-            if (!this.running || !record || this.drag || this.studio || Main.overview.visible || w.minimized ||
+            if (!this.running || !record || this.drag || this.swapMode || this.studio || Main.overview.visible || w.minimized ||
                 w.fullscreen)
                 return Clutter.EVENT_PROPAGATE;
             const rect = this.windowActionsRect(w, record);
@@ -1249,6 +1258,7 @@ export default class SnapTess extends Extension {
                 guide === this.preview ? this.previewWindow : this.swapToWindow,
                 guide === this.preview ? 16 : 14);
         this.swapArrow?.set_style(`border-color: ${accent};`);
+        for (const hint of this.swapHints?.values() ?? []) hint.set_style(`color: ${accent}; border-color: ${accent};`);
         this.previewLabel?.set_style(`border-color: ${accent};`);
         this.indicator?.set_style(this.running ? `color: ${accent};` : null);
         for (const dot of this.spaceDots ?? []) dot.set_style(`background-color: ${accent};`);
@@ -1299,8 +1309,41 @@ export default class SnapTess extends Extension {
         }
         this.swapFromWindow = null; this.swapToWindow = null;
     }
+    hideSwapHints() {
+        for (const hint of this.swapHints?.values() ?? []) hint.hide();
+    }
+    updateSwapHints() {
+        const w = this.swapWindow, record = this.records.get(w);
+        if (!this.swapMode || !this.running || !record || record.floating || w.minimized || w.fullscreen ||
+            w.get_maximize_flags() || this.drag?.started || this.studio || Main.overview.visible) {
+            this.hideSwapHints(); return;
+        }
+        const slots = this.groups.get(this.swapKey) ?? [];
+        const from = slots.indexOf(w);
+        if (from < 0) { this.hideSwapHints(); return; }
+        const rects = layout(this.area(w.get_monitor()), slots.length, this.options(w.get_monitor()));
+        const source = rects[from], frame = this.visualWindowRect(w);
+        if (!source || !frame) { this.hideSwapHints(); return; }
+        for (const [direction, hint] of this.swapHints) {
+            const to = swapNeighbor(rects, from, direction);
+            if (to < 0 || !slots[to] || this.reservedPinnedSlot(w.get_monitor(), to, slots)) {
+                hint.hide(); continue;
+            }
+            const target = rects[to];
+            const horizontal = direction === 'left' || direction === 'right';
+            const start = horizontal ? Math.max(source.y, target.y) : Math.max(source.x, target.x);
+            const end = horizontal ? Math.min(source.y + source.height, target.y + target.height) :
+                Math.min(source.x + source.width, target.x + target.width);
+            const center = Math.max(horizontal ? frame.y + 13 : frame.x + 13,
+                Math.min((start + end) / 2, horizontal ? frame.y + frame.height - 13 : frame.x + frame.width - 13));
+            const x = horizontal ? (direction === 'left' ? frame.x : frame.x + frame.width) : center;
+            const y = horizontal ? center : (direction === 'up' ? frame.y : frame.y + frame.height);
+            hint.set_position(Math.round(x - 13), Math.round(y - 13));
+            if (!hint.visible) hint.show();
+        }
+    }
     hideGuides() {
-        this.border.hide(); this.preview.hide(); this.previewLabel.hide(); this.hideSwapGuides();
+        this.border.hide(); this.preview.hide(); this.previewLabel.hide(); this.hideSwapGuides(); this.hideSwapHints();
         this.previewWindow = null;
         this.hideWindowActions();
     }
@@ -1488,6 +1531,7 @@ export default class SnapTess extends Extension {
     updateBorder() {
         const w = this.swapMode ? this.swapWindow : global.display.focus_window;
         const record = this.records.get(w);
+        this.updateSwapHints();
         if (!this.running || this.drag?.started || this.studio || Main.overview.visible || !record || record.floating ||
             w.minimized || w.fullscreen || w.get_maximize_flags() || !this.settings.get_boolean('active-border') ||
             !this.windows(w.get_monitor()).includes(w)) {
@@ -1606,7 +1650,7 @@ export default class SnapTess extends Extension {
     }
     showWindowActionHandle(animate = false) {
         const w = global.display.focus_window, record = this.records.get(w);
-        if (!this.running || !record || this.drag || this.studio || Main.overview.visible || w.minimized ||
+        if (!this.running || !record || this.drag || this.swapMode || this.studio || Main.overview.visible || w.minimized ||
             w.fullscreen) {
             this.windowActionHandle.hide(); return;
         }
@@ -1635,7 +1679,7 @@ export default class SnapTess extends Extension {
     }
     showWindowActions() {
         const w = global.display.focus_window, record = this.records.get(w);
-        if (!this.running || !record || this.drag || this.studio || Main.overview.visible || w.minimized ||
+        if (!this.running || !record || this.drag || this.swapMode || this.studio || Main.overview.visible || w.minimized ||
             w.fullscreen) {
             this.hideWindowActions(); return;
         }
@@ -1702,6 +1746,7 @@ export default class SnapTess extends Extension {
         this.swapOriginal = [...slots];
         this.swapHistory = [...this.history];
         this.swapChanged = false;
+        this.hideWindowActions();
         this.swapActor = new St.Widget({reactive: true, can_focus: true, width: 1, height: 1});
         Main.uiGroup.add_child(this.swapActor);
         this.swapGrab = Main.pushModal(this.swapActor, {actionMode: Shell.ActionMode.NORMAL});
@@ -1724,6 +1769,7 @@ export default class SnapTess extends Extension {
         this.updateBorder();
     }
     exitSwap(commit = true) {
+        const w = this.swapWindow;
         if (!commit && this.swapMode && this.swapChanged && this.swapKey) {
             const original = (this.swapOriginal ?? []).map(w => w && this.records.has(w) ? w : null);
             this.groups.set(this.swapKey, original);
@@ -1731,6 +1777,7 @@ export default class SnapTess extends Extension {
             this.tile(false);
         }
         this.hideSwapGuides();
+        this.hideSwapHints();
         if (this.swapGrab) Main.popModal(this.swapGrab);
         this.swapGrab = null;
         this.swapActor?.destroy();
@@ -1742,6 +1789,7 @@ export default class SnapTess extends Extension {
         this.swapHistory = null;
         this.swapChanged = false;
         this.updateBorder();
+        if (this.running && global.display.focus_window === w) this.queueWindowActions(w);
     }
     swapDirection(direction) {
         const w = this.swapWindow;
@@ -2139,6 +2187,8 @@ export default class SnapTess extends Extension {
         Main.layoutManager.removeChrome(this.swapFromGuide); this.swapFromGuide.destroy();
         Main.layoutManager.removeChrome(this.swapToGuide); this.swapToGuide.destroy();
         Main.layoutManager.removeChrome(this.swapArrow); this.swapArrow.destroy();
+        for (const hint of this.swapHints.values()) { Main.layoutManager.removeChrome(hint); hint.destroy(); }
+        this.swapHints.clear();
         this.indicator.destroy();
         this.settings = null;
     }

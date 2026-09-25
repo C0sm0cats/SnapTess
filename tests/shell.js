@@ -443,8 +443,25 @@ export async function run() {
     assert(app.border.visible && app.border.strokeWidth>normalSwapBorderWidth &&
         app.border.bandWidth>0 && app.borderSwapActive,
         'swap mode emphasizes the focused window immediately');
+    assert(app.swapHints.get(direction).visible && !app.swapHints.get(reverse).visible,
+        'swap hints mark reachable neighbors on the active window only');
+    assert(app.swapHints.get(slotBefore<2?'down':'up').visible,
+        'swap hints also mark the vertical neighbor');
+    const swapFrame=app.visualWindowRect(windows[0]);
+    const swapHint=app.swapHints.get(direction);
+    assert(Math.abs(swapHint.x+13-(direction==='right' ? swapFrame.x+swapFrame.width : swapFrame.x))<=1,
+        'swap hint straddles the focused window edge');
+    if (GLib.getenv('SNAPTESS_SWAP_SCREENSHOT')) {
+        await Scripting.sleep(120);
+        const stream=Gio.File.new_for_path(GLib.getenv('SNAPTESS_SWAP_SCREENSHOT'))
+            .replace(null,false,Gio.FileCreateFlags.NONE,null);
+        const m=Main.layoutManager.monitors[0];
+        await new Shell.Screenshot().screenshot_area(m.x,m.y,m.width,m.height,stream);
+        stream.close(null);
+    }
     app.swapDirection(direction); await pause();
     assert(app.groups.get(app.key(0)).indexOf(windows[0])!==slotBefore,'keyboard swap changes slot');
+    assert(app.swapHints.get(reverse).visible,'swap hints follow the active window into its new slot');
     const swapHistoryLength=app.history.length;
     assert(swapHistoryLength===historyBeforeSwap+1,'swap session creates one undo checkpoint');
     app.swapDirection(reverse); await pause();
@@ -454,6 +471,7 @@ export async function run() {
     assert(!app.swapMode,'cancel exits swap mode');
     assert(!app.swapFromGuide.visible && !app.swapToGuide.visible && !app.swapArrow.visible,
         'cancel clears swap target feedback immediately');
+    assert([...app.swapHints.values()].every(hint=>!hint.visible),'cancel clears swap hints');
     assert(app.border.strokeWidth===normalSwapBorderWidth && app.border.bandWidth===0 && !app.borderSwapActive,
         'cancel restores the normal focus outline');
     assert(app.groups.get(app.key(0)).indexOf(windows[0])===slotBefore,'cancel restores original slot');
@@ -466,6 +484,7 @@ export async function run() {
     assert(!app.swapMode,'commit exits swap mode');
     assert(!app.swapFromGuide.visible && !app.swapToGuide.visible && !app.swapArrow.visible,
         'commit clears swap target feedback immediately');
+    assert([...app.swapHints.values()].every(hint=>!hint.visible),'commit clears swap hints');
     assert(app.border.strokeWidth===normalSwapBorderWidth && app.border.bandWidth===0 && !app.borderSwapActive,
         'commit restores the normal focus outline');
     assert(app.groups.get(app.key(0)).indexOf(windows[0])===committedSlot,'commit keeps swapped slot');
