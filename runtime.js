@@ -16,13 +16,15 @@ import {Studio} from './lib/studio.js';
 import {WindowBorder} from './lib/window-border.js';
 import {radiusFromPixels, radiusStyle, visualFrameRect} from './lib/window-radius.js';
 
-const RUNTIME_REVISION = 35;
+const RUNTIME_REVISION = 36;
 const RESTORE_STABILIZE_MS = 1400;
 const RESTORE_QUIET_MS = 120;
 const MAX_RESTORE_MOVES = 8;
 const MAX_SIZE_REPAIRS = 2;
 const SIZE_REJECTION_GRACE_MS = 1800;
 const SIZE_MISMATCH_STABLE_MS = 600;
+const ACTION_HANDLE = Object.freeze({width: 28, height: 40});
+const ACTION_PALETTE = Object.freeze({width: 44, height: 176});
 const VISUAL = Object.freeze({quick: 140, move: 210, space: 230, osd: 1300, inset: 7});
 
 export default class SnapTess extends Extension {
@@ -96,12 +98,14 @@ export default class SnapTess extends Extension {
             Main.layoutManager.addChrome(hint);
         }
         this.windowActions = new St.BoxLayout({orientation: Clutter.Orientation.VERTICAL,
-            style_class: 'snaptess-window-actions', reactive: true, visible: false, width: 44, height: 176});
+            style_class: 'snaptess-window-actions', reactive: true, visible: false,
+            width: ACTION_PALETTE.width, height: ACTION_PALETTE.height});
         this.windowActionTooltip = new St.Label({style_class: 'snaptess-window-action-tooltip',
             reactive: false, visible: false});
         this.windowActionHandle = new St.Button({style_class: 'snaptess-window-action-handle',
             accessible_name: 'Show window actions', reactive: true, can_focus: true,
-            visible: false, width: 12, height: 48});
+            visible: false, width: ACTION_HANDLE.width, height: ACTION_HANDLE.height,
+            child: new St.Icon({icon_name: 'go-next-symbolic', icon_size: 12})});
         this.windowActionHandle.connect('enter-event', () => this.showWindowActions());
         this.windowActionHandle.connect('clicked', () => this.showWindowActions());
         const actionButton = (name, icon, callback, style = '') => {
@@ -1676,7 +1680,7 @@ export default class SnapTess extends Extension {
         if (!this.windowActions.visible || !this.settings.get_boolean('animations')) {
             this.windowActions.hide(); this.showWindowActionHandle(); return;
         }
-        this.windowActions.ease({opacity: 0, translation_x: 8, duration: 120,
+        this.windowActions.ease({opacity: 0, translation_x: -8, duration: 120,
             mode: Clutter.AnimationMode.EASE_OUT_QUAD, onComplete: () => {
                 this.windowActions.hide(); this.windowActions.opacity = 255; this.windowActions.translation_x = 0;
                 this.showWindowActionHandle(true);
@@ -1704,6 +1708,15 @@ export default class SnapTess extends Extension {
         return record.floating || record.restorePending || w.get_maximize_flags()
             ? this.visualWindowRect(w) : record.tileRect ?? w.get_frame_rect();
     }
+    windowActionPosition(w, rect, size) {
+        const area = this.area(w.get_monitor());
+        const clamp = (value, min, max) => Math.min(Math.max(value, min), Math.max(min, max));
+        return {
+            x: Math.round(clamp(rect.x + 4, area.x + 6, area.x + area.width - size.width - 6)),
+            y: Math.round(clamp(rect.y + (rect.height - size.height) / 2,
+                area.y + 8, area.y + area.height - size.height - 8)),
+        };
+    }
     updateWindowActionsPosition(w) {
         if (global.display.focus_window !== w || this.actionWindow !== w) return;
         if (!this.windowActions.visible && !this.windowActionHandle.visible) return;
@@ -1711,13 +1724,14 @@ export default class SnapTess extends Extension {
         if (!record) return;
         const rect = this.windowActionsRect(w, record);
         if (this.windowActions.visible) {
-            this.windowActions.set_position(rect.x + Math.max(4, rect.width - 52),
-                rect.y + Math.max(8, Math.round((rect.height - 176) / 2)));
+            const {x, y} = this.windowActionPosition(w, rect, ACTION_PALETTE);
+            this.windowActions.set_position(x, y);
             this.windowActionTooltip.hide();
         }
-        if (this.windowActionHandle.visible)
-            this.windowActionHandle.set_position(rect.x + Math.max(2, rect.width - 14),
-                rect.y + Math.max(8, Math.round((rect.height - 48) / 2)));
+        if (this.windowActionHandle.visible) {
+            const {x, y} = this.windowActionPosition(w, rect, ACTION_HANDLE);
+            this.windowActionHandle.set_position(x, y);
+        }
     }
     showWindowActionHandle(animate = false) {
         const w = global.display.focus_window, record = this.records.get(w);
@@ -1727,8 +1741,8 @@ export default class SnapTess extends Extension {
         }
         const rect = this.windowActionsRect(w, record);
         this.actionWindow = w;
-        this.windowActionHandle.set_position(rect.x + Math.max(2, rect.width - 14),
-            rect.y + Math.max(8, Math.round((rect.height - 48) / 2)));
+        const {x, y} = this.windowActionPosition(w, rect, ACTION_HANDLE);
+        this.windowActionHandle.set_position(x, y);
         this.stackWindowOverlays(w);
         this.windowActionHandle.show();
         if (animate && this.settings.get_boolean('animations')) {
@@ -1744,8 +1758,21 @@ export default class SnapTess extends Extension {
         this.windowActionTooltip.show();
         const [, width] = this.windowActionTooltip.get_preferred_width(-1);
         const [, height] = this.windowActionTooltip.get_preferred_height(width);
-        const [x, y] = button.get_transformed_position();
-        this.windowActionTooltip.set_position(Math.round(x - width - 8), Math.round(y + (button.height - height) / 2));
+        let [x, y] = button.get_transformed_position();
+        if (!Number.isFinite(x) || !Number.isFinite(y)) {
+            const index = Math.max(0, this.windowActions.get_children().indexOf(button));
+            x = this.windowActions.x + 8;
+            y = this.windowActions.y + 8 + index * (button.height + 3);
+        }
+        const w = global.display.focus_window;
+        if (!w) return;
+        const area = this.area(w.get_monitor());
+        const right = x + button.width + 8;
+        const tooltipX = right + width <= area.x + area.width - 6 ? right : x - width - 8;
+        const tooltipY = Math.min(Math.max(y + (button.height - height) / 2, area.y + 6),
+            area.y + area.height - height - 6);
+        this.windowActionTooltip.set_position(Math.round(Math.max(area.x + 6, tooltipX)),
+            Math.round(tooltipY));
         this.stackWindowOverlays(global.display.focus_window);
     }
     showWindowActions() {
@@ -1758,9 +1785,8 @@ export default class SnapTess extends Extension {
         this.actionWindow = w;
         this.windowActionHandle.remove_all_transitions();
         this.windowActionHandle.hide();
-        const height = 176;
-        this.windowActions.set_position(rect.x + Math.max(4, rect.width - 52),
-            rect.y + Math.max(8, Math.round((rect.height - height) / 2)));
+        const {x, y} = this.windowActionPosition(w, rect, ACTION_PALETTE);
+        this.windowActions.set_position(x, y);
         this.floatAction[record.floating ? 'add_style_class_name' : 'remove_style_class_name']('selected');
         this.floatAction.set_style(record.floating ? `background-color: ${this.accentFill(0.24)};` : null);
         this.floatAction.child.icon_name = record.floating ? 'view-grid-symbolic' : 'window-pop-out-symbolic';
@@ -1773,7 +1799,7 @@ export default class SnapTess extends Extension {
         this.windowActions.show();
         if (appearing && this.settings.get_boolean('animations')) {
             this.windowActions.opacity = 0;
-            this.windowActions.translation_x = 8;
+            this.windowActions.translation_x = -8;
             this.windowActions.ease({opacity: 255, translation_x: 0, duration: 140,
                 mode: Clutter.AnimationMode.EASE_OUT_QUAD});
         }
