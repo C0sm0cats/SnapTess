@@ -455,6 +455,22 @@ export async function run() {
     app.pinnedPlaceholders.get('0:0').button.emit('clicked',1); await Scripting.sleep(250);
     assert(!windows[0].minimized && !app.pinnedPlaceholders.has('0:0'),
         'clicking a minimized pinned card restores its window and removes the card');
+    app.records.get(windows[0]).floating=true;
+    app.tile(true);
+    const floatingCard=app.pinnedPlaceholders.get('0:0');
+    assert(floatingCard?.state==='FLOATING' && floatingCard.button.reactive &&
+        floatingCard.button.accessible_name.startsWith('Tile floating window'),
+        'a floating pinned app has an actionable card');
+    app.openStudio();
+    const floatingContent=app.studio.canvas.get_children()[0].get_child().get_children();
+    assert(floatingContent[3].text==='PINNED · FLOATING',
+        'Studio identifies a floating pinned app');
+    app.studio.dialog.close();
+    app.updatePinnedPlaceholders();
+    app.pinnedPlaceholders.get('0:0').button.emit('clicked',1); await Scripting.sleep(250);
+    assert(!app.records.get(windows[0]).floating && app.groups.get(app.key(0))[0]===windows[0] &&
+        !app.pinnedPlaceholders.has('0:0'),
+        'clicking a floating pinned card retiles its window in the reserved slot');
     if (previousProfile) app.profiles[profileKey]=previousProfile;
     else delete app.profiles[profileKey];
     app.appId=originalAppId;

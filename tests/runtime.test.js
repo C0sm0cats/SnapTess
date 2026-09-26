@@ -439,7 +439,7 @@ test('saved layouts keep app placement separate from explicit pins and read lega
     assert.deepEqual(Array.from(app.savedLayoutPlan(legacy, 0, 0).slots), [h.w, other]);
 });
 
-test('pinned slot state distinguishes minimized, elsewhere, opening, and closed apps', () => {
+test('pinned slot state distinguishes minimized, floating, elsewhere, opening, and closed apps', () => {
     const h = harness(), app = h.app, record = h.record;
     app.pendingLayoutApps = new Map();
     h.w.minimized = true;
@@ -448,6 +448,8 @@ test('pinned slot state distinguishes minimized, elsewhere, opening, and closed 
     assert.equal(app.pinnedSlotState('test.desktop', 0, 0, 0).state, 'OPEN ELSEWHERE');
     record.space = 0;
     record.floating = true;
+    assert.equal(app.pinnedSlotState('test.desktop', 0, 0, 0).state, 'FLOATING');
+    record.space = 1;
     assert.equal(app.pinnedSlotState('test.desktop', 0, 0, 0).state, 'OPEN ELSEWHERE');
     app.records.delete(h.w);
     assert.equal(app.pinnedSlotState('test.desktop', 0, 0, 0).state, 'CLOSED');
