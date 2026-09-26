@@ -833,6 +833,94 @@ export async function run() {
     assert(!app.studio.undoDeleteButton.visible && !app.studio.savedActions.visible,
         'Apply retires stale deleted-layout feedback');
     app.studio.dialog.close();
+    const beforeNewProfiles=JSON.stringify(app.profiles);
+    const beforeNewSlots=[...app.groups.get(app.key(0))];
+    app.openStudio(); await pause();
+    const duplicateLayoutId=app.saveLayout('Existing for replace','full',[windows[0]],[]);
+    const newStudio=app.studio;
+    newStudio.newViewButton.emit('clicked',1);
+    assert(newStudio.creatingNew && newStudio.newLayout.preset==='2x2' &&
+        newStudio.newLayout.apps.every(id=>id===null) && newStudio.canvas.get_n_children()===4 &&
+        !newStudio.presets.get_children().some(b=>b.label==='Auto'),
+        'New layout starts blank with fixed presets only');
+    if (GLib.getenv('SNAPTESS_NEW_LAYOUT_SCREENSHOT')) {
+        await Scripting.sleep(160);
+        const stream=Gio.File.new_for_path(GLib.getenv('SNAPTESS_NEW_LAYOUT_SCREENSHOT'))
+            .replace(null,false,Gio.FileCreateFlags.NONE,null);
+        const m=Main.layoutManager.monitors[0];
+        await new Shell.Screenshot().screenshot_area(m.x,m.y,m.width,m.height,stream);
+        stream.close(null);
+    }
+    newStudio.choosePreset('auto');
+    assert(newStudio.newLayout.preset==='2x2','Auto is unavailable in New layout');
+    newStudio.canvas.get_first_child().emit('clicked',1);
+    const catalog=newStudio.canvas.get_first_child();
+    const search=catalog.get_first_child();
+    const rows=catalog.get_children()[1].get_child().get_children();
+    assert(rows.length>0 && search.hint_text==='Search installed apps',
+        'New layout offers a searchable installed-app catalog');
+    if (GLib.getenv('SNAPTESS_NEW_CATALOG_SCREENSHOT')) {
+        await Scripting.sleep(160);
+        const stream=Gio.File.new_for_path(GLib.getenv('SNAPTESS_NEW_CATALOG_SCREENSHOT'))
+            .replace(null,false,Gio.FileCreateFlags.NONE,null);
+        const m=Main.layoutManager.monitors[0];
+        await new Shell.Screenshot().screenshot_area(m.x,m.y,m.width,m.height,stream);
+        stream.close(null);
+    }
+    const appInfo=Shell.AppSystem.get_default().get_installed().find(info=>
+        info.get_id()?.endsWith('.desktop') && info.should_show());
+    const appRow=rows.find(row=>row.accessible_name===
+        `Assign ${appInfo.get_name()} (${appInfo.get_id()}) to tile 1`);
+    search.set_text(appInfo.get_id());
+    assert(appRow?.visible,'catalog search finds the installed app');
+    appRow.emit('clicked',1);
+    assert(newStudio.newLayout.apps[0]===appInfo.get_id() && !newStudio.showLibrary &&
+        newStudio.pinButton.visible && newStudio.libraryButton.visible,
+        'choosing an app assigns its ID without launching it');
+    newStudio.togglePin();
+    assert(newStudio.newLayout.pinned[0]===appInfo.get_id(),
+        'pinning is independent of app assignment');
+    newStudio.nameRow.show();
+    newStudio.nameEntry.set_text('Existing for replace');
+    newStudio.saveNamedLayout();
+    assert(newStudio.replaceRow.visible && newStudio.nameEntry.get_text()==='Existing for replace' &&
+        newStudio.creatingNew && !app.savedLayouts.some(item=>item.name==='Created from blank'),
+        'duplicate name offers replacement without discarding the new layout draft');
+    newStudio.cancelReplaceButton.emit('clicked',1);
+    assert(!newStudio.replaceRow.visible && !newStudio.nameRow.visible &&
+        newStudio.creatingNew && newStudio.newLayout.apps[0]===appInfo.get_id() &&
+        app.savedLayouts.some(item=>item.id===duplicateLayoutId),
+        'Cancel closes saving without changing the draft or existing layout');
+    newStudio.nameRow.show();
+    newStudio.nameEntry.set_text('Existing for replace');
+    newStudio.saveNamedLayout();
+    newStudio.nameEntry.set_text('Created from blank');
+    assert(!newStudio.replaceRow.visible,'changing the name dismisses replacement');
+    newStudio.saveNamedLayout();
+    const blankLayout=app.savedLayouts.find(item=>item.name==='Created from blank');
+    assert(blankLayout?.preset==='2x2' && blankLayout.slotCount===4 &&
+        blankLayout.apps[0]===appInfo.get_id() && blankLayout.apps.slice(1).every(id=>id===null) &&
+        blankLayout.pinned[0]===appInfo.get_id() &&
+        JSON.stringify(app.profiles)===beforeNewProfiles &&
+        beforeNewSlots.every((w,i)=>app.groups.get(app.key(0))[i]===w),
+        'saving a blank layout preserves empty tiles and leaves the desktop untouched');
+    assert(newStudio.previewSavedId===blankLayout.id && !newStudio.creatingNew,
+        'saved blank layout opens its preview for explicit restoration');
+    newStudio.openNewLayout();
+    newStudio.newLayout.apps[0]=appInfo.get_id();
+    newStudio.nameRow.show();
+    newStudio.nameEntry.set_text('Created from blank');
+    newStudio.saveNamedLayout();
+    assert(newStudio.replaceRow.visible && app.savedLayouts.some(item=>item.id===blankLayout.id),
+        'replacement requires a separate action');
+    newStudio.replaceButton.emit('clicked',1);
+    assert(newStudio.previewSavedId===blankLayout.id && !newStudio.creatingNew &&
+        app.savedLayouts.find(item=>item.id===blankLayout.id)?.pinned[0]===null &&
+        beforeNewSlots.every((w,i)=>app.groups.get(app.key(0))[i]===w),
+        'replacing preserves the layout ID and does not apply it to the desktop');
+    newStudio.dialog.close();
+    app.deleteSavedLayout(blankLayout.id);
+    app.deleteSavedLayout(duplicateLayoutId);
     if (Main.layoutManager.monitors.length > 1) {
         app.applyProfile(1,0,'auto',[windows[0]]); await pause();
         windows[0].activate(global.get_current_time()); await pause();

@@ -14,9 +14,9 @@ import {layout, PRESETS, capacity, fitMinimumSize, frameScalePivot, nearestSlot,
     activePinnedSlots, reserveAppSlots, swapNeighbor} from './lib/layout.js';
 import {Studio} from './lib/studio.js';
 import {WindowBorder} from './lib/window-border.js';
-import {radiusFromPixels, radiusStyle, visualFrameRect} from './lib/window-radius.js';
+import {radiusFromPixels, radiusStyle, plausibleWindowRadius, visualFrameRect} from './lib/window-radius.js';
 
-const RUNTIME_REVISION = 42;
+const RUNTIME_REVISION = 46;
 const RESTORE_STABILIZE_MS = 1400;
 const RESTORE_QUIET_MS = 120;
 const MAX_RESTORE_MOVES = 8;
@@ -652,19 +652,32 @@ export default class SnapTess extends Extension {
                     item.apps.every(id => id === null || typeof id === 'string')))) : [];
         } catch { this.savedLayouts = []; }
     }
-    saveLayout(name, preset, windows, pins) {
+    saveLayout(name, preset, windows, pins, replaceId = null) {
         name = name.trim().slice(0, 60);
-        if (!name || this.savedLayouts.some(layout => layout.name.toLowerCase() === name.toLowerCase())) return false;
+        const existing = this.savedLayouts.find(layout => layout.name.toLowerCase() === name.toLowerCase());
+        if (!name || (replaceId ? existing?.id !== replaceId : Boolean(existing))) return false;
         const slotCount = Math.max(windows.length, pins.length, capacity(preset), 1);
         if (slotCount > 30 || (preset !== 'auto' && slotCount > capacity(preset))) return false;
         const apps = Array.from({length: slotCount}, (_, i) =>
-            (windows[i] && this.appId(windows[i])) || pins[i] || null);
+            (typeof windows[i] === 'string' ? windows[i] : windows[i] && this.appId(windows[i])) || pins[i] || null);
         const pinned = Array.from({length: slotCount}, (_, i) => pins[i] || null);
-        const id = GLib.uuid_string_random();
-        this.savedLayouts.push({id, name, preset, slotCount, apps, pinned});
+        const id = existing?.id ?? GLib.uuid_string_random();
+        const saved = {id, name, preset, slotCount, apps, pinned};
+        if (existing) this.savedLayouts[this.savedLayouts.indexOf(existing)] = saved;
+        else this.savedLayouts.push(saved);
         this.settings.set_string('saved-layouts', JSON.stringify(this.savedLayouts));
         this.deletedLayouts?.splice(0);
         return id;
+    }
+    saveNewLayout(name, preset, apps, pinned, replaceId = null) {
+        const count = capacity(preset);
+        if (preset === 'auto' || !PRESETS.some(([id]) => id === preset) ||
+            !Array.isArray(apps) || !Array.isArray(pinned) || apps.length !== count ||
+            pinned.length !== count || apps.some(id => id !== null &&
+                (typeof id !== 'string' || !id.endsWith('.desktop'))) ||
+            new Set(apps.filter(Boolean)).size !== apps.filter(Boolean).length ||
+            pinned.some((id, index) => id !== null && id !== apps[index])) return false;
+        return this.saveLayout(name, preset, apps, pinned, replaceId);
     }
     deleteSavedLayout(id) {
         const index = this.savedLayouts.findIndex(layout => layout.id === id);
@@ -1312,6 +1325,7 @@ export default class SnapTess extends Extension {
         const previousTile = record.tileRect ? {...record.tileRect} : null;
         const targetChanged = !previousTile ||
             ['x', 'y', 'width', 'height'].some(key => Math.abs(previousTile[key] - rect[key]) > 1);
+        if (previousTile && targetChanged) this.invalidateWindowRadius(w);
         const reusable = !force && !restoring && !record.restorePending && !record.specialState &&
             record.tileRect && record.backingRect &&
             ['x', 'y', 'width', 'height'].every(key => Math.abs(record.tileRect[key] - rect[key]) <= 1);
@@ -1591,8 +1605,12 @@ export default class SnapTess extends Extension {
         try {
             const pixbuf = await Shell.Screenshot.composite_to_stream(
                 texture, 0, 0, width, height, 1, null, 0, 0, 1, stream);
-            const radius = radiusFromPixels(pixbuf.get_pixels(), pixbuf.get_rowstride(),
-                pixbuf.get_n_channels(), pixbuf.get_width(), pixbuf.get_height(), pixbuf.get_has_alpha());
+            const currentFrame = this.visualWindowRect(w);
+            if (this.windowActor(w) !== actor || this.windowEffectActive(actor) ||
+                ['x', 'y', 'width', 'height'].some(key => Math.abs(currentFrame[key] - frame[key]) > 1))
+                return null;
+            const radius = plausibleWindowRadius(radiusFromPixels(pixbuf.get_pixels(), pixbuf.get_rowstride(),
+                pixbuf.get_n_channels(), pixbuf.get_width(), pixbuf.get_height(), pixbuf.get_has_alpha()));
             if (!radius) return null;
             const scale = actor.get_scale()[0] || 1;
             return {top: radius.top / scale, bottom: radius.bottom / scale};
