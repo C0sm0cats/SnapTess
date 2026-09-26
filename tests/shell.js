@@ -238,11 +238,69 @@ export async function run() {
     stubborn.activate(global.get_current_time()); await pause();
     app.actionWindow=null; app.hideWindowActions(); app.windowsRestacked(); await Scripting.sleep(160);
     assert(app.windowActionHandle.visible && !app.windowActions.visible,
-        'client restacking reveals the subtle handle without opening the palette');
+        'client restacking reveals the action tab without opening the palette');
+    const handleRect=stubbornRecord.tileRect;
+    assert(app.windowActionHandle.width===28 && app.windowActions.width===44 &&
+        app.windowActionHandle.x>=handleRect.x &&
+        app.windowActionHandle.x<=handleRect.x+8,
+        'the compact action tab and palette keep fixed widths at the left edge');
+    assert(app.windowActionHandle.get_scale().every(scale => scale===1),
+        'the action tab keeps its size beside a scaled client');
+    if (GLib.getenv('SNAPTESS_ACTION_HANDLE_SCREENSHOT')) {
+        const stream=Gio.File.new_for_path(GLib.getenv('SNAPTESS_ACTION_HANDLE_SCREENSHOT'))
+            .replace(null,false,Gio.FileCreateFlags.NONE,null);
+        const m=Main.layoutManager.monitors[0];
+        await new Shell.Screenshot().screenshot_area(m.x,m.y,m.width,m.height,stream);
+        stream.close(null);
+    }
+    const handleStageSize=app.windowActionHandle.get_transformed_size();
+    const savedClientScale=stubbornActor.get_scale();
+    stubbornActor.set_scale(0.65,0.65);
+    app.updateWindowActionsPosition(stubborn);
+    assert(app.windowActionHandle.width===28 && app.windowActionHandle.get_scale().every(scale => scale===1) &&
+        app.windowActionHandle.get_transformed_size().every((size,index) =>
+            Math.abs(size-handleStageSize[index])<=1),
+        'the closed control keeps its stage size while the client actor is scaled');
+    if (GLib.getenv('SNAPTESS_ACTION_SCALED_HANDLE_SCREENSHOT')) {
+        await Scripting.sleep(180);
+        const stream=Gio.File.new_for_path(GLib.getenv('SNAPTESS_ACTION_SCALED_HANDLE_SCREENSHOT'))
+            .replace(null,false,Gio.FileCreateFlags.NONE,null);
+        const m=Main.layoutManager.monitors[0];
+        await new Shell.Screenshot().screenshot_area(m.x,m.y,m.width,m.height,stream);
+        stream.close(null);
+    }
+    stubbornActor.set_scale(...savedClientScale);
     app.hideWindowActions();
     app.showWindowActions();
     assert(app.windowActions.visible && app.windowActions.get_children().length===4,
         'focused window exposes four contextual actions');
+    assert(app.windowActions.get_scale().every(scale => scale===1),
+        'the open palette keeps its size beside a scaled client');
+    await Scripting.sleep(180);
+    const paletteStageSize=app.windowActions.get_transformed_size();
+    stubbornActor.set_scale(0.65,0.65);
+    app.updateWindowActionsPosition(stubborn);
+    assert(app.windowActions.width===44 && app.windowActions.get_scale().every(scale => scale===1) &&
+        app.windowActions.get_transformed_size().every((size,index) =>
+            Math.abs(size-paletteStageSize[index])<=1),
+        'the open control keeps its stage size while the client actor is scaled');
+    if (GLib.getenv('SNAPTESS_ACTION_SCALED_SCREENSHOT')) {
+        await Scripting.sleep(180);
+        const stream=Gio.File.new_for_path(GLib.getenv('SNAPTESS_ACTION_SCALED_SCREENSHOT'))
+            .replace(null,false,Gio.FileCreateFlags.NONE,null);
+        const m=Main.layoutManager.monitors[0];
+        await new Shell.Screenshot().screenshot_area(m.x,m.y,m.width,m.height,stream);
+        stream.close(null);
+    }
+    stubbornActor.set_scale(...savedClientScale);
+    if (GLib.getenv('SNAPTESS_ACTION_PALETTE_SCREENSHOT')) {
+        await Scripting.sleep(180);
+        const stream=Gio.File.new_for_path(GLib.getenv('SNAPTESS_ACTION_PALETTE_SCREENSHOT'))
+            .replace(null,false,Gio.FileCreateFlags.NONE,null);
+        const m=Main.layoutManager.monitors[0];
+        await new Shell.Screenshot().screenshot_area(m.x,m.y,m.width,m.height,stream);
+        stream.close(null);
+    }
     assert(app.floatAction.child.icon_name==='window-pop-out-symbolic',
         'a tiled window shows the distinct float action icon');
     stubbornRecord.floating=true; app.showWindowActions();
@@ -252,6 +310,14 @@ export async function run() {
     app.showWindowActionTooltip(app.floatAction);
     assert(app.windowActionTooltip.visible && app.windowActionTooltip.text.length>0,
         'window actions expose contextual tooltips');
+    const tooltipArea=app.area(stubborn.get_monitor());
+    const [,tooltipWidth]=app.windowActionTooltip.get_preferred_width(-1);
+    assert(app.windowActionTooltip.x>=tooltipArea.x+6 &&
+        app.windowActionTooltip.x+tooltipWidth<=tooltipArea.x+tooltipArea.width-5 &&
+        (app.windowActionTooltip.x+tooltipWidth<=app.windowActions.x ||
+            app.windowActionTooltip.x>=app.windowActions.x+app.windowActions.width),
+        `action tooltip ${app.windowActionTooltip.x}:${tooltipWidth} avoids palette ` +
+        `${app.windowActions.x}:${app.windowActions.width} within ${tooltipArea.x}:${tooltipArea.width}`);
     global.window_group.set_child_above_sibling(stubbornActor,null);
     app.updateBorder(); app.stackWindowOverlays(stubborn);
     const stack=global.window_group.get_children();
@@ -428,14 +494,14 @@ export async function run() {
     assert(app.windowActionHandle.visible,'floating leaves its action handle available without a focus change');
     windows[0].move_frame(true,90,75); await pause();
     let floatFrame=windows[0].get_frame_rect();
-    assert(Math.abs(app.windowActionHandle.x-(floatFrame.x+Math.max(2,floatFrame.width-14)))<=1 &&
-        Math.abs(app.windowActionHandle.y-(floatFrame.y+Math.max(8,Math.round((floatFrame.height-48)/2))))<=1,
+    assert(Math.abs(app.windowActionHandle.x-(floatFrame.x+4))<=1 &&
+        Math.abs(app.windowActionHandle.y-(floatFrame.y+Math.round((floatFrame.height-40)/2)))<=1,
         'the handle follows a floating window after its geometry changes');
     app.showWindowActions();
     windows[0].move_frame(true,130,110); await pause();
     floatFrame=windows[0].get_frame_rect();
     assert(app.windowActions.visible &&
-        Math.abs(app.windowActions.x-(floatFrame.x+Math.max(4,floatFrame.width-52)))<=1 &&
+        Math.abs(app.windowActions.x-(floatFrame.x+4))<=1 &&
         Math.abs(app.windowActions.y-(floatFrame.y+Math.max(8,Math.round((floatFrame.height-176)/2))))<=1,
         'the open palette follows subsequent floating-window movement');
     app.undo(); await pause();
