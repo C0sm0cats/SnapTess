@@ -57,7 +57,7 @@ function harness() {
     });
     const app = new Runtime();
     let previewState = '{}';
-    Object.assign(app, {records: new Map(), spaces: new Map(), running: true, busy: false, drag: null,
+    Object.assign(app, {records: new Map(), spaces: new Map(), deferredRetile: new Set(), running: true, busy: false, drag: null,
         settings: {get_strv: () => [], get_boolean: () => false, get_int: () => 12, get_double: () => 0.6,
             get_string: () => previewState, set_string: (_key, value) => { previewState = value; }}});
     app.appId = () => 'test.desktop';
@@ -498,6 +498,35 @@ test('fullscreen nested within maximize restores only when all special flags cle
     assert.equal(h.requests.length, 0);
     h.special(0); h.advance(250);
     assert.equal(h.requests.filter(r => r.type === 'resize').length, 1);
+});
+
+test('all windows opened during fullscreen reflow together after fullscreen exit', () => {
+    const h = harness(), app = h.app;
+    h.settleInitial();
+    const opened = Array.from({length: 3}, (_, index) => ({id: index, fullscreen: false,
+        get_maximize_flags: () => 0}));
+    for (const w of opened) app.records.set(w, {original: {}});
+    app.groups = new Map([['0:0:0', [h.w]]]);
+    app.profiles = {};
+    app.windows = () => [h.w, ...opened];
+    app.key = () => '0:0:0';
+    app.profileKey = () => '0:0:0';
+    app.options = () => ({preset: 'auto', gap: 0, padding: 0});
+    app.area = () => ({x: 0, y: 0, width: 800, height: 600});
+    const placed = [];
+    app.place = (w, rect) => placed.push([w, rect]);
+    app.schedule = compact => Object.getPrototypeOf(app).schedule.call(app, compact);
+    h.special(0, true);
+    app.tile(true);
+    assert.equal(app.groups.get('0:0:0').length, 1);
+    assert.equal(app.deferredRetile.has('0:0:0'), true);
+    h.special(0, false);
+    h.advance(1399);
+    assert.equal(app.groups.get('0:0:0').length, 1, 'reflow waits for fullscreen restoration');
+    h.advance(112);
+    assert.equal(app.groups.get('0:0:0').length, 4);
+    assert.deepEqual(placed.slice(-4).map(([w]) => w), [h.w, ...opened]);
+    assert.equal(app.deferredRetile.has('0:0:0'), false);
 });
 
 test('synchronous geometry signals see the new target and cannot reenter placement', () => {

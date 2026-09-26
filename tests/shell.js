@@ -749,6 +749,29 @@ export async function run() {
         assert(app.groups.get(app.key(0)).filter(Boolean).length===4,'studio assignment reflows target');
         assert(app.groups.get(app.key(1)).filter(Boolean).length===0,'studio assignment reflows source');
     }
+    const beforeFullscreenOpen=new Set(app.records.keys());
+    const beforeFullscreenSlots=[...app.groups.get(app.key(0))];
+    windows[0].make_fullscreen(); await pause();
+    for(let i=0;i<2;i++) await Scripting.createTestWindow({width:320,height:240});
+    await Scripting.waitTestWindows();
+    await Scripting.sleep(1400);
+    const openedDuringFullscreen=[...app.records.keys()].filter(w=>!beforeFullscreenOpen.has(w));
+    assert(openedDuringFullscreen.length===2 && app.deferredRetile.has(app.key(0)) &&
+        app.groups.get(app.key(0)).filter(Boolean).length===4,
+    'new windows wait for a full reflow while another window is fullscreen');
+    windows[0].unmake_fullscreen();
+    for(let i=0;i<30 && app.groups.get(app.key(0)).filter(Boolean).length!==6;i++) await Scripting.sleep(100);
+    await Scripting.sleep(450);
+    const reflowed=app.groups.get(app.key(0));
+    assert(reflowed.filter(Boolean).length===6 && !app.deferredRetile.has(app.key(0)),
+        'exiting fullscreen reflows the original and newly opened windows together');
+    assert(beforeFullscreenSlots.every((w,index)=>reflowed[index]===w),
+        'reflow keeps existing windows in their original tile order');
+    for(const w of reflowed) {
+        const target=app.records.get(w)?.tileRect, actual=w.get_frame_rect();
+        assert(target && ['x','y','width','height'].every(key=>Math.abs(actual[key]-target[key])<=2),
+            `window matches its new tile after fullscreen: ${geometry(w)} vs ${JSON.stringify(target)}`);
+    }
     windows.forEach((w,i)=>{
         const r=app.records.get(w)?.original,s=originals[i];
         assert(r && r.x===s.x && r.y===s.y && r.width===s.width && r.height===s.height &&
