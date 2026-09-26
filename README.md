@@ -20,12 +20,12 @@ SnapTess is a standalone GNOME Shell extension. It starts paused: enabling it do
 
 ## What it does
 
-- **Automatic layouts:** full, split, 60/40 focus-and-stack, and grids through 5×3. Larger window sets expand beyond 15 slots instead of silently leaving windows behind.
+- **Automatic layouts:** full, split, 60/40 focus-and-stack, and grid presets through 5×5. Auto expands beyond 25 slots as more windows open.
 - **Layout Studio:** a desktop overlay with application icons, numbered slots, drag-to-swap, layout presets, display/space selection, and a window library for assigning windows across displays. Edits stay in a draft until applied.
 - **Drag to snap:** move a tiled window by its title bar, see the translucent target, and release. Same-display drops swap; cross-display drops insert and reflow both displays.
 - **Three spaces per display:** independent window groups within each native GNOME workspace. Switching parks windows with native minimization; stopping reveals and restores them.
 - **Stay in control:** floating windows, app exclusions, configurable compaction, maximize/fullscreen freeze, focused-window outline, animated guides, saved layout/app order, and ten-level arrangement undo.
-- **Pinned slots:** a compact card marks a reserved tile when its app is minimized or closed. Click it to restore the window or reopen the app; unpinned empty tiles stay clear.
+- **Pinned slots:** a compact card marks a reserved tile when its app is minimized, floating, or closed. Click it to restore, retile, or reopen the app; unpinned empty tiles stay clear.
 
 ## Install
 

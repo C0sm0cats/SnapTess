@@ -16,7 +16,7 @@ import {Studio} from './lib/studio.js';
 import {WindowBorder} from './lib/window-border.js';
 import {radiusFromPixels, radiusStyle, visualFrameRect} from './lib/window-radius.js';
 
-const RUNTIME_REVISION = 41;
+const RUNTIME_REVISION = 42;
 const RESTORE_STABILIZE_MS = 1400;
 const RESTORE_QUIET_MS = 120;
 const MAX_RESTORE_MOVES = 8;
@@ -950,6 +950,9 @@ export default class SnapTess extends Extension {
         const window = minimized.find(([w, record]) => record.minimizeSlots?.[index] === w)?.[0] ??
             minimized[0]?.[0] ?? null;
         if (window) return {window, state: 'MINIMIZED'};
+        const floating = matches.find(([w, record]) => !used.has(w) && record.floating &&
+            record.space === space && w.get_monitor() === monitor && w.get_workspace() === workspace)?.[0];
+        if (floating) return {window: floating, state: 'FLOATING'};
         const pending = this.pendingLayoutApps?.get(normalize(id));
         if (pending?.monitor === monitor && pending.space === space && pending.workspace === workspace)
             return {window: null, state: 'OPENING'};
@@ -1013,14 +1016,22 @@ export default class SnapTess extends Extension {
                 labels.add_child(new St.Label({text: `PINNED · ${unavailable ? 'UNAVAILABLE' : entry.state}`,
                     style_class: 'snaptess-pin-placeholder-state'}));
                 content.add_child(labels);
-                const actionable = entry.state === 'MINIMIZED' || (entry.state === 'CLOSED' && available);
+                const actionable = entry.state === 'MINIMIZED' || entry.state === 'FLOATING' ||
+                    (entry.state === 'CLOSED' && available);
                 const button = new St.Button({style_class: `snaptess-pin-placeholder${unavailable ? ' unavailable' : ''}`,
-                    accessible_name: `${entry.window ? 'Restore window' : actionable ? 'Open application' : entry.state}: ${name}`,
+                    accessible_name: `${entry.state === 'FLOATING' ? 'Tile floating window' :
+                        entry.window ? 'Restore window' : actionable ? 'Open application' : entry.state}: ${name}`,
                     reactive: actionable, can_focus: actionable,
                     child: content});
                 button.connect('clicked', () => {
                     if (this.pinnedPlaceholders.get(key)?.button !== button || !this.running || this.studio) return;
-                    if (entry.window && this.records.has(entry.window) && entry.window.minimized) {
+                    if (entry.state === 'FLOATING' && this.records.get(entry.window)?.floating) {
+                        this.checkpoint();
+                        this.records.get(entry.window).floating = false;
+                        if (entry.window.minimized) entry.window.unminimize();
+                        this.tile(true);
+                        entry.window.activate(global.get_current_time());
+                    } else if (entry.window && this.records.has(entry.window) && entry.window.minimized) {
                         entry.window.unminimize();
                         entry.window.activate(global.get_current_time());
                     } else if (entry.state === 'CLOSED' && !this.pendingLayoutApps.has(normalize(entry.id))) {
