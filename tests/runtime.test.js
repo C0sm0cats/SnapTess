@@ -158,6 +158,16 @@ test('always-floating applications never start tile drag feedback', () => {
     assert.equal(h.timers.size, 0);
 });
 
+test('changing a tile invalidates a radius captured for its previous geometry', () => {
+    const h = harness(); h.settleInitial();
+    h.record.windowRadius = {top: 7, bottom: 7};
+    h.record.radiusDirty = false;
+    const generation = h.record.radiusGeneration;
+    h.app.place(h.w, {...h.slot, width: h.slot.width - 100});
+    assert.equal(h.record.radiusGeneration, generation + 1);
+    assert.equal(h.record.radiusDirty, true);
+});
+
 test('dragging over a vacant pinned tile keeps its card and rejects the drop', () => {
     const h = harness(), app = h.app; h.settleInitial(); h.grab(true);
     h.shellMain.layoutManager.monitors[0] = {x: 0, y: 0, width: 800, height: 600};
@@ -437,6 +447,53 @@ test('saved layouts keep app placement separate from explicit pins and read lega
     const legacy = {slotCount: 2, pinned: ['test.desktop', 'other.desktop']};
     app.layoutCandidates = () => [h.w, other];
     assert.deepEqual(Array.from(app.savedLayoutPlan(legacy, 0, 0).slots), [h.w, other]);
+});
+
+test('a blank fixed-preset layout saves app IDs and pins without changing the current arrangement', () => {
+    const h = harness(), app = h.app;
+    app.savedLayouts = []; app.deletedLayouts = [];
+    let stored;
+    app.settings.set_string = (_key, value) => { stored = JSON.parse(value); };
+    const before = h.frame();
+    const apps = ['test.desktop', null, 'other.desktop', null];
+    const pins = [null, null, 'other.desktop', null];
+    assert.equal(app.saveNewLayout('Blank four', '2x2', apps, pins), 'saved-layout-id');
+    assert.deepEqual(Array.from(stored[0].apps), apps);
+    assert.deepEqual(Array.from(stored[0].pinned), pins);
+    assert.deepEqual(h.frame(), before);
+    app.settings.get_string = () => JSON.stringify(stored);
+    app.loadSavedLayouts();
+    assert.deepEqual(Array.from(app.savedLayouts[0].apps), apps);
+    assert.equal(app.saveNewLayout('Auto', 'auto', apps, pins), false);
+    assert.equal(app.saveNewLayout('Duplicate', '2x2',
+        ['test.desktop', 'test.desktop', null, null], [null, null, null, null]), false);
+    assert.equal(app.saveNewLayout('Invalid pin', '2x2', apps,
+        ['other.desktop', null, null, null]), false);
+});
+
+test('replacing a saved layout requires its ID and preserves its position', () => {
+    const h = harness(), app = h.app;
+    app.savedLayouts = [
+        {id: 'first', name: 'Work', preset: 'split', slotCount: 2,
+            apps: ['old.desktop', null], pinned: [null, null]},
+        {id: 'second', name: 'Other', preset: 'full', slotCount: 1,
+            apps: [null], pinned: [null]},
+    ];
+    app.deletedLayouts = [];
+    let stored;
+    app.settings.set_string = (_key, value) => { stored = JSON.parse(value); };
+    assert.equal(app.saveNewLayout('work', '2x2', ['test.desktop', null, null, null],
+        [null, null, null, null]), false);
+    assert.equal(app.saveNewLayout('work', '2x2', ['test.desktop', null, null, null],
+        [null, null, null, null], 'second'), false);
+    assert.equal(app.saveNewLayout('work', '2x2', ['test.desktop', null, null, null],
+        [null, null, null, null], 'first'), 'first');
+    assert.deepEqual(app.savedLayouts.map(item => item.id), ['first', 'second']);
+    assert.equal(stored[0].name, 'work');
+    assert.equal(stored[0].preset, '2x2');
+    assert.deepEqual(Array.from(stored[0].apps), ['test.desktop', null, null, null]);
+    assert.equal(app.saveLayout('Other', 'full', [h.w], [], 'second'), 'second');
+    assert.deepEqual(app.savedLayouts.map(item => item.id), ['first', 'second']);
 });
 
 test('pinned slot state distinguishes minimized, floating, elsewhere, opening, and closed apps', () => {

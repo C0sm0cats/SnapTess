@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {radiusFromPixels, radiusStyle, visualFrameRect} from '../lib/window-radius.js';
+import {radiusFromPixels, radiusStyle, plausibleWindowRadius, visualFrameRect} from '../lib/window-radius.js';
 
 function edge(height, top, bottom, rowstride = 16) {
     const pixels = new Uint8Array(height * rowstride);
@@ -34,6 +34,13 @@ test('horizontal edge rejects a transparent side strip mistaken for a huge corne
         pixels[y * rowstride + x * 4 + 3] = 255;
     }
     assert.deepEqual(radiusFromPixels(pixels, rowstride, 4, width, height), {top: 0, bottom: 16});
+});
+
+test('implausible transparent edges cannot create a giant focus-border corner', () => {
+    assert.deepEqual(plausibleWindowRadius({top: 7, bottom: 123}), {top: 7, bottom: 7});
+    assert.deepEqual(plausibleWindowRadius({top: 70, bottom: 4}), {top: 4, bottom: 4});
+    assert.deepEqual(plausibleWindowRadius({top: 0, bottom: 16}), {top: 0, bottom: 16});
+    assert.equal(plausibleWindowRadius({top: 70, bottom: 90}), null);
 });
 
 test('scaled frame follows the actor buffer pivot and translation', () => {
