@@ -3,7 +3,7 @@ import Gio from 'gi://Gio';
 import Gtk from 'gi://Gtk';
 import Gdk from 'gi://Gdk';
 import {ExtensionPreferences} from 'resource:///org/gnome/Shell/Extensions/js/extensions/prefs.js';
-import {layout} from './lib/layout.js';
+import {layout, autoLayout, capacity, PRESETS} from './lib/layout.js';
 
 function appAliases(id) {
     const aliases = [id];
@@ -27,9 +27,20 @@ export default class SnapTessPreferences extends ExtensionPreferences {
         window.add(page);
         const appearance = new Adw.PreferencesGroup({title: 'Make room', description: 'Fine-tune the space around your windows.'});
         page.add(appearance);
+        const addReset = (row, key) => {
+            const button = new Gtk.Button({icon_name: 'edit-undo-symbolic', valign: Gtk.Align.CENTER,
+                tooltip_text: `Reset ${row.title} to default`});
+            button.add_css_class('flat');
+            button.connect('clicked', () => settings.reset(key));
+            const update = () => { button.visible = !settings.get_value(key).equal(settings.get_default_value(key)); };
+            const changed = settings.connect(`changed::${key}`, update);
+            window.connect('destroy', () => settings.disconnect(changed));
+            row.add_suffix(button);
+            update();
+        };
         for (const [key, title] of [['gap', 'Window spacing'], ['padding', 'Screen edge spacing']]) {
             const row = new Adw.SpinRow({title, adjustment: new Gtk.Adjustment({lower: 0, upper: 64, step_increment: 1, page_increment: 4})});
-            settings.bind(key, row, 'value', Gio.SettingsBindFlags.DEFAULT); appearance.add(row);
+            settings.bind(key, row, 'value', Gio.SettingsBindFlags.DEFAULT); addReset(row, key); appearance.add(row);
         }
         const ratio = new Adw.SpinRow({title: 'Focus column width', subtitle: 'Percentage of the available width', digits: 0,
             adjustment: new Gtk.Adjustment({lower: 25, upper: 75, step_increment: 5, page_increment: 5}),
@@ -40,34 +51,55 @@ export default class SnapTessPreferences extends ExtensionPreferences {
             if (Math.abs(ratio.value - value) > 0.01) ratio.value = value;
         });
         window.connect('destroy', () => settings.disconnect(ratioChanged));
+        addReset(ratio, 'master-ratio');
         appearance.add(ratio);
-        const previewRow = new Adw.ActionRow({title: 'Focus layout preview',
-            subtitle: 'Three windows · updates with spacing and column width'});
+        const previewRow = new Adw.ActionRow({title: 'Current space preview'});
         const preview = new Gtk.DrawingArea({valign: Gtk.Align.CENTER});
         preview.set_content_width(220);
         preview.set_content_height(116);
-        preview.set_tooltip_text('Live three-window Focus layout preview');
+        preview.set_tooltip_text('Live layout of the active workspace, display and SnapTess space');
+        const currentPreview = () => {
+            try { return JSON.parse(settings.get_string('preview-state')); } catch { return {}; }
+        };
+        const updatePreview = () => {
+            const state = currentPreview();
+            if (state.running) {
+                const preset = state.preset === 'auto' || capacity(state.preset) < state.count
+                    ? autoLayout(state.count) : state.preset;
+                const name = state.count ? PRESETS.find(([id]) => id === preset)?.[1] ?? preset : 'No tiled windows';
+                previewRow.subtitle = `Workspace ${state.workspace + 1} · Display ${state.monitor + 1} · Space ${state.space + 1} · ${name}`;
+            } else previewRow.subtitle = 'Start arranging windows to see the current layout';
+            preview.queue_draw();
+        };
         preview.set_draw_func((_area, cr, width, height) => {
             const dark = Adw.StyleManager.get_default().dark;
             cr.setSourceRGBA(...(dark ? [0.12, 0.16, 0.19, 1] : [0.90, 0.93, 0.95, 1]));
             cr.rectangle(0, 0, width, height); cr.fill();
-            const factor = width / 800;
-            const rects = layout({x: 0, y: 0, width, height}, 3, {
-                preset: 'master', gap: Math.round(settings.get_int('gap') * factor),
-                padding: Math.round(settings.get_int('padding') * factor),
+            const state = currentPreview();
+            if (!state.running || !state.count || !state.width || !state.height) return;
+            const factor = Math.min(width / state.width, height / state.height);
+            const scaledWidth = state.width * factor, scaledHeight = state.height * factor;
+            const x = Math.round((width - scaledWidth) / 2), y = Math.round((height - scaledHeight) / 2);
+            const rects = layout({x, y, width: scaledWidth, height: scaledHeight}, state.count, {
+                preset: state.preset, gap: settings.get_int('gap') * factor,
+                padding: settings.get_int('padding') * factor,
                 ratio: settings.get_double('master-ratio')});
             rects.forEach((rect, index) => {
+                const occupied = state.occupied?.includes(index);
+                const focused = index === state.focused;
                 cr.setSourceRGBA(...(dark
-                    ? index === 0 ? [0.29, 0.51, 0.75, 1] : [0.37, 0.43, 0.48, 1]
-                    : index === 0 ? [0.26, 0.48, 0.70, 1] : [0.68, 0.75, 0.80, 1]));
+                    ? focused ? [0.29, 0.51, 0.75, 1] : occupied ? [0.37, 0.43, 0.48, 1] : [0.23, 0.27, 0.30, 1]
+                    : focused ? [0.26, 0.48, 0.70, 1] : occupied ? [0.68, 0.75, 0.80, 1] : [0.79, 0.83, 0.86, 1]));
                 cr.rectangle(rect.x, rect.y, rect.width, rect.height); cr.fill();
             });
         });
         previewRow.add_suffix(preview);
         appearance.add(previewRow);
         const previewChanged = settings.connect('changed', (_s, key) => {
-            if (['gap', 'padding', 'master-ratio'].includes(key)) preview.queue_draw();
+            if (key === 'preview-state') updatePreview();
+            else if (['gap', 'padding', 'master-ratio'].includes(key)) preview.queue_draw();
         });
+        updatePreview();
         const styleManager = Adw.StyleManager.get_default();
         const themeChanged = styleManager.connect('notify::dark', () => preview.queue_draw());
         window.connect('destroy', () => {
@@ -77,7 +109,10 @@ export default class SnapTessPreferences extends ExtensionPreferences {
         const behavior = new Adw.PreferencesGroup({title: 'Keep your flow'}); page.add(behavior);
         for (const [key, title] of [['active-border', 'Highlight the focused window'], ['animations', 'Animate placement guides'],
             ['compact-minimize', 'Close gaps when minimizing'], ['compact-close', 'Close gaps when closing']]) {
-            const row = new Adw.SwitchRow({title}); settings.bind(key, row, 'active', Gio.SettingsBindFlags.DEFAULT); behavior.add(row);
+            const row = new Adw.SwitchRow({title});
+            settings.bind(key, row, 'active', Gio.SettingsBindFlags.DEFAULT);
+            addReset(row, key);
+            behavior.add(row);
         }
         const applications = new Adw.PreferencesPage({title: 'Applications', icon_name: 'application-x-executable-symbolic'});
         window.add(applications);

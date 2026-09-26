@@ -20,6 +20,8 @@
 </key>
 <key name="profiles" type="s"><default>'{}'</default><summary>Per-space layouts and application ordering</summary>
 </key>
+<key name="preview-state" type="s"><default>'{}'</default><summary>Current tiling preview state shared with preferences</summary>
+</key>
 <key name="saved-layouts" type="s"><default>'[]'</default><summary>Named layouts restored on demand</summary>
 </key>
 <key name="excluded-apps" type="as"><default>[]</default><summary>Application IDs excluded from tiling</summary>

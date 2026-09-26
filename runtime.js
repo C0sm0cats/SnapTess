@@ -16,7 +16,7 @@ import {Studio} from './lib/studio.js';
 import {WindowBorder} from './lib/window-border.js';
 import {radiusFromPixels, radiusStyle, visualFrameRect} from './lib/window-radius.js';
 
-const RUNTIME_REVISION = 32;
+const RUNTIME_REVISION = 33;
 const RESTORE_STABILIZE_MS = 1400;
 const RESTORE_QUIET_MS = 120;
 const MAX_RESTORE_MOVES = 8;
@@ -28,6 +28,7 @@ const VISUAL = Object.freeze({quick: 140, move: 210, space: 230, osd: 1300, inse
 export default class SnapTess extends Extension {
     enable() {
         this.settings = this.getSettings();
+        this.settings.reset('preview-state');
         this.running = false;
         this.records = new Map();
         this.groups = new Map();
@@ -197,6 +198,7 @@ export default class SnapTess extends Extension {
         this.connect(Main.overview, 'showing', () => { this.hideGuides(); this.clearPinnedPlaceholders(); });
         this.connect(Main.overview, 'hidden', () => { this.schedule(false); this.updateBorder(); });
         this.connect(this.settings, 'changed', (_s, key) => {
+            if (key === 'preview-state') return;
             if (key === 'profiles') this.loadProfiles();
             if (key === 'saved-layouts') { this.loadSavedLayouts(); return; }
             this.schedule(true);
@@ -770,6 +772,7 @@ export default class SnapTess extends Extension {
         } finally { this.busy = false; }
         this.updateBorder();
         this.updatePinnedPlaceholders();
+        this.publishPreviewState();
     }
 
     setRunning(value, silent = false) {
@@ -800,6 +803,24 @@ export default class SnapTess extends Extension {
             this.groups.clear(); this.spaces.clear(); this.history = [];
         }
         this.updatePanelStatus();
+        this.publishPreviewState();
+    }
+
+    publishPreviewState() {
+        if (!this.settings) return;
+        let state = {};
+        if (this.running && Main.layoutManager.monitors.length) {
+            const monitor = Math.max(0, Math.min(this.currentMonitor(), Main.layoutManager.monitors.length - 1));
+            const space = this.activeSpace(monitor);
+            const slots = this.groups.get(this.key(monitor, space)) ?? [];
+            const area = this.area(monitor);
+            state = {running: true, monitor, workspace: this.workspaceIndex(), space,
+                preset: this.options(monitor, space).preset, count: slots.length,
+                occupied: slots.map((w, index) => w ? index : -1).filter(index => index >= 0),
+                focused: slots.indexOf(global.display.focus_window), width: area.width, height: area.height};
+        }
+        const value = JSON.stringify(state);
+        if (this.settings.get_string('preview-state') !== value) this.settings.set_string('preview-state', value);
     }
 
     schedule(compact) {
@@ -853,6 +874,7 @@ export default class SnapTess extends Extension {
         } finally { this.busy = false; }
         this.updateBorder();
         this.updatePinnedPlaceholders();
+        this.publishPreviewState();
     }
 
     clearPinnedPlaceholders() {
@@ -1716,6 +1738,7 @@ export default class SnapTess extends Extension {
             const w = global.display.focus_window;
             if (w) this.queueWindowActions(w);
         }
+        this.publishPreviewState();
     }
 
     toggleFloating() {
@@ -2190,6 +2213,7 @@ export default class SnapTess extends Extension {
         for (const hint of this.swapHints.values()) { Main.layoutManager.removeChrome(hint); hint.destroy(); }
         this.swapHints.clear();
         this.indicator.destroy();
+        this.settings.reset('preview-state');
         this.settings = null;
     }
 }
