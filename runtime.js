@@ -16,7 +16,7 @@ import {Studio} from './lib/studio.js';
 import {WindowBorder} from './lib/window-border.js';
 import {radiusFromPixels, radiusStyle, visualFrameRect} from './lib/window-radius.js';
 
-const RUNTIME_REVISION = 33;
+const RUNTIME_REVISION = 34;
 const RESTORE_STABILIZE_MS = 1400;
 const RESTORE_QUIET_MS = 120;
 const MAX_RESTORE_MOVES = 8;
@@ -37,6 +37,7 @@ export default class SnapTess extends Extension {
         this.sources = new Set();
         this.history = [];
         this.pendingCompact = false;
+        this.deferredRetile = new Set();
         this.busy = false;
         this.radiusReadbackReady = false;
         this.drag = null;
@@ -461,6 +462,7 @@ export default class SnapTess extends Extension {
         if (!this.running || !record.tileRect || record.floating || w.minimized || this.isSpecialWindow(w) ||
             this.drag?.window === w || global.display.is_grabbed()) {
             record.restorePending = false;
+            this.resumeDeferredRetile(w);
             return;
         }
         // Completion resumes through effects-completed, even for long effects.
@@ -478,6 +480,13 @@ export default class SnapTess extends Extension {
         this.traceWindow(w, 'restore-finished');
         this.scheduleWindowScale(w, 0);
         this.updateWindowActionsPosition(w);
+        this.resumeDeferredRetile(w);
+    }
+
+    resumeDeferredRetile(w) {
+        if (!this.running || this.isSpecialWindow(w) ||
+            w.get_workspace() !== global.workspace_manager.get_active_workspace()) return;
+        if (this.deferredRetile.has(this.key(w.get_monitor()))) this.schedule(true);
     }
 
     restoreWindowPosition(w, record) {
@@ -801,6 +810,7 @@ export default class SnapTess extends Extension {
                 }
             } finally { this.busy = false; }
             this.groups.clear(); this.spaces.clear(); this.history = [];
+            this.deferredRetile.clear();
         }
         this.updatePanelStatus();
         this.publishPreviewState();
@@ -840,8 +850,14 @@ export default class SnapTess extends Extension {
         try {
             for (let monitor = 0; monitor < Main.layoutManager.monitors.length; monitor++) {
                 const windows = this.windows(monitor);
-                if (!releaseMaximized && windows.some(w => w.fullscreen || w.get_maximize_flags())) continue;
                 const key = this.key(monitor);
+                // Reflow the entire display after fullscreen exit has restored its window.
+                if (!releaseMaximized && (windows.some(w => this.isSpecialWindow(w)) ||
+                    !motionGuides && windows.some(w => this.records.get(w)?.restorePending))) {
+                    this.deferredRetile.add(key);
+                    continue;
+                }
+                this.deferredRetile.delete(key);
                 const existingGroup = this.groups.get(key);
                 let previous = existingGroup;
                 if (!previous) {
@@ -2110,6 +2126,7 @@ export default class SnapTess extends Extension {
                 r.monitor = w.get_monitor(); r.space = 0;
             }
             this.spaces.clear(); this.groups.clear();
+            this.deferredRetile.clear();
         } finally { this.busy = false; }
         this.schedule(true);
     }
