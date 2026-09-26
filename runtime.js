@@ -16,7 +16,7 @@ import {Studio} from './lib/studio.js';
 import {WindowBorder} from './lib/window-border.js';
 import {radiusFromPixels, radiusStyle, visualFrameRect} from './lib/window-radius.js';
 
-const RUNTIME_REVISION = 34;
+const RUNTIME_REVISION = 35;
 const RESTORE_STABILIZE_MS = 1400;
 const RESTORE_QUIET_MS = 120;
 const MAX_RESTORE_MOVES = 8;
@@ -254,7 +254,40 @@ export default class SnapTess extends Extension {
     }
 
     appId(w) {
-        return Shell.WindowTracker.get_default().get_window_app(w)?.get_id() ?? w.get_wm_class() ?? '';
+        const app = Shell.WindowTracker.get_default().get_window_app(w);
+        if (app && !app.is_window_backed()) return app.get_id();
+        return this.launchedDesktopId(w) ?? w.get_wm_class() ?? '';
+    }
+
+    windowApp(w) {
+        const tracked = Shell.WindowTracker.get_default().get_window_app(w);
+        if (tracked && !tracked.is_window_backed()) return tracked;
+        const id = this.launchedDesktopId(w);
+        return id ? Shell.AppSystem.get_default().lookup_app(id) ?? tracked : tracked;
+    }
+
+    launchedDesktopId(w) {
+        this.desktopIdByWindow ??= new WeakMap();
+        if (this.desktopIdByWindow.has(w)) return this.desktopIdByWindow.get(w);
+        let id = null;
+        const pid = w.get_pid?.();
+        if (!(pid > 0)) return null;
+        try {
+            const [ok, bytes] = GLib.file_get_contents(`/proc/${pid}/environ`);
+            if (ok) {
+                const entries = new TextDecoder().decode(bytes).split('\0');
+                const launchedPid = entries.find(entry => entry.startsWith('GIO_LAUNCHED_DESKTOP_FILE_PID='))
+                    ?.slice('GIO_LAUNCHED_DESKTOP_FILE_PID='.length);
+                const path = entries.find(entry => entry.startsWith('GIO_LAUNCHED_DESKTOP_FILE='))
+                    ?.slice('GIO_LAUNCHED_DESKTOP_FILE='.length);
+                const candidate = path?.split('/').at(-1);
+                if (launchedPid === String(pid) && path?.startsWith('/') &&
+                    candidate?.endsWith('.desktop') && Shell.AppSystem.get_default().lookup_app(candidate))
+                    id = candidate;
+            }
+        } catch { /* Some clients do not expose their launch environment. */ }
+        this.desktopIdByWindow.set(w, id);
+        return id;
     }
 
     matchesAppRule(w, key) {
@@ -1388,7 +1421,7 @@ export default class SnapTess extends Extension {
     setPreviewApp(w) {
         if (!this.previewContent) return;
         this.previewContent.destroy_all_children();
-        const app = Shell.WindowTracker.get_default().get_window_app(w);
+        const app = this.windowApp(w);
         this.previewContent.add_child(app?.create_icon_texture(24) ??
             new St.Icon({icon_name: 'application-x-executable-symbolic', icon_size: 24}));
         this.previewContent.add_child(new St.Label({text: app?.get_name() ?? 'Window'}));
@@ -1541,7 +1574,7 @@ export default class SnapTess extends Extension {
             catch { /* An unavailable texture falls back to the application footprint. */ }
         }
         if (!guide) {
-            const app = Shell.WindowTracker.get_default().get_window_app(w);
+            const app = this.windowApp(w);
             guide = new St.BoxLayout({style_class: 'snaptess-placement-ghost', reactive: false,
                 x_align: Clutter.ActorAlign.CENTER, y_align: Clutter.ActorAlign.CENTER});
             this.setGuideRadius(guide, w, 12);
@@ -1882,7 +1915,7 @@ export default class SnapTess extends Extension {
                 } catch { /* A client without a paintable frame uses its icon instead. */ }
             }
             if (!clone) {
-                const app = Shell.WindowTracker.get_default().get_window_app(w);
+                const app = this.windowApp(w);
                 clone = new St.BoxLayout({style_class: 'snaptess-placement-ghost', reactive: false,
                     x_align: Clutter.ActorAlign.CENTER, y_align: Clutter.ActorAlign.CENTER});
                 clone.add_child(app?.create_icon_texture(32) ??

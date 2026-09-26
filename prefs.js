@@ -5,10 +5,10 @@ import Gdk from 'gi://Gdk';
 import {ExtensionPreferences} from 'resource:///org/gnome/Shell/Extensions/js/extensions/prefs.js';
 import {layout, autoLayout, capacity, PRESETS} from './lib/layout.js';
 
-function appAliases(id) {
+function appAliases(id, startupWmClass = null) {
     const aliases = [id];
     if (id.endsWith('.desktop')) aliases.push(id.slice(0, -8));
-    if (id === 'onlyoffice-desktopeditors.desktop') aliases.push('ONLYOFFICE');
+    if (startupWmClass && !aliases.includes(startupWmClass)) aliases.push(startupWmClass);
     return aliases;
 }
 
@@ -129,10 +129,12 @@ export default class SnapTessPreferences extends ExtensionPreferences {
         const selected = new Set([...settings.get_strv('excluded-apps'), ...settings.get_strv('scaled-apps')]);
         const appInfos = Gio.AppInfo.get_all().filter(info => {
             const id = info.get_id();
-            return id && (info.should_show() || appAliases(id).some(alias => selected.has(alias)));
+            return id && (info.should_show() ||
+                appAliases(id, info.get_startup_wm_class?.()).some(alias => selected.has(alias)));
         });
         appInfos.sort((a, b) => {
-            const chosen = info => appAliases(info.get_id()).some(alias => selected.has(alias));
+            const chosen = info => appAliases(info.get_id(), info.get_startup_wm_class?.())
+                .some(alias => selected.has(alias));
             return Number(chosen(b)) - Number(chosen(a)) || a.get_display_name().localeCompare(b.get_display_name());
         });
         const listed = new Set();
@@ -144,8 +146,8 @@ export default class SnapTessPreferences extends ExtensionPreferences {
             configuredGroup.visible = searchable.some(item => item.configured && item.row.visible);
             availableGroup.visible = searchable.some(item => !item.configured && item.row.visible);
         };
-        const addApp = (id, name, icon = null, custom = false) => {
-            const ids = custom ? [id] : appAliases(id);
+        const addApp = (id, name, icon = null, custom = false, startupWmClass = null) => {
+            const ids = custom ? [id] : appAliases(id, startupWmClass);
             ids.forEach(alias => listed.add(alias));
             const row = new Adw.ExpanderRow({title: name, subtitle: custom ? `${id} · Saved app ID` : id});
             if (icon) row.add_prefix(new Gtk.Image({gicon: icon, pixel_size: 32}));
@@ -175,7 +177,8 @@ export default class SnapTessPreferences extends ExtensionPreferences {
             (item.configured ? configuredGroup : availableGroup).add(row);
             searchable.push(item);
         };
-        for (const info of appInfos) addApp(info.get_id(), info.get_display_name(), info.get_icon());
+        for (const info of appInfos) addApp(info.get_id(), info.get_display_name(), info.get_icon(),
+            false, info.get_startup_wm_class?.());
         for (const id of selected) if (!listed.has(id)) addApp(id, id, null, true);
         const noResults = new Adw.ActionRow({title: 'No matching applications', visible: searchable.length === 0});
         appGroup.add(noResults);
