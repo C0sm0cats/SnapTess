@@ -59,6 +59,7 @@ function harness(options = {}) {
                     get_app_info: () => ({launch: () => { launches.push(id); return true; }})} : null})},
         WindowTracker: {get_default: () => ({get_window_app: () => options.trackedApp ?? null})}},
         Meta: {WindowType: {NORMAL: 0}, GrabOp: {MOVING: 1, KEYBOARD_MOVING: 2}},
+        Mtk: {Rectangle: class { constructor(rect) { Object.assign(this, rect); } }},
         global: {display: {is_grabbed: () => grabbed, get_current_monitor: () => monitor, focus_window: null}, get_pointer: () => pointer,
             workspace_manager: {get_active_workspace: () => workspace, get_active_workspace_index: () => 0}, get_window_actors: () => [actor]},
     });
@@ -657,6 +658,23 @@ test('an unlisted client accepting a delayed resize remains tiled at native scal
     assert.equal(h.actor.scale_x, 1);
     assert.equal(h.record.visualScale, 1);
     assert.equal(h.timers.size, 0);
+});
+
+test('scale-to-fit includes X11 titlebar extents in the minimum frame size', () => {
+    const h = harness();
+    h.app.settings.get_strv = key => key === 'scaled-apps' ? ['test.desktop'] : [];
+    h.w.get_min_size = () => [true, 700, 356];
+    h.w.client_rect_to_frame_rect = rect => ({...rect, height: rect.height + 37});
+    const target = {...h.slot, width: 625, height: 337};
+    h.app.place(h.w, target);
+    const minimum = h.app.minimumSize(h.w);
+    assert.equal(minimum.width, 700);
+    assert.equal(minimum.height, 393);
+    assert.deepEqual(h.requests.at(-1),
+        {type: 'resize', x: target.x, y: target.y, width: 729, height: 393});
+    h.commit({width: 729, height: 393}); h.advance(200);
+    assert.ok(Math.abs(h.record.visualScale * 729 - target.width) < 1);
+    assert.ok(Math.abs(h.record.visualScale * 393 - target.height) < 1);
 });
 
 test('only configured applications use scale-to-fit fallback', () => {

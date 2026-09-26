@@ -2,6 +2,7 @@ import Clutter from 'gi://Clutter';
 import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
 import Meta from 'gi://Meta';
+import Mtk from 'gi://Mtk';
 import Shell from 'gi://Shell';
 import St from 'gi://St';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
@@ -202,6 +203,10 @@ export async function run() {
     }
     app.preview.hide();
     const stubborn=windows[0], stubbornRecord=app.records.get(stubborn);
+    const frameMinimum=stubborn.client_rect_to_frame_rect(new Mtk.Rectangle({
+        x: 0, y: 0, width: 700, height: 356}));
+    assert(Number.isFinite(frameMinimum.width) && Number.isFinite(frameMinimum.height),
+        'Mutter exposes the native client-to-frame geometry conversion');
     app.settings.set_strv('scaled-apps', [...app.settings.get_strv('scaled-apps'), app.appId(stubborn)]);
     const stubbornTarget={...stubbornRecord.tileRect};
     stubborn.move_resize_frame(false,stubbornTarget.x,stubbornTarget.y,stubbornTarget.width+180,stubbornTarget.height+140);
@@ -577,6 +582,19 @@ export async function run() {
     assert(app.studio.canvas.get_first_child().width<initialCardWidth,
         'a compatible layout updates the Studio preview immediately');
     app.studio.undo();
+    app.studio.preset='5x5'; app.studio.render();
+    assert(app.studio.canvas.get_n_children()===25 &&
+        app.studio.canvas.get_first_child().get_child().get_n_children()<=3,
+        'Studio renders a dense 25-tile grid without overflowing tile content');
+    if (GLib.getenv('SNAPTESS_DENSE_STUDIO_SCREENSHOT')) {
+        await pause();
+        const stream=Gio.File.new_for_path(GLib.getenv('SNAPTESS_DENSE_STUDIO_SCREENSHOT'))
+            .replace(null,false,Gio.FileCreateFlags.NONE,null);
+        const m=Main.layoutManager.monitors[0];
+        await new Shell.Screenshot().screenshot_area(m.x,m.y,m.width,m.height,stream);
+        stream.close(null);
+    }
+    app.studio.preset=initialPreset; app.studio.render();
     const studioWidth=app.studio.width;
     app.studio.width=700; app.studio.render();
     assert(app.studio.presetMenu,'compact Studio renders the layout menu');
