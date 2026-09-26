@@ -660,6 +660,63 @@ test('an unlisted client accepting a delayed resize remains tiled at native scal
     assert.equal(h.timers.size, 0);
 });
 
+test('rapid layout changes do not classify delayed native resizes as floating', () => {
+    const h = harness();
+    const medium = {...h.slot, width: 500, height: 350};
+    const final = {...h.slot, width: 625, height: 337};
+    h.app.place(h.w, h.slot);
+    h.advance(100);
+    h.app.place(h.w, medium);
+    h.advance(2200);
+    h.app.place(h.w, final);
+    h.commit(medium); // a response to the earlier layout arrives after the final request
+    h.advance(2500);
+    assert.equal(h.record.floating, false);
+    h.commit(final);
+    h.advance(1000);
+    assert.equal(h.record.floating, false);
+    assert.equal(h.record.visualScale, 1);
+});
+
+test('a resize still rejected after rapid-layout settling can float', () => {
+    const h = harness();
+    let reflows = 0;
+    h.app.schedule = () => { reflows++; };
+    h.app.place(h.w, h.slot);
+    h.advance(100);
+    h.app.place(h.w, {...h.slot, width: 500, height: 350});
+    h.advance(100);
+    h.app.place(h.w, {...h.slot, width: 625, height: 337});
+    h.commit({width: 500, height: 350});
+    h.advance(6500);
+    assert.equal(h.record.floating, true);
+    assert.equal(reflows, 1);
+});
+
+test('a newly accepted tile stays managed when an older layout commits afterward', () => {
+    const h = harness();
+    h.app.place(h.w, h.slot);
+    h.advance(200);
+    assert.equal(h.record.nativeFitSizes.length, 1);
+    const intermediate = {...h.slot, width: 500, height: 350};
+    const final = {...h.slot, width: 625, height: 337};
+    h.app.place(h.w, intermediate);
+    h.advance(100);
+    h.app.place(h.w, final);
+    h.commit(final);
+    h.advance(200); // the current tile matches before the old configure arrives
+    assert.equal(h.record.nativeFitSizes.length, 2);
+    h.commit(intermediate);
+    h.advance(7500);
+    assert.equal(h.record.floating, false);
+    assert.ok(h.requests.some(request => request.type === 'resize' &&
+        request.width === final.width && request.height === final.height));
+    h.commit(final);
+    h.advance(1200);
+    assert.equal(h.record.floating, false);
+    assert.equal(h.record.visualScale, 1);
+});
+
 test('scale-to-fit includes X11 titlebar extents in the minimum frame size', () => {
     const h = harness();
     h.app.settings.get_strv = key => key === 'scaled-apps' ? ['test.desktop'] : [];

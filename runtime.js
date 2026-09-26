@@ -16,13 +16,16 @@ import {Studio} from './lib/studio.js';
 import {WindowBorder} from './lib/window-border.js';
 import {radiusFromPixels, radiusStyle, visualFrameRect} from './lib/window-radius.js';
 
-const RUNTIME_REVISION = 37;
+const RUNTIME_REVISION = 41;
 const RESTORE_STABILIZE_MS = 1400;
 const RESTORE_QUIET_MS = 120;
 const MAX_RESTORE_MOVES = 8;
 const MAX_SIZE_REPAIRS = 2;
+const MAX_KNOWN_FIT_REPAIRS = 8;
 const SIZE_REJECTION_GRACE_MS = 1800;
 const SIZE_MISMATCH_STABLE_MS = 600;
+const RAPID_LAYOUT_WINDOW_MS = 5000;
+const RAPID_LAYOUT_SETTLE_MS = 6000;
 const ACTION_HANDLE = Object.freeze({width: 28, height: 40});
 const ACTION_PALETTE = Object.freeze({width: 44, height: 176});
 const VISUAL = Object.freeze({quick: 140, move: 210, space: 230, osd: 1300, inset: 7});
@@ -312,6 +315,7 @@ export default class SnapTess extends Extension {
             visualScale: 1, scaleTimer: 0,
             backingRect: null, scaleMinimum: null, scaleNegotiated: false, placementMoves: 0, placing: false, restoreStarted: false, restoreMoves: 0,
             sizeRepairs: 0, sizeRejectUntil: 0, mismatchSize: null, mismatchSince: 0, repairResetTimer: 0,
+            lastTileChangeAt: 0, rapidLayoutRecovery: false, nativeFitSizes: [],
             windowRadius: null, radiusDirty: true, radiusAttempts: 0, radiusPending: false,
             radiusTimer: 0, radiusTimerDelay: 0,
             radiusFallbackTimer: 0, radiusFallbackReady: false,
@@ -1218,6 +1222,20 @@ export default class SnapTess extends Extension {
                 this.scheduleWindowScale(w, 250);
                 return;
             }
+            const nativeFit = record.nativeFitSizes.some(size =>
+                target.width + 1 >= size.width && target.height + 1 >= size.height);
+            const minimum = nativeFit ? this.minimumSize(w) : null;
+            if (record.rapidLayoutRecovery && nativeFit &&
+                minimum.width <= target.width + 1 && minimum.height <= target.height + 1) {
+                // The client has already accepted a tile no larger than this one.
+                // A late configure from a previous layout is not a size refusal.
+                if (record.sizeRepairs < MAX_KNOWN_FIT_REPAIRS) {
+                    record.sizeRepairs++;
+                    this.requestWindowGeometry(w, 'known-fit', record.backingRect);
+                    this.scheduleWindowScale(w, 1000);
+                }
+                return;
+            }
             // An unlisted client rejected its tile. Leave it native-sized and
             // float it rather than silently enabling compositor scaling.
             record.floating = true;
@@ -1230,7 +1248,14 @@ export default class SnapTess extends Extension {
             this.schedule(true);
             return;
         }
-        if (!sizeMismatch) { record.mismatchSize = null; record.mismatchSince = 0; }
+        if (!sizeMismatch) {
+            record.mismatchSize = null; record.mismatchSince = 0;
+            if (!scaled && !record.nativeFitSizes.some(size =>
+                Math.abs(size.width - target.width) <= 1 && Math.abs(size.height - target.height) <= 1)) {
+                record.nativeFitSizes.push({width: target.width, height: target.height});
+                if (record.nativeFitSizes.length > 12) record.nativeFitSizes.shift();
+            }
+        }
         if (scaled) {
             const scale = Math.max(0.05, Math.min(1,
                 target.width / Math.max(1, actual.width), target.height / Math.max(1, actual.height)));
@@ -1274,14 +1299,22 @@ export default class SnapTess extends Extension {
         const actor = this.windowActor(w), record = this.records.get(w);
         if (!record) return;
         const previousTile = record.tileRect ? {...record.tileRect} : null;
+        const targetChanged = !previousTile ||
+            ['x', 'y', 'width', 'height'].some(key => Math.abs(previousTile[key] - rect[key]) > 1);
         const reusable = !force && !restoring && !record.restorePending && !record.specialState &&
             record.tileRect && record.backingRect &&
             ['x', 'y', 'width', 'height'].every(key => Math.abs(record.tileRect[key] - rect[key]) <= 1);
         if (!restoring) {
+            const now = Date.now();
+            if (targetChanged) {
+                const rapid = record.lastTileChangeAt && now - record.lastTileChangeAt < RAPID_LAYOUT_WINDOW_MS;
+                record.sizeRejectUntil = now + (rapid ? RAPID_LAYOUT_SETTLE_MS : SIZE_REJECTION_GRACE_MS);
+                record.rapidLayoutRecovery = Boolean(rapid);
+                record.lastTileChangeAt = now;
+            }
             record.placementMoves = 0;
             record.restoreMoves = 0;
             record.sizeRepairs = 0;
-            record.sizeRejectUntil = Date.now() + SIZE_REJECTION_GRACE_MS;
             record.mismatchSize = null;
             record.mismatchSince = 0;
             this.cancel(record.repairResetTimer); record.repairResetTimer = 0;
