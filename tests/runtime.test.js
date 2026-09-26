@@ -10,7 +10,7 @@ const source = fs.readFileSync(new URL('../runtime.js', import.meta.url), 'utf8'
     .replace(/^import [^;]+;\n/gm, '')
     .replaceAll('import.meta.url', JSON.stringify(new URL('../runtime.js', import.meta.url).href))
     .replace('export default class SnapTess', 'class SnapTess') + '\nSnapTess;';
-function harness() {
+function harness(options = {}) {
     let now = 1000, nextId = 1, grabbed = false, monitor = 0, pointer = [150, 80];
     const timers = new Map(), signals = new Map(), actorSignals = new Map();
     const requests = [], scaleWrites = [], userOps = [], launches = [];
@@ -44,13 +44,20 @@ function harness() {
         move_frame(user, x, y) { userOps.push(user); requests.push({type: 'move', x, y}); },
     };
     const Runtime = vm.runInNewContext(source, {
-        ...geometry, Extension: class {}, console,
+        ...geometry, Extension: class {}, console, TextDecoder,
         Date: class extends Date { static now() { return now; } },
-        GLib: {file_get_contents() { throw new Error('trace disabled'); },
+        GLib: {file_get_contents(path) {
+            if (path === '/proc/979491/environ' && options.launchEnvironment)
+                return [true, new TextEncoder().encode(options.launchEnvironment)];
+            throw new Error('trace disabled');
+        },
             uuid_string_random: () => 'saved-layout-id'},
         Main: shellMain,
-        Shell: {AppSystem: {get_default: () => ({lookup_app: id => id === 'test.desktop'
-            ? {get_app_info: () => ({launch: () => { launches.push(id); return true; }})} : null})}},
+        Shell: {AppSystem: {get_default: () => ({lookup_app: id =>
+            id === 'test.desktop' || id === 'pdf4teachers.desktop'
+                ? {get_name: () => id === 'pdf4teachers.desktop' ? 'PDF4Teachers' : 'Test',
+                    get_app_info: () => ({launch: () => { launches.push(id); return true; }})} : null})},
+        WindowTracker: {get_default: () => ({get_window_app: () => options.trackedApp ?? null})}},
         Meta: {WindowType: {NORMAL: 0}, GrabOp: {MOVING: 1, KEYBOARD_MOVING: 2}},
         global: {display: {is_grabbed: () => grabbed, get_current_monitor: () => monitor, focus_window: null}, get_pointer: () => pointer,
             workspace_manager: {get_active_workspace: () => workspace, get_active_workspace_index: () => 0}, get_window_actors: () => [actor]},
@@ -268,6 +275,37 @@ test('scaled applications use the same identifier matching without changing save
     }
     h.app.settings.get_strv = () => ['unrelated.desktop'];
     assert.equal(h.app.scalesApp(h.w), false);
+});
+
+test('a window-backed app uses its verified desktop launch for application rules', () => {
+    const environment = 'GIO_LAUNCHED_DESKTOP_FILE=/home/user/.local/share/applications/pdf4teachers.desktop\0' +
+        'GIO_LAUNCHED_DESKTOP_FILE_PID=979491\0';
+    const h = harness({launchEnvironment: environment,
+        trackedApp: {is_window_backed: () => true, get_id: () => 'window:42'}});
+    delete h.app.appId;
+    h.w.get_wm_class = () => 'fr.clementgre.pdf4teachers.Main';
+    h.w.get_pid = () => 0;
+    assert.equal(h.app.appId(h.w), 'fr.clementgre.pdf4teachers.Main');
+    h.w.get_pid = () => 979491;
+    assert.equal(h.app.appId(h.w), 'pdf4teachers.desktop');
+    assert.equal(h.app.windowApp(h.w).get_name(), 'PDF4Teachers');
+    h.app.settings.get_strv = key => key === 'scaled-apps' ? ['pdf4teachers.desktop'] : [];
+    assert.equal(h.app.scalesApp(h.w), true);
+    h.app.settings.get_strv = key => key === 'excluded-apps' ? ['pdf4teachers.desktop'] : [];
+    assert.equal(h.app.windows(0).length, 0);
+
+    const mismatched = harness({launchEnvironment: environment.replace('PID=979491', 'PID=1'),
+        trackedApp: {is_window_backed: () => true, get_id: () => 'window:43'}});
+    delete mismatched.app.appId;
+    mismatched.w.get_pid = () => 979491;
+    mismatched.w.get_wm_class = () => 'fr.clementgre.pdf4teachers.Main';
+    assert.equal(mismatched.app.appId(mismatched.w), 'fr.clementgre.pdf4teachers.Main');
+
+    const recognized = harness({launchEnvironment: environment,
+        trackedApp: {is_window_backed: () => false, get_id: () => 'other.desktop'}});
+    delete recognized.app.appId;
+    recognized.w.get_pid = () => 979491;
+    assert.equal(recognized.app.appId(recognized.w), 'other.desktop');
 });
 
 test('applying multiple Studio contexts creates one undo checkpoint and preserves every profile', () => {
