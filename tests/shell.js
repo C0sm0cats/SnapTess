@@ -38,6 +38,7 @@ export async function run() {
     assert(app.windowActionHandle.get_parent()===global.window_group,'window action handle stays below Shell chrome');
     assert(hotRoot.query_exists(null),'hot reload staging exists while enabled');
     assert(!app.running,'starts without moving windows');
+    assert(app.settings.get_string('preview-state')==='{}','preview starts without stale window data');
     for(let i=0;i<4;i++) await Scripting.createTestWindow({width:320,height:240});
     await Scripting.waitTestWindows(); await pause();
     const windows=[...app.records.keys()];
@@ -49,6 +50,10 @@ export async function run() {
         'tray disables arrangement actions while SnapTess is paused');
     app.setRunning(true); await pause();
     assert(app.groups.get(app.key(0)).length===4,'four tiled slots');
+    const initialPreview=JSON.parse(app.settings.get_string('preview-state'));
+    assert(initialPreview.running && initialPreview.monitor===0 && initialPreview.space===0 &&
+        initialPreview.count===4 && initialPreview.occupied.length===4 && initialPreview.preset==='auto',
+        'preferences preview follows the active tiled space');
     assert(app.statusItem.label.text.includes('ON') && app.monitorMenus.length===Main.layoutManager.monitors.length &&
         app.monitorMenus[0].menu.label.text.includes('Display 1') &&
         app.monitorMenus[0].spaces.length===3,
@@ -385,6 +390,8 @@ export async function run() {
     app.tile(true);
     assert(app.pinnedPlaceholders.size===0,'clearing pins removes every placeholder');
     app.switchSpace(1,0);
+    assert(JSON.parse(app.settings.get_string('preview-state')).space===1,
+        'preferences preview follows a SnapTess space switch');
     assert(app.spaceTransitions.size===1,'space switch uses the custom SnapTess transition');
     const spaceLayer=[...app.spaceTransitions][0];
     assert(spaceLayer._snaptessMonitor===0 && spaceLayer._snaptessDot && app.spaceDots.has(spaceLayer._snaptessDot),
@@ -728,6 +735,9 @@ export async function run() {
     app.studio.dialog.close();
     if (Main.layoutManager.monitors.length > 1) {
         app.applyProfile(1,0,'auto',[windows[0]]); await pause();
+        windows[0].activate(global.get_current_time()); await pause();
+        assert(JSON.parse(app.settings.get_string('preview-state')).monitor===1,
+            'preferences preview follows the focused display');
         assert(windows[0].get_monitor()===1,
             `studio assignment moves across monitors: frame ${geometry(windows[0])}, record ${JSON.stringify(app.records.get(windows[0])?.tileRect)}`);
         app.switchSpace(1,1); await pause();
@@ -745,6 +755,7 @@ export async function run() {
             r.tileRect===null, `stop retains original snapshot for ${i}: ${JSON.stringify(r)}`);
     });
     app.setRunning(false); await pause();
+    assert(app.settings.get_string('preview-state')==='{}','preview clears when arrangement stops');
     assert(app.motionGuides.size===0 && app.spaceTransitions.size===0 && app.spaceDots.size===0,
         'pausing removes short-lived visual actors');
     const restoredOriginals=()=>windows.every((w,i)=>{
@@ -761,6 +772,7 @@ export async function run() {
     const reloadLayoutId=app.saveLayout('Reload test','full',[windows[0]],[]);
     const firstRuntimeClass=app.constructor;
     await Main.extensionManager.disableExtension(loader.uuid); await pause();
+    assert(app.settings===null,'disabled runtime releases settings');
     assert(!Main.panel.statusArea[loader.uuid],'disable removes indicator');
     assert(!hotRoot.query_exists(null),'disable removes hot reload staging');
     await Main.extensionManager.enableExtension(loader.uuid); await pause();

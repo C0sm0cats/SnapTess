@@ -25,7 +25,7 @@ function harness() {
         set_pivot_point(x, y) { this.pivot = [x, y]; },
         set_scale(x, y) { scaleWrites.push([x, y]); this.scale_x = x; this.scale_y = y; },
     };
-    const workspace = {};
+    const workspace = {get_work_area_for_monitor: () => ({x: 0, y: 0, width: 800, height: 600})};
     const shellMain = {layoutManager: {monitors: [{}]}, notify() {}};
     const w = {
         fullscreen: false, flags: 0, minimized: false,
@@ -52,12 +52,14 @@ function harness() {
         Shell: {AppSystem: {get_default: () => ({lookup_app: id => id === 'test.desktop'
             ? {get_app_info: () => ({launch: () => { launches.push(id); return true; }})} : null})}},
         Meta: {WindowType: {NORMAL: 0}, GrabOp: {MOVING: 1, KEYBOARD_MOVING: 2}},
-        global: {display: {is_grabbed: () => grabbed, focus_window: null}, get_pointer: () => pointer,
-            workspace_manager: {get_active_workspace: () => workspace}, get_window_actors: () => [actor]},
+        global: {display: {is_grabbed: () => grabbed, get_current_monitor: () => monitor, focus_window: null}, get_pointer: () => pointer,
+            workspace_manager: {get_active_workspace: () => workspace, get_active_workspace_index: () => 0}, get_window_actors: () => [actor]},
     });
     const app = new Runtime();
+    let previewState = '{}';
     Object.assign(app, {records: new Map(), spaces: new Map(), running: true, busy: false, drag: null,
-        settings: {get_strv: () => [], get_boolean: () => false}});
+        settings: {get_strv: () => [], get_boolean: () => false, get_int: () => 12, get_double: () => 0.6,
+            get_string: () => previewState, set_string: (_key, value) => { previewState = value; }}});
     app.appId = () => 'test.desktop';
     app.later = (ms, fn) => { const id = nextId++; timers.set(id, {at: now + ms, fn}); return id; };
     app.cancel = id => timers.delete(id);
