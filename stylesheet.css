@@ -76,6 +76,10 @@
 .snaptess-drop-caption { color: #b5f7db; font-size: 8px; font-weight: 800; }
 .snaptess-slot-content { spacing: 7px; }
 .snaptess-slot-content.compact { spacing: 2px; }
+.snaptess-slot-content.dense { spacing: 5px; }
+.snaptess-slot-content.dense .snaptess-slot-number { font-size: 10px; }
+.snaptess-slot-content.dense .snaptess-app-name, .snaptess-slot-content.dense .snaptess-reserved-name,
+.snaptess-slot-content.dense .snaptess-empty { font-size: 10px; }
 .snaptess-slot-content.compact .snaptess-slot-number { font-size: 11px; }
 .snaptess-slot-content.reserved { spacing: 7px; }
 .snaptess-slot-content.reserved.compact { spacing: 3px; }

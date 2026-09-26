@@ -1,10 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {layout, autoLayout, fitMinimumSize, frameScalePivot, nearestSlot, directionalSlot, reconcileSlots,
+import {layout, autoLayout, capacity, fitMinimumSize, frameScalePivot, nearestSlot, directionalSlot, reconcileSlots,
     activePinnedSlots, reserveAppSlots, swapNeighbor, PRESETS} from '../lib/layout.js';
 
 test('automatic layout progression, including more than 15 windows', () => {
     assert.deepEqual([1,2,3,4,5,7,10,13].map(autoLayout), ['full','split','master','2x2','3x2','3x3','4x3','5x3']);
+    assert.deepEqual([16,17,20,21,25].map(autoLayout), ['4x4','5x4','5x4','5x5','5x5']);
+    assert.deepEqual(['4x4','5x4','5x5'].map(capacity), [16,20,25]);
     assert.equal(layout({x:0,y:0,width:1920,height:1080}, 22).length,22);
 });
 test('every slot stays in the work area without overlap across scales and negative origins', () => {

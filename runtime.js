@@ -16,7 +16,7 @@ import {Studio} from './lib/studio.js';
 import {WindowBorder} from './lib/window-border.js';
 import {radiusFromPixels, radiusStyle, visualFrameRect} from './lib/window-radius.js';
 
-const RUNTIME_REVISION = 36;
+const RUNTIME_REVISION = 37;
 const RESTORE_STABILIZE_MS = 1400;
 const RESTORE_QUIET_MS = 120;
 const MAX_RESTORE_MOVES = 8;
@@ -1145,7 +1145,17 @@ export default class SnapTess extends Extension {
         if (typeof w.get_min_size !== 'function') return {width: 0, height: 0};
         try {
             const [known, width, height] = w.get_min_size();
-            return known ? {width: Math.max(0, width), height: Math.max(0, height)} : {width: 0, height: 0};
+            if (!known) return {width: 0, height: 0};
+            const minimum = {width: Math.max(0, width), height: Math.max(0, height)};
+            if (typeof w.client_rect_to_frame_rect === 'function') {
+                try {
+                    const frame = w.client_rect_to_frame_rect(new Mtk.Rectangle({x: 0, y: 0,
+                        ...minimum}));
+                    return {width: Math.max(minimum.width, frame.width),
+                        height: Math.max(minimum.height, frame.height)};
+                } catch { /* fall back to the client minimum */ }
+            }
+            return minimum;
         } catch { return {width: 0, height: 0}; }
     }
     applyWindowScale(w, actor, scale, target) {
