@@ -496,6 +496,36 @@ test('replacing a saved layout requires its ID and preserves its position', () =
     assert.deepEqual(app.savedLayouts.map(item => item.id), ['first', 'second']);
 });
 
+test('quick presets recover windows hidden by a saved layout without reviving manual minimization', () => {
+    const h = harness(), app = h.app;
+    app.key = () => 'workspace'; app.profileKey = () => 'profile';
+    app.groups = new Map();
+    app.profiles = {[app.profileKey(0, 0)]: {preset: 'full', pinned: []}};
+    app.groups.set(app.key(0, 0), [null]);
+    h.w.minimized = true;
+    h.record.restoreParked = true;
+    assert.deepEqual(Array.from(app.quickPresetPlan(0, 0, 'auto').windows), [h.w]);
+    h.record.restoreParked = false;
+    assert.deepEqual(Array.from(app.quickPresetPlan(0, 0, 'auto').windows), []);
+    h.w.minimized = false;
+    assert.equal(app.quickPresetPlan(0, 0, 'full').windows[0], h.w);
+});
+
+test('a saved layout is active only while its slots and pins still match', () => {
+    const h = harness(), app = h.app;
+    app.key = () => 'workspace'; app.profileKey = () => 'profile';
+    app.groups = new Map();
+    app.profiles = {[app.profileKey(0, 0)]: {preset: 'full', pinned: [null]}};
+    app.groups.set(app.key(0, 0), [h.w]);
+    const saved = {preset: 'full', slotCount: 1, apps: ['test.desktop'], pinned: [null]};
+    assert.equal(app.savedLayoutActive(saved, 0, 0), true);
+    app.groups.set(app.key(0, 0), [null]);
+    assert.equal(app.savedLayoutActive(saved, 0, 0), false);
+    app.groups.set(app.key(0, 0), [h.w]);
+    app.profiles[app.profileKey(0, 0)].pinned = ['test.desktop'];
+    assert.equal(app.savedLayoutActive(saved, 0, 0), false);
+});
+
 test('pinned slot state distinguishes minimized, floating, elsewhere, opening, and closed apps', () => {
     const h = harness(), app = h.app, record = h.record;
     app.pendingLayoutApps = new Map();

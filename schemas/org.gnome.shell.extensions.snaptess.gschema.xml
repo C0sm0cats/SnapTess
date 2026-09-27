@@ -34,6 +34,8 @@
 </key>
 <key name="studio" type="as"><default>['&lt;Control&gt;&lt;Alt&gt;p']</default><summary>Studio</summary>
 </key>
+<key name="layout-switcher" type="as"><default>['&lt;Control&gt;&lt;Alt&gt;l']</default><summary>Change layout</summary>
+</key>
 <key name="floating" type="as"><default>['&lt;Control&gt;&lt;Alt&gt;f']</default><summary>Floating</summary>
 </key>
 <key name="swap" type="as"><default>['&lt;Control&gt;&lt;Alt&gt;s']</default><summary>Swap</summary>

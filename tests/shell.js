@@ -589,11 +589,22 @@ export async function run() {
     assert(app.studio?.canvas.get_children().length===4,'studio renders slots');
     const initialPreset=app.studio.preset, initialUndo=app.studio.undoStack.length;
     const initialCardWidth=app.studio.canvas.get_first_child().width;
-    assert(!app.studio.presets.get_children()[1].reactive,
-        'Full is unavailable when four windows need tiles');
+    assert(app.studio.presets.get_children()[1].reactive &&
+        app.studio.presets.get_children()[1].has_style_class_name('unavailable') &&
+        app.studio.presetStatus.text.includes('4 tiles needed'),
+        'Studio marks incompatible presets and explains the minimum capacity');
     app.studio.choosePreset('full');
     assert(app.studio.preset===initialPreset && app.studio.undoStack.length===initialUndo,
         'an unavailable layout cannot create a misleading draft');
+    assert(app.studio.presetStatus.text.includes('Full has 1 tile; this draft needs 4'),
+        'selecting an incompatible preset explains the exact limit');
+    if (GLib.getenv('SNAPTESS_PRESET_STUDIO_SCREENSHOT')) {
+        const stream=Gio.File.new_for_path(GLib.getenv('SNAPTESS_PRESET_STUDIO_SCREENSHOT'))
+            .replace(null,false,Gio.FileCreateFlags.NONE,null);
+        const m=Main.layoutManager.monitors[0];
+        await new Shell.Screenshot().screenshot_area(m.x,m.y,m.width,m.height,stream);
+        stream.close(null);
+    }
     app.studio.choosePreset('3x2');
     assert(app.studio.canvas.get_first_child().width<initialCardWidth,
         'a compatible layout updates the Studio preview immediately');
@@ -791,8 +802,58 @@ export async function run() {
     assert(plan.slots.filter(Boolean).length===2 && plan.extras.length===2,
         'restore plan reuses matching windows and identifies surplus windows');
     savedStudio.dialog.close();
+    app.openLayoutSwitcher(); await pause();
+    const quick=app.layoutSwitcher;
+    assert(quick && quick.monitor===0 && quick.space===0 &&
+        quick.rows[0].accessible_name.includes('2 to hide') &&
+        quick.rows[0].accessible_name.includes('2 reused') &&
+        app.layoutSwitcherItem.label.text==='Change layout…',
+        'quick switcher shows the focused context and restore effects before applying');
+    quick.rows[0].grab_key_focus();
+    quick.navigate({get_key_symbol:()=>Clutter.KEY_Down},quick.rows[0]);
+    assert(global.stage.get_key_focus()===quick.rows.find(row=>
+        row.accessible_name.startsWith('Auto.')),
+        'arrow navigation moves to the next visible layout');
+    if (GLib.getenv('SNAPTESS_QUICK_LAYOUT_SCREENSHOT')) {
+        const stream=Gio.File.new_for_path(GLib.getenv('SNAPTESS_QUICK_LAYOUT_SCREENSHOT'))
+            .replace(null,false,Gio.FileCreateFlags.NONE,null);
+        const m=Main.layoutManager.monitors[0];
+        await new Shell.Screenshot().screenshot_area(m.x,m.y,m.width,m.height,stream);
+        stream.close(null);
+    }
+    const beforeQuick=JSON.stringify(app.profiles[app.profileKey(0,0)]);
+    quick.dialog.close(); await pause();
+    assert(!app.layoutSwitcher && JSON.stringify(app.profiles[app.profileKey(0,0)])===beforeQuick,
+        'closing the quick switcher leaves the arrangement unchanged');
+    app.openLayoutSwitcher(); await pause();
+    const applyingQuick=app.layoutSwitcher;
+    applyingQuick.presetToggle.emit('clicked',1);
+    assert(applyingQuick.presetList.visible && !applyingQuick.rows.some(row=>
+        row.accessible_name.startsWith('Full.')) &&
+        applyingQuick.hiddenPresetNote?.text.includes('presets hidden') &&
+        applyingQuick.rows.filter(row=>row.get_parent()===applyingQuick.presetList)
+            .every(row=>row.reactive),
+        'quick switcher lists only compatible presets and explains hidden options');
+    if (GLib.getenv('SNAPTESS_PRESET_QUICK_SCREENSHOT')) {
+        const stream=Gio.File.new_for_path(GLib.getenv('SNAPTESS_PRESET_QUICK_SCREENSHOT'))
+            .replace(null,false,Gio.FileCreateFlags.NONE,null);
+        const m=Main.layoutManager.monitors[0];
+        await new Shell.Screenshot().screenshot_area(m.x,m.y,m.width,m.height,stream);
+        stream.close(null);
+    }
+    const lastPreset=applyingQuick.rows.at(-1);
+    applyingQuick.rows[0].grab_key_focus();
+    for (let i=0;i<applyingQuick.rows.length+2 && global.stage.get_key_focus()!==lastPreset;i++) {
+        applyingQuick.navigate({get_key_symbol:()=>Clutter.KEY_Down},global.stage.get_key_focus());
+        await Scripting.sleep(20);
+    }
+    assert(global.stage.get_key_focus()===lastPreset,'arrow navigation reaches the last preset');
+    const [,presetY]=lastPreset.get_transformed_position();
+    const [,scrollY]=applyingQuick.scroll.get_transformed_position();
+    assert(presetY+lastPreset.height<=scrollY+applyingQuick.scroll.height+2,
+        'keyboard focus keeps the selected preset inside the scroll viewport');
     const beforeRestore=JSON.stringify(app.profiles[app.profileKey(0,0)]);
-    app.restoreSavedLayout(saved.id,0,0); await pause();
+    applyingQuick.rows[0].emit('clicked',1); await pause();
     assert(app.deletedLayouts.length===0,'restoring a layout retires stale Undo delete actions');
     assert(windows[2].minimized && windows[3].minimized &&
         app.records.get(windows[2]).restoreParked && app.records.get(windows[3]).restoreParked &&
@@ -800,11 +861,40 @@ export async function run() {
     'explicit restore minimizes extras without closing them and keeps the template capacity');
     assert(app.profiles[app.profileKey(0,0)].pinned[0]===app.appId(windows[0]) &&
         !app.profiles[app.profileKey(0,0)].pinned[1],
-    'restoring a saved layout does not pin an unpinned app');
+        'restoring a saved layout does not pin an unpinned app');
+    app.openLayoutSwitcher(); await pause();
+    const activeQuick=app.layoutSwitcher;
+    assert(activeQuick.rows[0].has_style_class_name('active') &&
+        activeQuick.rows[0].accessible_name.includes('Current layout'),
+        'the saved layout is marked active only when its current slots match');
+    activeQuick.rows.find(row=>row.accessible_name.startsWith('Auto.')).emit('clicked',1);
+    await pause();
+    assert(!windows[2].minimized && !windows[3].minimized &&
+        app.groups.get(app.key(0)).includes(windows[2]) &&
+        app.groups.get(app.key(0)).includes(windows[3]) &&
+        app.options(0,0).preset==='auto',
+        'quick Auto restores surplus windows hidden by a saved layout');
+    app.undo(); await pause();
+    assert(windows[2].minimized && windows[3].minimized &&
+        app.profiles[app.profileKey(0,0)].slotCount===2,
+        'Undo returns from quick Auto to the saved layout');
     app.undo(); await pause();
     assert(!windows[2].minimized && !windows[3].minimized &&
         JSON.stringify(app.profiles[app.profileKey(0,0)])===beforeRestore,
     'Undo restores the previous space profile and surplus windows');
+    app.openLayoutSwitcher(); await pause();
+    const presetQuick=app.layoutSwitcher;
+    presetQuick.presetToggle.emit('clicked',1);
+    const gridRow=presetQuick.rows.find(row=>row.accessible_name.startsWith('2 × 2.'));
+    assert(gridRow?.reactive,'a compatible fixed preset is available in the quick switcher');
+    gridRow.emit('clicked',1); await pause();
+    assert(app.options(0,0).preset==='2x2' &&
+        app.groups.get(app.key(0)).filter(Boolean).length===4 &&
+        windows.every(w=>!w.minimized),
+        'quick fixed preset reflows the existing windows without opening apps');
+    app.undo(); await pause();
+    assert(JSON.stringify(app.profiles[app.profileKey(0,0)])===beforeRestore,
+        'quick preset selection is undoable');
     app.deleteSavedLayout(saved.id);
     assert(!app.savedLayouts.some(item=>item.id===saved.id),'saved templates can be deleted independently');
     app.openStudio(); await pause();
@@ -843,6 +933,12 @@ export async function run() {
         newStudio.newLayout.apps.every(id=>id===null) && newStudio.canvas.get_n_children()===4 &&
         !newStudio.presets.get_children().some(b=>b.label==='Auto'),
         'New layout starts blank with fixed presets only');
+    newStudio.newLayout.apps[3]='test.desktop'; newStudio.render();
+    newStudio.choosePreset('split');
+    assert(newStudio.newLayout.preset==='2x2' && newStudio.newLayout.apps[3]==='test.desktop' &&
+        newStudio.presetStatus.text.includes('this draft needs 4'),
+        'New layout preserves an assigned tile when a smaller preset is selected');
+    newStudio.newLayout.apps[3]=null; newStudio.render();
     if (GLib.getenv('SNAPTESS_NEW_LAYOUT_SCREENSHOT')) {
         await Scripting.sleep(160);
         const stream=Gio.File.new_for_path(GLib.getenv('SNAPTESS_NEW_LAYOUT_SCREENSHOT'))
@@ -926,6 +1022,10 @@ export async function run() {
         windows[0].activate(global.get_current_time()); await pause();
         assert(JSON.parse(app.settings.get_string('preview-state')).monitor===1,
             'preferences preview follows the focused display');
+        app.openLayoutSwitcher(); await pause();
+        assert(app.layoutSwitcher.monitor===1 && app.layoutSwitcher.space===app.activeSpace(1),
+            'quick switcher targets the focused display and its active space');
+        app.layoutSwitcher.dialog.close();
         assert(windows[0].get_monitor()===1,
             `studio assignment moves across monitors: frame ${geometry(windows[0])}, record ${JSON.stringify(app.records.get(windows[0])?.tileRect)}`);
         app.switchSpace(1,1); await pause();

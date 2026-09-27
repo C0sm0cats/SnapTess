@@ -197,6 +197,7 @@ export default class SnapTessPreferences extends ExtensionPreferences {
             description: 'Record a combination, edit the text, or clear it to disable.'});
         page.add(shortcuts);
         for (const [key, title] of [['toggle', 'Toggle tiling'], ['retile', 'Arrange again'], ['studio', 'Open Layout Studio'],
+            ['layout-switcher', 'Change layout'],
             ['floating', 'Float focused window'], ['swap', 'Swap mode'], ['undo', 'Undo'],
             ['space-1', 'Monitor space 1'], ['space-2', 'Monitor space 2'], ['space-3', 'Monitor space 3'], ['stop', 'Stop and restore']]) {
             const row = new Adw.EntryRow({title, text: settings.get_strv(key)[0] ?? '', show_apply_button: true});
