@@ -22,6 +22,7 @@ SnapTess is a standalone GNOME Shell extension. It starts paused: enabling it do
 
 - **Automatic layouts:** full, split, 60/40 focus-and-stack, and grid presets through 5×5. Auto expands beyond 25 slots as more windows open.
 - **Layout Studio:** a desktop overlay with application icons, numbered slots, drag-to-swap, layout presets, display/space selection, and a window library for assigning windows across displays. Create a named layout from a blank fixed preset or edit the current space. Edits stay in a draft until applied or saved.
+- **Quick layout switcher:** open it from the panel menu or press Ctrl+Alt+L. See how many windows each saved layout will reuse, open, or hide before applying it to the focused display and space. Switch to Auto or a compatible preset without opening apps.
 - **Drag to snap:** move a tiled window by its title bar, see the translucent target, and release. Same-display drops swap; cross-display drops insert and reflow both displays.
 - **Three spaces per display:** independent window groups within each native GNOME workspace. Switching parks windows with native minimization; stopping reveals and restores them.
 - **Stay in control:** floating windows, app exclusions, configurable compaction, maximize/fullscreen freeze, focused-window outline, animated guides, saved layout/app order, and ten-level arrangement undo.
@@ -56,6 +57,7 @@ All shortcuts can be changed in Preferences. In swap mode, use the arrow keys an
 |---|---|
 | Ctrl+Alt+T | Start / stop tiling and restore |
 | Ctrl+Alt+P | Layout Studio |
+| Ctrl+Alt+L | Change layout |
 | Ctrl+Alt+R | Arrange again |
 | Ctrl+Alt+F | Float / tile the focused window |
 | Ctrl+Alt+S | Enter / leave swap mode |
@@ -70,6 +72,10 @@ Spaces are **session-local window groups**, not replacement GNOME workspaces. Ea
 Layouts and application order are saved by native workspace index, monitor connector and space number. In Studio, select a window and choose **Keep this app in this tile** to reserve its place when it closes and reopens; the tile stays empty while the app is absent. Apply saves changes made across all edited displays and spaces as one undoable arrangement. These everyday space profiles reorder **existing** windows; changing a preset or space never launches applications. Multiple windows from the same app retain their current relative order.
 
 **Saved layouts** are separate named templates in Studio. Save the current draft, or choose **New layout** to start from a blank fixed preset. Select installed apps for individual tiles, leave any tiles empty, and pin apps independently. Saving a new layout leaves the desktop untouched. Select a template to preview its apps and pins, then explicitly choose **Restore in this space**. Restore reuses matching windows in the selected space, launches missing apps when available, restores only the pins chosen in Studio, and minimizes surplus windows without closing them. Undo restores the previous arrangement and minimized state, but does not close newly launched apps. A deleted named layout has its own **Undo delete** action in Studio. Missing or unavailable apps leave their tiles empty; pinned tiles remain reserved. This is an on-demand layout reconstruction, not automatic session or document restoration after login.
+
+Studio dims presets with too few tiles for the current draft. Selecting one explains the required capacity without changing the draft. A new layout needs enough tiles to keep every assigned app in its chosen position.
+
+The **quick layout switcher** applies a saved layout with one selection after showing its effects. Escape cancels. Its Auto and built-in presets rearrange existing windows without launching apps; Auto also brings back windows that a saved layout hid. The preset list shows only layouts that fit the current arrangement and indicates how many smaller presets are hidden.
 
 Maximizing or fullscreening a managed window freezes automatic layout changes on that display. Restoring resumes tiling. Explicitly applying a layout can unmaximize windows; it never exits fullscreen. Applications can impose minimum client sizes, which GNOME still enforces. If a requested tile is smaller, SnapTess keeps the real client at an allowed size and uniformly scales its compositor actor into the slot, preventing overlap while preserving aspect ratio.
 

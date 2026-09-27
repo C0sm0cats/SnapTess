@@ -33,8 +33,8 @@ function visit(widget) {
     for (let child = widget.get_first_child(); child; child = child.get_next_sibling()) visit(child);
 }
 visit(window);
-if (entries.length !== 11) throw new Error(`Expected search and 10 shortcut rows, got ${entries.length}`);
-if (previews.length !== 1 || resetButtons.length !== 7 || shortcutLabels.length !== 10 || recordButtons.length !== 10)
+if (entries.length !== 12) throw new Error(`Expected search and 11 shortcut rows, got ${entries.length}`);
+if (previews.length !== 1 || resetButtons.length !== 7 || shortcutLabels.length !== 11 || recordButtons.length !== 11)
     throw new Error('Live layout preview or native shortcut controls are missing');
 if (previews[0].get_content_width() !== 220 || previews[0].get_content_height() !== 116)
     throw new Error('Focus layout preview has no usable geometry');

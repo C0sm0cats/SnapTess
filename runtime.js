@@ -13,10 +13,11 @@ import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js';
 import {layout, PRESETS, capacity, fitMinimumSize, frameScalePivot, nearestSlot, directionalSlot, reconcileSlots,
     activePinnedSlots, reserveAppSlots, swapNeighbor} from './lib/layout.js';
 import {Studio} from './lib/studio.js';
+import {LayoutSwitcher} from './lib/layout-switcher.js';
 import {WindowBorder} from './lib/window-border.js';
 import {radiusFromPixels, radiusStyle, plausibleWindowRadius, visualFrameRect} from './lib/window-radius.js';
 
-const RUNTIME_REVISION = 46;
+const RUNTIME_REVISION = 48;
 const RESTORE_STABILIZE_MS = 1400;
 const RESTORE_QUIET_MS = 120;
 const MAX_RESTORE_MOVES = 8;
@@ -77,6 +78,7 @@ export default class SnapTess extends Extension {
         this.undoItem = this.indicator.menu.addAction('Undo last arrangement', () => this.undo());
         this.indicator.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
         this.arrangeItem = this.indicator.menu.addAction('Arrange again', () => { this.checkpoint(); this.tile(true); });
+        this.layoutSwitcherItem = this.indicator.menu.addAction('Change layout…', () => this.openLayoutSwitcher());
         this.studioItem = this.indicator.menu.addAction('Layout Studio…', () => this.openStudio());
         this.indicator.menu.addAction('Preferences', () => this.openPreferences());
         this.indicator.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
@@ -170,7 +172,8 @@ export default class SnapTess extends Extension {
         } catch { /* theme context may not expose a change signal */ }
         this.bindings = {
             toggle: () => this.setRunning(!this.running), retile: () => { this.checkpoint(); this.tile(true); },
-            studio: () => this.openStudio(), floating: () => this.toggleFloating(),
+            studio: () => this.openStudio(), 'layout-switcher': () => this.openLayoutSwitcher(),
+            floating: () => this.toggleFloating(),
             swap: () => this.toggleSwap(), undo: () => this.undo(), stop: () => this.setRunning(false),
             'space-1': () => this.switchSpace(0), 'space-2': () => this.switchSpace(1), 'space-3': () => this.switchSpace(2),
         };
@@ -188,7 +191,7 @@ export default class SnapTess extends Extension {
         this.connect(global.stage, 'captured-event', (_stage, event) => {
             if (event.type() !== Clutter.EventType.MOTION || this.windowActions.visible) return Clutter.EVENT_PROPAGATE;
             const w = global.display.focus_window, record = this.records.get(w);
-            if (!this.running || !record || this.drag || this.swapMode || this.studio || Main.overview.visible || w.minimized ||
+            if (!this.running || !record || this.drag || this.swapMode || this.studio || this.layoutSwitcher || Main.overview.visible || w.minimized ||
                 w.fullscreen)
                 return Clutter.EVENT_PROPAGATE;
             const rect = this.windowActionsRect(w, record);
@@ -723,6 +726,45 @@ export default class SnapTess extends Extension {
         return {slots, missing, extras: candidates.filter(w => !used.has(w) &&
             (!w.minimized || this.records.get(w)?.parked || this.records.get(w)?.restoreParked))};
     }
+    savedLayoutActive(layout, monitor, space) {
+        if (!this.running || this.activeSpace(monitor) !== space) return false;
+        const slots = this.groups.get(this.key(monitor, space));
+        const profile = this.profiles[this.profileKey(monitor, space)];
+        if (!slots || slots.length !== layout.slotCount || profile?.preset !== layout.preset) return false;
+        const normalize = id => (id ?? '').replace(/\.desktop$/i, '').toLowerCase();
+        for (let i = 0; i < layout.slotCount; i++) {
+            if (normalize(profile.pinned?.[i]) !== normalize(layout.pinned?.[i])) return false;
+            const id = (layout.apps ?? layout.pinned)[i];
+            if (normalize(id) !== normalize(slots[i] && this.appId(slots[i]))) return false;
+        }
+        return !this.windows(monitor, space).some(w => !slots.includes(w));
+    }
+    quickPresetPlan(monitor, space, preset) {
+        if (!PRESETS.some(([id]) => id === preset)) return null;
+        const key = this.key(monitor, space);
+        const slots = this.groups.get(key) ?? [];
+        const candidates = this.windows(monitor, space, true).filter(w =>
+            !w.minimized || this.records.get(w)?.restoreParked);
+        const pins = this.profiles[this.profileKey(monitor, space)]?.pinned ?? [];
+        const windows = Array.from({length: pins.length}, () => null);
+        for (let i = 0; i < pins.length; i++)
+            if (pins[i] && candidates.includes(slots[i])) windows[i] = slots[i];
+        for (const w of [...slots, ...candidates]) {
+            if (!w || !candidates.includes(w) || windows.includes(w)) continue;
+            const index = windows.findIndex((item, i) => !item && !pins[i]);
+            if (index < 0) windows.push(w); else windows[index] = w;
+        }
+        while (windows.length && !windows.at(-1) && !pins[windows.length - 1]) windows.pop();
+        const count = Math.max(windows.length, pins.length);
+        if (preset !== 'auto' && count > capacity(preset)) return null;
+        return {windows, pinned: Array.from({length: count}, (_, i) => pins[i] ?? null)};
+    }
+    applyQuickPreset(monitor, space, preset) {
+        const plan = this.quickPresetPlan(monitor, space, preset);
+        if (!plan) return false;
+        this.applyProfiles([{monitor, space, preset, windows: plan.windows, pinned: plan.pinned}], {monitor, space});
+        return true;
+    }
     restoreSavedLayout(id, monitor, space) {
         const layout = this.savedLayouts.find(item => item.id === id);
         if (!layout) return false;
@@ -979,7 +1021,7 @@ export default class SnapTess extends Extension {
     updatePinnedPlaceholders() {
         if (!this.pinnedPlaceholders) return;
         if (this.drag?.started) return;
-        if (!this.running || this.studio || Main.overview.visible || this.spaceTransitions.size) {
+        if (!this.running || this.studio || this.layoutSwitcher || Main.overview.visible || this.spaceTransitions.size) {
             this.clearPinnedPlaceholders();
             return;
         }
@@ -1037,7 +1079,7 @@ export default class SnapTess extends Extension {
                     reactive: actionable, can_focus: actionable,
                     child: content});
                 button.connect('clicked', () => {
-                    if (this.pinnedPlaceholders.get(key)?.button !== button || !this.running || this.studio) return;
+                    if (this.pinnedPlaceholders.get(key)?.button !== button || !this.running || this.studio || this.layoutSwitcher) return;
                     if (entry.state === 'FLOATING' && this.records.get(entry.window)?.floating) {
                         this.checkpoint();
                         this.records.get(entry.window).floating = false;
@@ -1458,7 +1500,7 @@ export default class SnapTess extends Extension {
     updateSwapHints() {
         const w = this.swapWindow, record = this.records.get(w);
         if (!this.swapMode || !this.running || !record || record.floating || w.minimized || w.fullscreen ||
-            w.get_maximize_flags() || this.drag?.started || this.studio || Main.overview.visible) {
+            w.get_maximize_flags() || this.drag?.started || this.studio || this.layoutSwitcher || Main.overview.visible) {
             this.hideSwapHints(); return;
         }
         const slots = this.groups.get(this.swapKey) ?? [];
@@ -1679,7 +1721,7 @@ export default class SnapTess extends Extension {
         const w = this.swapMode ? this.swapWindow : global.display.focus_window;
         const record = this.records.get(w);
         this.updateSwapHints();
-        if (!this.running || this.drag?.started || this.studio || Main.overview.visible || !record || record.floating ||
+        if (!this.running || this.drag?.started || this.studio || this.layoutSwitcher || Main.overview.visible || !record || record.floating ||
             w.minimized || w.fullscreen || w.get_maximize_flags() || !this.settings.get_boolean('active-border') ||
             !this.windows(w.get_monitor()).includes(w)) {
             this.border.hide(); this.borderFocusWindow = null; return;
@@ -1807,7 +1849,7 @@ export default class SnapTess extends Extension {
     }
     showWindowActionHandle(animate = false) {
         const w = global.display.focus_window, record = this.records.get(w);
-        if (!this.running || !record || this.drag || this.swapMode || this.studio || Main.overview.visible || w.minimized ||
+        if (!this.running || !record || this.drag || this.swapMode || this.studio || this.layoutSwitcher || Main.overview.visible || w.minimized ||
             w.fullscreen) {
             this.windowActionHandle.hide(); return;
         }
@@ -1849,7 +1891,7 @@ export default class SnapTess extends Extension {
     }
     showWindowActions() {
         const w = global.display.focus_window, record = this.records.get(w);
-        if (!this.running || !record || this.drag || this.swapMode || this.studio || Main.overview.visible || w.minimized ||
+        if (!this.running || !record || this.drag || this.swapMode || this.studio || this.layoutSwitcher || Main.overview.visible || w.minimized ||
             w.fullscreen) {
             this.hideWindowActions(); return;
         }
@@ -2264,13 +2306,27 @@ export default class SnapTess extends Extension {
 
     openStudio() {
         this.exitSwap();
-        if (this.studio) return;
+        if (this.studio || this.layoutSwitcher) return;
         this.clearPinnedPlaceholders();
         this.studio = new Studio(this);
         this.studio.dialog.connect('destroy', () => {
             this.studio = null; this.updateBorder(); this.updatePinnedPlaceholders();
         });
         this.hideGuides(); this.studio.dialog.open();
+    }
+    openLayoutSwitcher() {
+        if (this.studio) return;
+        if (this.layoutSwitcher) { this.layoutSwitcher.dialog.close(); return; }
+        const monitor = this.currentMonitor(), space = this.activeSpace(monitor);
+        this.exitSwap(); this.hideGuides(); this.hideWindowActions(); this.clearPinnedPlaceholders();
+        const switcher = new LayoutSwitcher(this, monitor, space);
+        this.layoutSwitcher = switcher;
+        switcher.dialog.connect('destroy', () => {
+            if (this.layoutSwitcher !== switcher) return;
+            this.layoutSwitcher = null; this.updateBorder(); this.updatePinnedPlaceholders();
+        });
+        this.updateBorder();
+        switcher.open();
     }
     applyProfile(monitor, space, preset, windows) {
         this.applyProfiles([{monitor, space, preset, windows}]);
@@ -2328,6 +2384,7 @@ export default class SnapTess extends Extension {
 
     disable() {
         this.pendingLayoutApps.clear();
+        this.layoutSwitcher?.dialog.destroy(); this.layoutSwitcher = null;
         this.studio?.dialog.destroy(); this.studio = null;
         this.setRunning(false, true);
         this.clearPinnedPlaceholders();
