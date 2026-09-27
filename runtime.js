@@ -17,7 +17,7 @@ import {LayoutSwitcher} from './lib/layout-switcher.js';
 import {WindowBorder} from './lib/window-border.js';
 import {radiusFromPixels, radiusStyle, plausibleWindowRadius, visualFrameRect} from './lib/window-radius.js';
 
-const RUNTIME_REVISION = 48;
+const RUNTIME_REVISION = 49;
 const RESTORE_STABILIZE_MS = 1400;
 const RESTORE_QUIET_MS = 120;
 const MAX_RESTORE_MOVES = 8;
@@ -266,13 +266,13 @@ export default class SnapTess extends Extension {
     appId(w) {
         const app = Shell.WindowTracker.get_default().get_window_app(w);
         if (app && !app.is_window_backed()) return app.get_id();
-        return this.launchedDesktopId(w) ?? w.get_wm_class() ?? '';
+        return this.launchedDesktopId(w) ?? this.executableDesktopId(w) ?? w.get_wm_class() ?? '';
     }
 
     windowApp(w) {
         const tracked = Shell.WindowTracker.get_default().get_window_app(w);
         if (tracked && !tracked.is_window_backed()) return tracked;
-        const id = this.launchedDesktopId(w);
+        const id = this.launchedDesktopId(w) ?? this.executableDesktopId(w);
         return id ? Shell.AppSystem.get_default().lookup_app(id) ?? tracked : tracked;
     }
 
@@ -297,6 +297,26 @@ export default class SnapTess extends Extension {
             }
         } catch { /* Some clients do not expose their launch environment. */ }
         this.desktopIdByWindow.set(w, id);
+        return id;
+    }
+
+    executableDesktopId(w) {
+        this.executableIdByWindow ??= new WeakMap();
+        if (this.executableIdByWindow.has(w)) return this.executableIdByWindow.get(w);
+        let id = null;
+        const pid = w.get_pid?.();
+        const wmClass = w.get_wm_class?.()?.toLowerCase().split('.').at(-1);
+        if (pid > 0 && wmClass) {
+            try {
+                const executable = GLib.path_get_basename(GLib.file_read_link(`/proc/${pid}/exe`)).toLowerCase();
+                if (executable === wmClass) {
+                    const matches = Shell.AppSystem.get_default().get_installed().filter(info =>
+                        GLib.path_get_basename(info.get_executable?.() ?? '').toLowerCase() === executable);
+                    if (matches.length === 1) id = matches[0].get_id();
+                }
+            } catch { /* Process or desktop entry may have disappeared. */ }
+        }
+        this.executableIdByWindow.set(w, id);
         return id;
     }
 

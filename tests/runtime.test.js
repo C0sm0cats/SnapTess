@@ -47,16 +47,23 @@ function harness(options = {}) {
         ...geometry, Extension: class {}, console, TextDecoder,
         Date: class extends Date { static now() { return now; } },
         GLib: {file_get_contents(path) {
-            if (path === '/proc/979491/environ' && options.launchEnvironment)
+            if (path === `/proc/${options.launchPid ?? 979491}/environ` && options.launchEnvironment)
                 return [true, new TextEncoder().encode(options.launchEnvironment)];
             throw new Error('trace disabled');
         },
+            file_read_link(path) {
+                if (path === `/proc/${options.launchPid ?? 979491}/exe` && options.executablePath)
+                    return options.executablePath;
+                throw new Error('executable unavailable');
+            },
+            path_get_basename: path => path.split('/').at(-1),
             uuid_string_random: () => 'saved-layout-id'},
         Main: shellMain,
-        Shell: {AppSystem: {get_default: () => ({lookup_app: id =>
+        Shell: {AppSystem: {get_default: () => ({get_installed: () => options.installedApps ?? [], lookup_app: id =>
             id === 'test.desktop' || id === 'pdf4teachers.desktop'
                 ? {get_name: () => id === 'pdf4teachers.desktop' ? 'PDF4Teachers' : 'Test',
-                    get_app_info: () => ({launch: () => { launches.push(id); return true; }})} : null})},
+                    get_app_info: () => ({launch: () => { launches.push(id); return true; }})} :
+                options.installedApps?.find(info => info.get_id() === id)?.app ?? null})},
         WindowTracker: {get_default: () => ({get_window_app: () => options.trackedApp ?? null})}},
         Meta: {WindowType: {NORMAL: 0}, GrabOp: {MOVING: 1, KEYBOARD_MOVING: 2}},
         Mtk: {Rectangle: class { constructor(rect) { Object.assign(this, rect); } }},
@@ -317,6 +324,32 @@ test('a window-backed app uses its verified desktop launch for application rules
     delete recognized.app.appId;
     recognized.w.get_pid = () => 979491;
     assert.equal(recognized.app.appId(recognized.w), 'other.desktop');
+});
+
+test('a Wayland app ID resolves through a unique matching desktop executable', () => {
+    const info = {get_id: () => 'hermes.desktop',
+        get_executable: () => '/home/user/.venv/bin/hermes',
+        app: {get_name: () => 'Hermes'}};
+    const h = harness({launchPid: 2895620,
+        launchEnvironment: 'GIO_LAUNCHED_DESKTOP_FILE=/usr/share/applications/kitty.desktop\0' +
+            'GIO_LAUNCHED_DESKTOP_FILE_PID=2733261\0',
+        executablePath: '/home/user/apps/Hermes', installedApps: [info],
+        trackedApp: {is_window_backed: () => true, get_id: () => 'window:51'}});
+    delete h.app.appId;
+    h.w.get_pid = () => 2895620;
+    h.w.get_wm_class = () => 'com.nousresearch.hermes';
+    h.app.settings.get_strv = key => key === 'scaled-apps' ? ['hermes.desktop'] : [];
+    assert.equal(h.app.appId(h.w), 'hermes.desktop');
+    assert.equal(h.app.windowApp(h.w).get_name(), 'Hermes');
+    assert.equal(h.app.scalesApp(h.w), true);
+
+    const ambiguous = harness({launchPid: 2895620, executablePath: '/home/user/apps/Hermes',
+        installedApps: [info, {get_id: () => 'another.desktop', get_executable: () => 'hermes'}],
+        trackedApp: {is_window_backed: () => true, get_id: () => 'window:52'}});
+    delete ambiguous.app.appId;
+    ambiguous.w.get_pid = () => 2895620;
+    ambiguous.w.get_wm_class = () => 'com.nousresearch.hermes';
+    assert.equal(ambiguous.app.appId(ambiguous.w), 'com.nousresearch.hermes');
 });
 
 test('applying multiple Studio contexts creates one undo checkpoint and preserves every profile', () => {
