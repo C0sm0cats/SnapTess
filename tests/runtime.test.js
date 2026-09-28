@@ -529,6 +529,34 @@ test('replacing a saved layout requires its ID and preserves its position', () =
     assert.deepEqual(app.savedLayouts.map(item => item.id), ['first', 'second']);
 });
 
+test('renaming a saved layout changes only its name and persists it', () => {
+    const h = harness(), app = h.app;
+    app.savedLayouts = [
+        {id: 'first', name: 'Work', preset: 'split', slotCount: 2,
+            apps: ['test.desktop', null], pinned: ['test.desktop', null]},
+        {id: 'second', name: 'Other', preset: 'full', slotCount: 1,
+            apps: [null], pinned: [null]},
+    ];
+    const before = JSON.parse(JSON.stringify(app.savedLayouts));
+    const frame = h.frame();
+    let writes = 0, stored;
+    app.settings.set_string = (key, value) => {
+        assert.equal(key, 'saved-layouts');
+        writes++;
+        stored = JSON.parse(value);
+    };
+    assert.equal(app.renameSavedLayout('missing', 'New'), false);
+    assert.equal(app.renameSavedLayout('first', '  '), false);
+    assert.equal(app.renameSavedLayout('first', 'other'), false);
+    assert.equal(writes, 0);
+    assert.equal(app.renameSavedLayout('first', 'Renamed work'), true);
+    assert.equal(writes, 1);
+    assert.deepEqual(stored, [{...before[0], name: 'Renamed work'}, before[1]]);
+    assert.deepEqual(h.frame(), frame);
+    assert.equal(app.renameSavedLayout('first', 'Renamed work'), true);
+    assert.equal(writes, 1);
+});
+
 test('quick presets recover windows hidden by a saved layout without reviving manual minimization', () => {
     const h = harness(), app = h.app;
     app.key = () => 'workspace'; app.profileKey = () => 'profile';

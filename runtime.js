@@ -17,7 +17,7 @@ import {LayoutSwitcher} from './lib/layout-switcher.js';
 import {WindowBorder} from './lib/window-border.js';
 import {radiusFromPixels, radiusStyle, plausibleWindowRadius, visualFrameRect} from './lib/window-radius.js';
 
-const RUNTIME_REVISION = 49;
+const RUNTIME_REVISION = 50;
 const RESTORE_STABILIZE_MS = 1400;
 const RESTORE_QUIET_MS = 120;
 const MAX_RESTORE_MOVES = 8;
@@ -701,6 +701,16 @@ export default class SnapTess extends Extension {
             new Set(apps.filter(Boolean)).size !== apps.filter(Boolean).length ||
             pinned.some((id, index) => id !== null && id !== apps[index])) return false;
         return this.saveLayout(name, preset, apps, pinned, replaceId);
+    }
+    renameSavedLayout(id, name) {
+        const saved = this.savedLayouts.find(item => item.id === id);
+        name = name.trim().slice(0, 60);
+        if (!saved || !name || this.savedLayouts.some(item => item.id !== id &&
+            item.name.toLowerCase() === name.toLowerCase())) return false;
+        if (saved.name === name) return true;
+        saved.name = name;
+        this.settings.set_string('saved-layouts', JSON.stringify(this.savedLayouts));
+        return true;
     }
     deleteSavedLayout(id) {
         const index = this.savedLayouts.findIndex(layout => layout.id === id);

@@ -1,7 +1,15 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {layout, autoLayout, capacity, fitMinimumSize, frameScalePivot, nearestSlot, directionalSlot, reconcileSlots,
-    activePinnedSlots, reserveAppSlots, swapNeighbor, PRESETS} from '../lib/layout.js';
+    activePinnedSlots, reserveAppSlots, swapNeighbor, PRESETS, sortedSavedLayouts} from '../lib/layout.js';
+
+test('saved layouts sort by tile count without changing stored order or equal-count order', () => {
+    const saved = [{id: 'two', slotCount: 2}, {id: 'one-a', slotCount: 1},
+        {id: 'three', slotCount: 3}, {id: 'one-b', slotCount: 1}];
+    assert.deepEqual(sortedSavedLayouts(saved).map(item => item.id),
+        ['three', 'two', 'one-a', 'one-b']);
+    assert.deepEqual(saved.map(item => item.id), ['two', 'one-a', 'three', 'one-b']);
+});
 
 test('automatic layout progression, including more than 15 windows', () => {
     assert.deepEqual([1,2,3,4,5,7,10,13].map(autoLayout), ['full','split','master','2x2','3x2','3x3','4x3','5x3']);
