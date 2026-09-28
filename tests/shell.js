@@ -773,6 +773,10 @@ export async function run() {
     savedStudio.savedPicker.emit('clicked',1); await pause();
     assert(savedStudio.savedChooser.visible && savedStudio.savedChooserList.get_n_children()===6,
         'saved layouts open as a vertical list inside the Studio modal');
+    assert(savedStudio.savedChooserList.get_first_child().accessible_name==='Preview Test pair' &&
+        savedStudio.savedChooserList.get_first_child().get_child().get_children()[1]
+            .has_style_class_name('snaptess-saved-row-metadata'),
+        'Studio sorts saved layouts by tile count and shows the count');
     if (GLib.getenv('SNAPTESS_MENU_SCREENSHOT')) {
         const stream=Gio.File.new_for_path(GLib.getenv('SNAPTESS_MENU_SCREENSHOT'))
             .replace(null,false,Gio.FileCreateFlags.NONE,null);
@@ -804,16 +808,18 @@ export async function run() {
     savedStudio.dialog.close();
     app.openLayoutSwitcher(); await pause();
     const quick=app.layoutSwitcher;
+    const savedQuickRow=quick.rows.find(row=>row.accessible_name.startsWith('Test pair.'));
     assert(quick && quick.monitor===0 && quick.space===0 &&
-        quick.rows[0].accessible_name.includes('2 to hide') &&
-        quick.rows[0].accessible_name.includes('2 reused') &&
+        quick.autoRow.get_parent()===quick.dialog.contentLayout &&
+        quick.autoRow.has_style_class_name('snaptess-quick-primary') &&
+        savedQuickRow.accessible_name.includes('2 to hide') &&
+        savedQuickRow.accessible_name.includes('2 reused') &&
         app.layoutSwitcherItem.label.text==='Change layout…',
-        'quick switcher shows the focused context and restore effects before applying');
-    quick.rows[0].grab_key_focus();
-    quick.navigate({get_key_symbol:()=>Clutter.KEY_Down},quick.rows[0]);
-    assert(global.stage.get_key_focus()===quick.rows.find(row=>
-        row.accessible_name.startsWith('Auto.')),
-        'arrow navigation moves to the next visible layout');
+        'quick switcher keeps Auto above the scroll and shows saved restore effects');
+    quick.autoRow.grab_key_focus();
+    quick.navigate({get_key_symbol:()=>Clutter.KEY_Down},quick.autoRow);
+    assert(global.stage.get_key_focus()===savedQuickRow,
+        'arrow navigation moves from Auto to the saved layouts');
     if (GLib.getenv('SNAPTESS_QUICK_LAYOUT_SCREENSHOT')) {
         const stream=Gio.File.new_for_path(GLib.getenv('SNAPTESS_QUICK_LAYOUT_SCREENSHOT'))
             .replace(null,false,Gio.FileCreateFlags.NONE,null);
@@ -853,7 +859,7 @@ export async function run() {
     assert(presetY+lastPreset.height<=scrollY+applyingQuick.scroll.height+2,
         'keyboard focus keeps the selected preset inside the scroll viewport');
     const beforeRestore=JSON.stringify(app.profiles[app.profileKey(0,0)]);
-    applyingQuick.rows[0].emit('clicked',1); await pause();
+    applyingQuick.rows.find(row=>row.accessible_name.startsWith('Test pair.')).emit('clicked',1); await pause();
     assert(app.deletedLayouts.length===0,'restoring a layout retires stale Undo delete actions');
     assert(windows[2].minimized && windows[3].minimized &&
         app.records.get(windows[2]).restoreParked && app.records.get(windows[3]).restoreParked &&
@@ -864,10 +870,11 @@ export async function run() {
         'restoring a saved layout does not pin an unpinned app');
     app.openLayoutSwitcher(); await pause();
     const activeQuick=app.layoutSwitcher;
-    assert(activeQuick.rows[0].has_style_class_name('active') &&
-        activeQuick.rows[0].accessible_name.includes('Current layout'),
+    const activeSavedRow=activeQuick.rows.find(row=>row.accessible_name.startsWith('Test pair.'));
+    assert(activeSavedRow.has_style_class_name('active') &&
+        activeSavedRow.accessible_name.includes('Current layout'),
         'the saved layout is marked active only when its current slots match');
-    activeQuick.rows.find(row=>row.accessible_name.startsWith('Auto.')).emit('clicked',1);
+    activeQuick.autoRow.emit('clicked',1);
     await pause();
     assert(!windows[2].minimized && !windows[3].minimized &&
         app.groups.get(app.key(0)).includes(windows[2]) &&
@@ -915,6 +922,32 @@ export async function run() {
         'Undo delete restores the template and its preview');
     assert(app.studio.deleteButton.visible && app.studio.deleteButton.get_parent()===app.studio.savedActions,
         'Delete layout sits beside the selected-layout summary');
+    const renamedStudio=app.studio;
+    const beforeRename=JSON.stringify(app.savedLayouts.find(item=>item.id===saved.id));
+    renamedStudio.renameButton.emit('clicked',1);
+    assert(renamedStudio.renameRow.visible && renamedStudio.renameEntry.get_text()==='Test pair',
+        'Rename layout opens with the selected name');
+    if (GLib.getenv('SNAPTESS_RENAME_SCREENSHOT')) {
+        await Scripting.sleep(160);
+        const stream=Gio.File.new_for_path(GLib.getenv('SNAPTESS_RENAME_SCREENSHOT'))
+            .replace(null,false,Gio.FileCreateFlags.NONE,null);
+        const m=Main.layoutManager.monitors[0];
+        await new Shell.Screenshot().screenshot_area(m.x,m.y,m.width,m.height,stream);
+        stream.close(null);
+    }
+    renamedStudio.renameEntry.set_text(' ');
+    renamedStudio.renameSaveButton.emit('clicked',1);
+    assert(renamedStudio.renameError.visible &&
+        app.savedLayouts.find(item=>item.id===saved.id).name==='Test pair',
+        'an empty rename leaves the saved layout unchanged');
+    renamedStudio.renameEntry.set_text('Renamed pair');
+    renamedStudio.renameSaveButton.emit('clicked',1);
+    const renamed=app.savedLayouts.find(item=>item.id===saved.id);
+    assert(renamed?.name==='Renamed pair' &&
+        JSON.stringify({...renamed,name:'Test pair'})===beforeRename &&
+        renamedStudio.previewSavedId===saved.id &&
+        renamedStudio.savedPicker.label.includes('Renamed pair') && !renamedStudio.renameRow.visible,
+        'renaming updates the saved preview and preserves its tiles and identity');
     app.studio.dialog.close();
     app.deleteSavedLayout(saved.id);
     app.openStudio(); await pause();
