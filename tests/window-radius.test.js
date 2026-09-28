@@ -47,6 +47,18 @@ test('left and right edges retain different corner radii', () => {
         {top: 0, bottom: 18});
 });
 
+test('a rounded top right does not round a square bottom left with a transparent side strip', () => {
+    const width = 80, height = 180, rowstride = width * 4;
+    const pixels = new Uint8Array(height * rowstride);
+    for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) {
+        if ((x >= width - 12 && y < 12) || (x < 16 && y >= height - 90)) continue;
+        pixels[y * rowstride + x * 4 + 3] = 255;
+    }
+    assert.deepEqual(radiusFromPixels(pixels, rowstride, 4, width, height), {top: 0, bottom: 0});
+    assert.deepEqual(radiusFromPixels(pixels, rowstride, 4, width, height, true, 'right'),
+        {top: 12, bottom: 0});
+});
+
 test('horizontal edge rejects a transparent side strip mistaken for a huge corner', () => {
     const width = 160, height = 240, rowstride = width * 4;
     const pixels = new Uint8Array(height * rowstride);
@@ -54,12 +66,12 @@ test('horizontal edge rejects a transparent side strip mistaken for a huge corne
         if ((x === 0 && y >= height - 120) || (y === height - 1 && x < 16)) continue;
         pixels[y * rowstride + x * 4 + 3] = 255;
     }
-    assert.deepEqual(radiusFromPixels(pixels, rowstride, 4, width, height), {top: 0, bottom: 16});
+    assert.deepEqual(radiusFromPixels(pixels, rowstride, 4, width, height), {top: 0, bottom: 1});
 });
 
 test('implausible transparent edges cannot create a giant focus-border corner', () => {
-    assert.deepEqual(plausibleWindowRadius({top: 7, bottom: 123}), {top: 7, bottom: 7});
-    assert.deepEqual(plausibleWindowRadius({top: 70, bottom: 4}), {top: 4, bottom: 4});
+    assert.deepEqual(plausibleWindowRadius({top: 7, bottom: 123}), {top: 7, bottom: 0});
+    assert.deepEqual(plausibleWindowRadius({top: 70, bottom: 4}), {top: 0, bottom: 4});
     assert.deepEqual(plausibleWindowRadius({top: 0, bottom: 16}), {top: 0, bottom: 16});
     assert.equal(plausibleWindowRadius({top: 70, bottom: 90}), null);
 });
