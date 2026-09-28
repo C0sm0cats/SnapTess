@@ -124,8 +124,8 @@ export async function run() {
     borderRecord.radiusDirty=true;
     borderRecord.radiusAttempts=3;
     app.updateBorder();
-    assert(app.border.visible && app.border.topRadius===12,
-        'the fallback appears only after measurement retries are exhausted');
+    assert(app.border.visible && app.border.topRadius===0 && app.border.topRightRadius===0,
+        'an unavailable measurement draws square corners');
     borderRecord.radiusAttempts=0;
     const measureRadius=app.measureWindowRadius;
     app.measureWindowRadius=async()=>null;
@@ -149,12 +149,13 @@ export async function run() {
         'rapid geometry notifications cannot hide the fallback indefinitely');
     app.measureWindowRadius=measureRadius;
     borderRecord.radiusAttempts=0;
-    borderRecord.windowRadius={top:0,bottom:20};
+    borderRecord.windowRadius={top:0,bottom:20,topRight:0,bottomRight:0};
     borderRecord.radiusDirty=false;
     app.updateBorder();
     const frame=app.visualWindowRect(windows[0]), bw=app.border.strokeWidth;
-    assert(app.border.topRadius===0 && app.border.bottomRadius===20,
-        'the painted border keeps square top corners and rounded bottom corners');
+    assert(app.border.topRadius===0 && app.border.bottomRadius===20 &&
+        app.border.topRightRadius===0 && app.border.bottomRightRadius===0,
+        'the painted border keeps independently measured square and rounded corners');
     assert(Math.abs(app.border.x-(frame.x-bw))<=1 && Math.abs(app.border.y-(frame.y-bw))<=1 &&
         Math.abs(app.border.width-(frame.width+2*bw))<=1,
         'focus border follows the visible window frame with its stroke outset');

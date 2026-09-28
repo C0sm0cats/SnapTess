@@ -17,7 +17,7 @@ import {LayoutSwitcher} from './lib/layout-switcher.js';
 import {WindowBorder} from './lib/window-border.js';
 import {radiusFromPixels, radiusStyle, plausibleWindowRadius, visualFrameRect} from './lib/window-radius.js';
 
-const RUNTIME_REVISION = 50;
+const RUNTIME_REVISION = 51;
 const RESTORE_STABILIZE_MS = 1400;
 const RESTORE_QUIET_MS = 120;
 const MAX_RESTORE_MOVES = 8;
@@ -166,7 +166,7 @@ export default class SnapTess extends Extension {
         } catch { this.interfaceSettings = null; }
         try {
             this.connect(St.ThemeContext.get_for_stage(global.stage), 'changed', () => {
-                for (const w of this.records.keys()) this.invalidateWindowRadius(w);
+                for (const w of this.records.keys()) this.invalidateWindowRadius(w, true);
                 this.updateBorder();
             });
         } catch { /* theme context may not expose a change signal */ }
@@ -350,7 +350,7 @@ export default class SnapTess extends Extension {
         this.watchWindowEffects(w);
         const actor = this.windowActor(w);
         if (actor) {
-            try { record.radiusActorSignal = actor.connect('first-frame', () => this.invalidateWindowRadius(w)); }
+            try { record.radiusActorSignal = actor.connect('first-frame', () => this.invalidateWindowRadius(w, true)); }
             catch { /* existing actors may not expose first-frame */ }
             for (const property of ['x', 'y', 'width', 'height', 'scale-x', 'scale-y',
                 'translation-x', 'translation-y'])
@@ -422,7 +422,7 @@ export default class SnapTess extends Extension {
                 this.queueWindowRestore(w, 80);
             if (this.running && record.tileRect && !record.floating && !record.placing && !this.busy && !this.drag)
                 this.scheduleWindowScale(w);
-            if (record.radiusMonitor !== monitor) this.invalidateWindowRadius(w);
+            if (record.radiusMonitor !== monitor) this.invalidateWindowRadius(w, true);
             else if (record.radiusAttempts >= 3 && !record.radiusPending && !record.radiusTimer)
                 this.invalidateWindowRadius(w);
             if (global.display.focus_window === w) {
@@ -431,7 +431,7 @@ export default class SnapTess extends Extension {
         });
         watch('size-changed', () => {
             this.traceWindow(w, 'size-changed');
-            this.invalidateWindowRadius(w);
+            this.invalidateWindowRadius(w, true);
             if (record.restorePending && Date.now() >= record.restoreQuietUntil && !record.placing && !this.busy && !this.drag)
                 this.queueWindowRestore(w, 80);
             if (this.running && record.tileRect && !record.floating) this.scheduleWindowScale(w);
@@ -1194,7 +1194,7 @@ export default class SnapTess extends Extension {
             record.effectActor = actor;
             record.effectSignal = actor.connect('effects-completed', () => {
                 this.traceWindow(w, 'effects-completed');
-                if (!record.windowRadius && global.display.focus_window === w) this.invalidateWindowRadius(w);
+                if (!record.windowRadius && global.display.focus_window === w) this.invalidateWindowRadius(w, true);
                 if (global.display.focus_window === w) {
                     this.updateBorder(); this.updateWindowActionsPosition(w);
                 }
@@ -1397,7 +1397,7 @@ export default class SnapTess extends Extension {
         const previousTile = record.tileRect ? {...record.tileRect} : null;
         const targetChanged = !previousTile ||
             ['x', 'y', 'width', 'height'].some(key => Math.abs(previousTile[key] - rect[key]) > 1);
-        if (previousTile && targetChanged) this.invalidateWindowRadius(w);
+        if (previousTile && targetChanged) this.invalidateWindowRadius(w, true);
         const reusable = !force && !restoring && !record.restorePending && !record.specialState &&
             record.tileRect && record.backingRect &&
             ['x', 'y', 'width', 'height'].every(key => Math.abs(record.tileRect[key] - rect[key]) <= 1);
@@ -1597,7 +1597,7 @@ export default class SnapTess extends Extension {
             actor.ease({opacity: 255, duration: VISUAL.quick, mode: Clutter.AnimationMode.EASE_OUT_QUAD});
         } else if (appearing) actor.opacity = 255;
     }
-    invalidateWindowRadius(w) {
+    invalidateWindowRadius(w, retry = false) {
         const record = this.records.get(w);
         if (!record) return;
         const hadRadius = Boolean(record.windowRadius);
@@ -1606,8 +1606,8 @@ export default class SnapTess extends Extension {
         record.radiusDirty = true;
         // Keep failed attempts across repeated geometry notifications, or a
         // client that never yields pixels can postpone the fallback forever.
+        if (hadRadius || retry) record.radiusAttempts = 0;
         if (hadRadius) {
-            record.radiusAttempts = 0;
             record.radiusFallbackReady = false;
             this.cancel(record.radiusFallbackTimer); record.radiusFallbackTimer = 0;
         }
@@ -1648,14 +1648,22 @@ export default class SnapTess extends Extension {
                     ]) if (window === w && guide.visible) this.setGuideRadius(guide, w, fallback);
                 } else {
                     this.queueWindowRadius(w, 500);
-                    if (record.radiusAttempts >= 3) this.updateBorder();
+                    if (record.radiusAttempts >= 3) {
+                        record.windowRadius = null;
+                        record.radiusDirty = false;
+                        this.updateBorder();
+                    }
                 }
             }).catch(error => {
                 if (this.records.get(w) !== record || generation !== record.radiusGeneration) return;
                 record.radiusPending = false;
                 console.debug(`[SnapTess] window radius fallback: ${error.message ?? error}`);
                 this.queueWindowRadius(w, 500);
-                if (record.radiusAttempts >= 3) this.updateBorder();
+                if (record.radiusAttempts >= 3) {
+                    record.windowRadius = null;
+                    record.radiusDirty = false;
+                    this.updateBorder();
+                }
             });
         });
     }
@@ -1664,29 +1672,35 @@ export default class SnapTess extends Extension {
         if (!actor?.visible || frame.width < 3 || frame.height < 2 || this.windowEffectActive(actor)) return null;
         const width = Math.min(256, Math.max(3, Math.floor(frame.width / 2)));
         const height = Math.round(frame.height);
-        const content = actor.paint_to_content(new Mtk.Rectangle({
-            x: Math.round(frame.x), y: Math.round(frame.y), width, height,
-        }));
-        const texture = content?.get_texture?.();
-        if (!texture) return null;
         if (!this.radiusReadbackReady) {
             Gio._promisify(Shell.Screenshot, 'composite_to_stream');
             this.radiusReadbackReady = true;
         }
-        const stream = Gio.MemoryOutputStream.new_resizable();
-        try {
-            const pixbuf = await Shell.Screenshot.composite_to_stream(
-                texture, 0, 0, width, height, 1, null, 0, 0, 1, stream);
-            const currentFrame = this.visualWindowRect(w);
-            if (this.windowActor(w) !== actor || this.windowEffectActive(actor) ||
-                ['x', 'y', 'width', 'height'].some(key => Math.abs(currentFrame[key] - frame[key]) > 1))
-                return null;
-            const radius = plausibleWindowRadius(radiusFromPixels(pixbuf.get_pixels(), pixbuf.get_rowstride(),
-                pixbuf.get_n_channels(), pixbuf.get_width(), pixbuf.get_height(), pixbuf.get_has_alpha()));
-            if (!radius) return null;
-            const scale = actor.get_scale()[0] || 1;
-            return {top: radius.top / scale, bottom: radius.bottom / scale};
-        } finally { stream.close(null); }
+        const measureSide = async (side, x) => {
+            const content = actor.paint_to_content(new Mtk.Rectangle({
+                x: Math.round(x), y: Math.round(frame.y), width, height,
+            }));
+            const texture = content?.get_texture?.();
+            if (!texture) return null;
+            const stream = Gio.MemoryOutputStream.new_resizable();
+            try {
+                const pixbuf = await Shell.Screenshot.composite_to_stream(
+                    texture, 0, 0, width, height, 1, null, 0, 0, 1, stream);
+                return plausibleWindowRadius(radiusFromPixels(pixbuf.get_pixels(), pixbuf.get_rowstride(),
+                    pixbuf.get_n_channels(), pixbuf.get_width(), pixbuf.get_height(),
+                    pixbuf.get_has_alpha(), side));
+            } finally { stream.close(null); }
+        };
+        const left = await measureSide('left', frame.x);
+        const right = await measureSide('right', frame.x + frame.width - width);
+        const currentFrame = this.visualWindowRect(w);
+        if (this.windowActor(w) !== actor || this.windowEffectActive(actor) ||
+            ['x', 'y', 'width', 'height'].some(key => Math.abs(currentFrame[key] - frame[key]) > 1))
+            return null;
+        if (!left && !right) return null;
+        const scale = actor.get_scale()[0] || 1;
+        return {top: (left?.top ?? 0) / scale, bottom: (left?.bottom ?? 0) / scale,
+            topRight: (right?.top ?? 0) / scale, bottomRight: (right?.bottom ?? 0) / scale};
     }
     setGuideRadius(guide, w, fallback) {
         const record = this.records.get(w);

@@ -8,7 +8,7 @@ function edge(height, top, bottom, rowstride = 16) {
     return pixels;
 }
 
-test('left-edge alpha produces independent mirrored top and bottom radii', () => {
+test('left-edge alpha produces independent top and bottom radii', () => {
     assert.deepEqual(radiusFromPixels(edge(80, 0, 16), 16, 4, 3, 80), {top: 0, bottom: 16});
     assert.deepEqual(radiusFromPixels(edge(80, 18, 0), 16, 4, 3, 80), {top: 18, bottom: 0});
     assert.deepEqual(radiusFromPixels(edge(100, 12, 27), 16, 4, 3, 100), {top: 12, bottom: 27});
@@ -24,6 +24,27 @@ test('invalid and transparent captures retry rather than caching a false radius'
     assert.deepEqual(radiusFromPixels(edge(80, 0, 0), 16, 3, 3, 80, false), {top: 0, bottom: 0});
     assert.equal(radiusStyle(null, 12), '12px 12px 12px 12px');
     assert.equal(radiusStyle({top: 10, bottom: 20}, 12, 0.5), '5px 5px 10px 10px');
+});
+
+test('a translucent square window has four square corners', () => {
+    const width = 40, height = 80, rowstride = width * 4;
+    const pixels = new Uint8Array(height * rowstride);
+    for (let i = 3; i < pixels.length; i += 4) pixels[i] = 230;
+    assert.deepEqual(radiusFromPixels(pixels, rowstride, 4, width, height), {top: 0, bottom: 0});
+    assert.deepEqual(radiusFromPixels(pixels, rowstride, 4, width, height, true, 'right'),
+        {top: 0, bottom: 0});
+});
+
+test('left and right edges retain different corner radii', () => {
+    const width = 40, height = 80, rowstride = width * 4;
+    const pixels = new Uint8Array(height * rowstride);
+    for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) {
+        if ((x < 12 && y < 12) || (x >= width - 18 && y >= height - 18)) continue;
+        pixels[y * rowstride + x * 4 + 3] = 230;
+    }
+    assert.deepEqual(radiusFromPixels(pixels, rowstride, 4, width, height), {top: 12, bottom: 0});
+    assert.deepEqual(radiusFromPixels(pixels, rowstride, 4, width, height, true, 'right'),
+        {top: 0, bottom: 18});
 });
 
 test('horizontal edge rejects a transparent side strip mistaken for a huge corner', () => {
