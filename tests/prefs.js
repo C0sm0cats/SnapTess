@@ -40,6 +40,9 @@ if (previews[0].get_content_width() !== 220 || previews[0].get_content_height() 
     throw new Error('Focus layout preview has no usable geometry');
 const previewRow = rows.find(row => row.title === 'Current space preview');
 if (!previewRow) throw new Error('Current space preview row is missing');
+if (!rows.some(row => row.title === 'Export layouts and profiles') ||
+    !rows.some(row => row.title === 'Import layouts and profiles'))
+    throw new Error('Layout archive actions are missing from preferences');
 settings.set_string('preview-state', JSON.stringify({running: true, workspace: 1, monitor: 0, space: 2,
     preset: 'auto', count: 3, occupied: [0, 2], focused: 0, width: 1920, height: 1080}));
 if (!previewRow.subtitle.includes('Workspace 2 · Display 1 · Space 3 · Focus'))

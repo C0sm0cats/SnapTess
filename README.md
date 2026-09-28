@@ -27,6 +27,7 @@ SnapTess is a standalone GNOME Shell extension. It starts paused: enabling it do
 - **Three spaces per display:** independent window groups within each native GNOME workspace. Switching parks windows with native minimization; stopping reveals and restores them.
 - **Stay in control:** floating windows, app exclusions, configurable compaction, maximize/fullscreen freeze, focused-window outline, animated guides, saved layout/app order, and ten-level arrangement undo.
 - **Pinned slots:** a compact card marks a reserved tile when its app is minimized, floating, or closed. Click it to restore, retile, or reopen the app; unpinned empty tiles stay clear.
+- **Import and export:** save named layouts and per-space profiles as a JSON file from Preferences, then import them on another installation. Import adds layouts and profiles without replacing existing ones.
 
 ## Install
 
@@ -76,6 +77,8 @@ Layouts and application order are saved by native workspace index, monitor conne
 Studio dims presets with too few tiles for the current draft. Selecting one explains the required capacity without changing the draft. A new layout needs enough tiles to keep every assigned app in its chosen position.
 
 The **quick layout switcher** keeps **Arrange open windows** visible above the saved layouts. Select a saved layout to apply it after reviewing its effects. Escape cancels. Arrange open windows and built-in presets rearrange existing windows without launching apps; the automatic option also brings back windows that a saved layout hid. Other compatible presets are collapsed until opened, and the list indicates how many smaller presets are hidden.
+
+In **Preferences → Back up and share**, export a `snaptess-layouts.json` file or import one. Import renames conflicting layouts with an “(imported)” suffix and keeps existing profiles for matching space keys. Profiles are tied to a GNOME workspace index, display connector and SnapTess space, so a profile copied to another computer applies only when those keys match. Named layouts can be restored on any display from Studio or the quick switcher. Import does not rearrange the desktop or launch applications.
 
 Maximizing or fullscreening a managed window freezes automatic layout changes on that display. Restoring resumes tiling. Explicitly applying a layout can unmaximize windows; it never exits fullscreen. Applications can impose minimum client sizes, which GNOME still enforces. If a requested tile is smaller, SnapTess keeps the real client at an allowed size and uniformly scales its compositor actor into the slot, preventing overlap while preserving aspect ratio.
 
