@@ -1,9 +1,11 @@
 import Adw from 'gi://Adw';
 import Gio from 'gi://Gio';
+import GLib from 'gi://GLib';
 import Gtk from 'gi://Gtk';
 import Gdk from 'gi://Gdk';
 import {ExtensionPreferences} from 'resource:///org/gnome/Shell/Extensions/js/extensions/prefs.js';
 import {layout, autoLayout, capacity, PRESETS} from './lib/layout.js';
+import {makeArchive, mergeArchive} from './lib/archive.js';
 
 function appAliases(id, startupWmClass = null) {
     const aliases = [id];
@@ -114,6 +116,59 @@ export default class SnapTessPreferences extends ExtensionPreferences {
             addReset(row, key);
             behavior.add(row);
         }
+        const archiveGroup = new Adw.PreferencesGroup({title: 'Back up and share',
+            description: 'Export named layouts and per-space profiles to a JSON file. Import adds new items without replacing your existing ones.'});
+        page.add(archiveGroup);
+        const archiveAction = (title, subtitle, buttonLabel, callback) => {
+            const row = new Adw.ActionRow({title, subtitle});
+            const action = new Gtk.Button({label: buttonLabel, valign: Gtk.Align.CENTER});
+            action.connect('clicked', callback);
+            row.add_suffix(action);
+            row.activatable_widget = action;
+            archiveGroup.add(row);
+        };
+        const fileError = error => {
+            if (!error.matches?.(Gio.io_error_quark(), Gio.IOErrorEnum.CANCELLED) &&
+                !error.matches?.(Gtk.dialog_error_quark(), Gtk.DialogError.DISMISSED))
+                window.add_toast(new Adw.Toast({title: error.message || String(error)}));
+        };
+        archiveAction('Export layouts and profiles', 'Save a portable SnapTess JSON file', 'Export…', () => {
+            const chooser = new Gtk.FileDialog({title: 'Export SnapTess layouts',
+                initial_name: 'snaptess-layouts.json'});
+            chooser.save(window, null, (_chooser, result) => {
+                try {
+                    const file = chooser.save_finish(result);
+                    const layouts = JSON.parse(settings.get_string('saved-layouts'));
+                    const profiles = JSON.parse(settings.get_string('profiles'));
+                    const bytes = new TextEncoder().encode(makeArchive(layouts, profiles));
+                    file.replace_contents(bytes, null, false, Gio.FileCreateFlags.NONE, null);
+                    window.add_toast(new Adw.Toast({title: `Exported ${layouts.length} layouts and ${Object.keys(profiles).length} profiles` }));
+                } catch (error) { fileError(error); }
+            });
+        });
+        archiveAction('Import layouts and profiles', 'Add layouts; keep existing profiles when their space already exists', 'Import…', () => {
+            const chooser = new Gtk.FileDialog({title: 'Import SnapTess layouts'});
+            const filter = new Gtk.FileFilter();
+            filter.set_name('JSON files'); filter.add_pattern('*.json');
+            const filters = new Gio.ListStore({item_type: Gtk.FileFilter});
+            filters.append(filter); chooser.set_filters(filters);
+            chooser.open(window, null, (_chooser, result) => {
+                try {
+                    const file = chooser.open_finish(result);
+                    const size = file.query_info('standard::size', Gio.FileQueryInfoFlags.NONE, null).get_size();
+                    if (size > 1024 * 1024) throw new Error('The file is too large (maximum 1 MB).');
+                    const [, bytes] = file.load_contents(null);
+                    const text = new TextDecoder('utf-8', {fatal: true}).decode(bytes);
+                    const currentLayouts = JSON.parse(settings.get_string('saved-layouts'));
+                    const currentProfiles = JSON.parse(settings.get_string('profiles'));
+                    const merged = mergeArchive(text, currentLayouts, currentProfiles, () => GLib.uuid_string_random());
+                    if (merged.addedLayouts) settings.set_string('saved-layouts', JSON.stringify(merged.layouts));
+                    if (merged.addedProfiles) settings.set_string('profiles', JSON.stringify(merged.profiles));
+                    window.add_toast(new Adw.Toast({title:
+                        `Imported ${merged.addedLayouts} layouts and ${merged.addedProfiles} profiles`}));
+                } catch (error) { fileError(error); }
+            });
+        });
         const applications = new Adw.PreferencesPage({title: 'Applications', icon_name: 'application-x-executable-symbolic'});
         window.add(applications);
         const appGroup = new Adw.PreferencesGroup({title: 'Application rules',
