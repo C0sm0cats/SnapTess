@@ -11,13 +11,13 @@ import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import * as PanelMenu from 'resource:///org/gnome/shell/ui/panelMenu.js';
 import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js';
 import {layout, PRESETS, capacity, fitMinimumSize, frameScalePivot, nearestSlot, directionalSlot, reconcileSlots,
-    activePinnedSlots, reserveAppSlots, swapNeighbor} from './lib/layout.js';
+    activePinnedSlots, reserveAppSlots, swapNeighbor, advanceLinkedResize, resizedLayout, resizeOffsets} from './lib/layout.js';
 import {Studio} from './lib/studio.js';
 import {LayoutSwitcher} from './lib/layout-switcher.js';
 import {WindowBorder} from './lib/window-border.js';
 import {radiusFromPixels, radiusStyle, plausibleWindowRadius, visualFrameRect} from './lib/window-radius.js';
 
-const RUNTIME_REVISION = 51;
+const RUNTIME_REVISION = 52;
 const RESTORE_STABILIZE_MS = 1400;
 const RESTORE_QUIET_MS = 120;
 const MAX_RESTORE_MOVES = 8;
@@ -47,6 +47,10 @@ export default class SnapTess extends Extension {
         this.busy = false;
         this.radiusReadbackReady = false;
         this.drag = null;
+        this.resizeGrab = null;
+        this.resizeLater = 0;
+        this.linkedFitLater = 0;
+        this.linkedResizeProfileWrite = null;
         this.swapMode = false;
         this.borderSwapActive = false;
         this.loadProfiles();
@@ -77,7 +81,7 @@ export default class SnapTess extends Extension {
         this.swapItem.accessible_name = 'Swap focused window. Arrows move, Enter accepts, Escape cancels.';
         this.undoItem = this.indicator.menu.addAction('Undo last arrangement', () => this.undo());
         this.indicator.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
-        this.arrangeItem = this.indicator.menu.addAction('Arrange again', () => { this.checkpoint(); this.tile(true); });
+        this.arrangeItem = this.indicator.menu.addAction('Arrange again', () => this.arrangeAgain());
         this.layoutSwitcherItem = this.indicator.menu.addAction('Change layout…', () => this.openLayoutSwitcher());
         this.studioItem = this.indicator.menu.addAction('Layout Studio…', () => this.openStudio());
         this.indicator.menu.addAction('Preferences', () => this.openPreferences());
@@ -171,7 +175,7 @@ export default class SnapTess extends Extension {
             });
         } catch { /* theme context may not expose a change signal */ }
         this.bindings = {
-            toggle: () => this.setRunning(!this.running), retile: () => { this.checkpoint(); this.tile(true); },
+            toggle: () => this.setRunning(!this.running), retile: () => this.arrangeAgain(),
             studio: () => this.openStudio(), 'layout-switcher': () => this.openLayoutSwitcher(),
             floating: () => this.toggleFloating(),
             swap: () => this.toggleSwap(), undo: () => this.undo(), stop: () => this.setRunning(false),
@@ -208,12 +212,7 @@ export default class SnapTess extends Extension {
         this.connect(Main.layoutManager, 'monitors-changed', () => this.monitorsChanged());
         this.connect(Main.overview, 'showing', () => { this.hideGuides(); this.clearPinnedPlaceholders(); });
         this.connect(Main.overview, 'hidden', () => { this.schedule(false); this.updateBorder(); });
-        this.connect(this.settings, 'changed', (_s, key) => {
-            if (key === 'preview-state') return;
-            if (key === 'profiles') this.loadProfiles();
-            if (key === 'saved-layouts') { this.loadSavedLayouts(); return; }
-            this.schedule(true);
-        });
+        this.connect(this.settings, 'changed', (_s, key) => this.settingsChanged(key));
         for (const actor of global.get_window_actors()) this.track(actor.meta_window);
         this.updatePanelStatus();
         this.refreshAccentStyles();
@@ -224,6 +223,19 @@ export default class SnapTess extends Extension {
         const id = object.connect(signal, callback);
         this.connections.push([object, id]);
         return id;
+    }
+
+    settingsChanged(key) {
+        if (key === 'preview-state') return;
+        if (key === 'profiles') {
+            const value = this.settings.get_string('profiles');
+            this.loadProfiles();
+            const linkedResizeWrite = value === this.linkedResizeProfileWrite;
+            this.linkedResizeProfileWrite = null;
+            if (linkedResizeWrite) return;
+        }
+        if (key === 'saved-layouts') { this.loadSavedLayouts(); return; }
+        this.schedule(true);
     }
 
     later(ms, callback) {
@@ -335,7 +347,8 @@ export default class SnapTess extends Extension {
         if (!this.eligible(w) || this.records.has(w)) return;
         const record = {original: null, floating: false, space: this.activeSpace(w.get_monitor(), w.get_workspace()),
             parked: false, restoreParked: false, signals: [], monitor: w.get_monitor(), tileRect: null,
-            visualScale: 1, scaleTimer: 0,
+            visualScale: 1, scaleTimer: 0, linkedResizePending: false,
+            linkedResizeEligible: false, linkedResizeScale: false,
             backingRect: null, scaleMinimum: null, scaleNegotiated: false, placementMoves: 0, placing: false, restoreStarted: false, restoreMoves: 0,
             sizeRepairs: 0, sizeRejectUntil: 0, mismatchSize: null, mismatchSince: 0, repairResetTimer: 0,
             lastTileChangeAt: 0, rapidLayoutRecovery: false, nativeFitSizes: [],
@@ -376,6 +389,10 @@ export default class SnapTess extends Extension {
             for (const id of record.signals) w.disconnect(id);
             this.records.delete(w);
             if (this.drag?.window === w) this.drag = null;
+            if (this.resizeGrab?.window === w) {
+                this.cancelLinkedResizeFrame();
+                this.resizeGrab = null;
+            }
             if (this.swapWindow === w) this.exitSwap(false);
             this.schedule(this.settings.get_boolean('compact-close'));
         });
@@ -410,6 +427,7 @@ export default class SnapTess extends Extension {
         });
         watch('position-changed', () => {
             this.traceWindow(w, 'position-changed');
+            if (record.linkedResizePending || record.linkedResizeEligible) this.queueLinkedResizeFit();
             if (record.placementMoves) this.scheduleRepairBudgetReset(w);
             const monitor = w.get_monitor();
             if (!this.busy && !this.drag && !record.placing && !record.restorePending &&
@@ -431,6 +449,7 @@ export default class SnapTess extends Extension {
         });
         watch('size-changed', () => {
             this.traceWindow(w, 'size-changed');
+            if (record.linkedResizePending || record.linkedResizeEligible) this.queueLinkedResizeFit();
             this.invalidateWindowRadius(w, true);
             if (record.restorePending && Date.now() >= record.restoreQuietUntil && !record.placing && !this.busy && !this.drag)
                 this.queueWindowRestore(w, 80);
@@ -852,6 +871,13 @@ export default class SnapTess extends Extension {
             gap: this.settings.get_int('gap'), padding: this.settings.get_int('padding'),
             ratio: this.settings.get_double('master-ratio')};
     }
+    slotRects(monitor, count, space = this.activeSpace(monitor)) {
+        const area = this.area(monitor), options = this.options(monitor, space);
+        const base = layout(area, count, options);
+        const saved = this.profiles[this.profileKey(monitor, space)]?.resize;
+        return saved?.preset === options.preset && saved.count === count
+            ? resizedLayout(base, area, saved) : base;
+    }
     area(monitor) { return global.workspace_manager.get_active_workspace().get_work_area_for_monitor(monitor); }
     currentMonitor() { return global.display.focus_window?.get_monitor() ?? global.display.get_current_monitor(); }
 
@@ -884,6 +910,16 @@ export default class SnapTess extends Extension {
         if (this.history.length > 10) this.history.shift();
     }
     checkpoint() { this.pushCheckpoint(this.captureCheckpoint()); }
+    arrangeAgain() {
+        if (!this.running || this.resizeGrab) return;
+        const profile = this.profiles[this.profileKey(this.currentMonitor())];
+        this.checkpoint();
+        if (profile?.resize) {
+            delete profile.resize;
+            this.settings.set_string('profiles', JSON.stringify(this.profiles));
+        }
+        this.tile(true);
+    }
     restore(w, state) {
         if (w.fullscreen) return;
         this.resetWindowScale(w, true);
@@ -920,7 +956,9 @@ export default class SnapTess extends Extension {
             this.tile(true, true);
         } else {
             this.cancel(this.pending); this.pending = 0;
-            this.exitSwap(false); this.drag = null; this.hideGuides(); this.clearPinnedPlaceholders();
+            this.exitSwap(false); this.drag = null; this.resizeGrab = null;
+            this.cancelLinkedResizeFrame();
+            this.hideGuides(); this.clearPinnedPlaceholders();
             this.clearMotionGuides();
             this.clearSpaceTransitions();
             this.busy = true;
@@ -932,6 +970,9 @@ export default class SnapTess extends Extension {
                     if (r.parked || r.restoreParked) { w.unminimize(); r.parked = false; r.restoreParked = false; }
                     if (r.original) this.restore(w, r.original);
                     r.scaleMinimum = null;
+                    r.linkedResizePending = false;
+                    r.linkedResizeEligible = false;
+                    r.linkedResizeScale = false;
                     r.original = null; r.space = 0;
                 }
             } finally { this.busy = false; }
@@ -971,7 +1012,7 @@ export default class SnapTess extends Extension {
     }
 
     tile(compact = true, releaseMaximized = false, motionGuides = true) {
-        if (!this.running || this.busy || this.drag) return;
+        if (!this.running || this.busy || this.drag || this.resizeGrab) return;
         this.busy = true;
         try {
             for (let monitor = 0; monitor < Main.layoutManager.monitors.length; monitor++) {
@@ -1004,7 +1045,7 @@ export default class SnapTess extends Extension {
                     while (slots.length < profile.slotCount) slots.push(null);
                 }
                 this.groups.set(key, slots);
-                const rects = layout(this.area(monitor), slots.length, this.options(monitor));
+                const rects = this.slotRects(monitor, slots.length);
                 slots.forEach((w, i) => {
                     if (!w || w.fullscreen) return;
                     const record = this.records.get(w);
@@ -1063,7 +1104,7 @@ export default class SnapTess extends Extension {
             if (!Array.isArray(pins) || !pins.some(Boolean) ||
                 this.windows(monitor).some(w => this.isSpecialWindow(w))) continue;
             const slots = this.groups.get(this.key(monitor, space)) ?? [];
-            const rects = layout(this.area(monitor), Math.max(slots.length, pins.length), this.options(monitor, space));
+            const rects = this.slotRects(monitor, Math.max(slots.length, pins.length), space);
             for (let index = 0; index < pins.length; index++) {
                 const id = pins[index], rect = rects[index];
                 if (!id || slots[index] || !rect) continue;
@@ -1225,12 +1266,16 @@ export default class SnapTess extends Extension {
                 record.tileRect = null;
                 record.backingRect = null;
                 record.scaleNegotiated = false;
+                record.linkedResizeEligible = false;
             }
             this.traceWindow(w, 'reset-scale');
         }
     }
     scalesApp(w) {
         return this.matchesAppRule(w, 'scaled-apps');
+    }
+    scalesWindow(w) {
+        return this.scalesApp(w) || Boolean(this.records.get(w)?.linkedResizeScale);
     }
     scheduleRepairBudgetReset(w) {
         const record = this.records.get(w);
@@ -1258,14 +1303,22 @@ export default class SnapTess extends Extension {
             return minimum;
         } catch { return {width: 0, height: 0}; }
     }
-    applyWindowScale(w, actor, scale, target) {
+    applyWindowScale(w, actor, scale, target, scaleY = scale) {
         const frame = w.get_frame_rect();
         const buffer = typeof w.get_buffer_rect === 'function' ? w.get_buffer_rect() : frame;
         const pivot = frameScalePivot(frame, buffer, actor.get_width?.(), actor.get_height?.());
         actor.set_pivot_point(pivot.x, pivot.y);
-        actor.set_scale(scale, scale);
+        actor.set_scale(scale, scaleY);
         actor.translation_x = target.x - frame.x;
         actor.translation_y = target.y - frame.y;
+    }
+    fitLinkedResize(w, actor, target) {
+        const frame = w.get_frame_rect();
+        const scaleX = target.width / Math.max(1, frame.width);
+        const scaleY = target.height / Math.max(1, frame.height);
+        this.applyWindowScale(w, actor, scaleX, target, scaleY);
+        const record = this.records.get(w);
+        if (record) record.visualScale = Math.min(scaleX, scaleY);
     }
     correctWindowScale(w) {
         const record = this.records.get(w), actor = this.windowActor(w);
@@ -1274,9 +1327,9 @@ export default class SnapTess extends Extension {
         if (this.windowEffectActive(actor)) return; // effects-completed resumes us
         if (record.restorePending && !record.restoreStarted) return;
         const frame = w.get_frame_rect(), target = record.tileRect;
-        const scaled = this.scalesApp(w);
+        const scaled = this.scalesWindow(w);
         if (scaled && !record.scaleNegotiated) {
-            const reported = this.scalesApp(w) ? this.minimumSize(w) : null;
+            const reported = this.minimumSize(w);
             if (reported?.width || reported?.height) record.scaleMinimum = reported;
             else record.scaleMinimum ??= {width: frame.width, height: frame.height};
             const fitted = fitMinimumSize(target, record.scaleMinimum.width, record.scaleMinimum.height);
@@ -1301,6 +1354,9 @@ export default class SnapTess extends Extension {
         const actual = w.get_frame_rect();
         const sizeMismatch = Math.abs(actual.width - record.backingRect.width) > 1 ||
             Math.abs(actual.height - record.backingRect.height) > 1;
+        const positionMismatch = Math.abs(actual.x - target.x) > 1 || Math.abs(actual.y - target.y) > 1;
+        const linkedPreview = record.linkedResizePending || record.linkedResizeEligible;
+        if (linkedPreview && (sizeMismatch || positionMismatch)) this.fitLinkedResize(w, actor, target);
         if (!record.restorePending && !scaled && sizeMismatch) {
             const size = `${actual.width}:${actual.height}`;
             if (record.mismatchSize !== size) {
@@ -1332,8 +1388,16 @@ export default class SnapTess extends Extension {
                 }
                 return;
             }
-            // An unlisted client rejected its tile. Leave it native-sized and
-            // float it rather than silently enabling compositor scaling.
+            if (record.linkedResizePending || record.linkedResizeEligible) {
+                // The client accepted the old size but rejected this divider position.
+                // Keep the user's explicit resize tiled with a local scale fallback.
+                record.linkedResizePending = false;
+                record.linkedResizeScale = true;
+                record.scaleMinimum = this.minimumSize(w);
+                this.place(w, target, false, true, false);
+                return;
+            }
+            // An ordinary unlisted client rejected its tile.
             record.floating = true;
             this.resetWindowScale(w, true);
             if (record.original) {
@@ -1344,7 +1408,10 @@ export default class SnapTess extends Extension {
             this.schedule(true);
             return;
         }
-        if (!sizeMismatch) {
+        if (!sizeMismatch && !positionMismatch) {
+            record.linkedResizePending = false;
+            if (record.linkedResizeScale && Math.abs(actual.width - target.width) <= 1 &&
+                Math.abs(actual.height - target.height) <= 1) record.linkedResizeScale = false;
             record.mismatchSize = null; record.mismatchSince = 0;
             if (!scaled && !record.nativeFitSizes.some(size =>
                 Math.abs(size.width - target.width) <= 1 && Math.abs(size.height - target.height) <= 1)) {
@@ -1353,12 +1420,15 @@ export default class SnapTess extends Extension {
             }
         }
         if (scaled) {
-            const scale = Math.max(0.05, Math.min(1,
-                target.width / Math.max(1, actual.width), target.height / Math.max(1, actual.height)));
-            this.applyWindowScale(w, actor, scale, target);
-            record.visualScale = scale;
+            if (linkedPreview) this.fitLinkedResize(w, actor, target);
+            else {
+                const scale = Math.max(0.05, Math.min(1,
+                    target.width / Math.max(1, actual.width), target.height / Math.max(1, actual.height)));
+                this.applyWindowScale(w, actor, scale, target);
+                record.visualScale = scale;
+            }
             this.traceWindow(w, 'apply-exception-scale');
-        } else {
+        } else if (!linkedPreview || (!positionMismatch && !sizeMismatch)) {
             actor.set_pivot_point(0, 0);
             actor.set_scale(1, 1);
             actor.translation_x = 0;
@@ -1424,18 +1494,21 @@ export default class SnapTess extends Extension {
         }
         if (reusable) {
             if (actor) {
-                if (this.scalesApp(w) && record.visualScale < 0.999)
+                if (record.linkedResizePending || record.linkedResizeEligible)
+                    this.fitLinkedResize(w, actor, rect);
+                else if (this.scalesApp(w) && record.visualScale < 0.999)
                     this.applyWindowScale(w, actor, record.visualScale, rect);
                 this.scheduleWindowScale(w, 0);
             }
             return;
         }
         if (motionGuides && !restoring && previousTile) this.animatePlacement(w, previousTile, rect);
-        const scaled = this.scalesApp(w);
-        const preserveScale = scaled && actor && record.visualScale < 0.999;
+        const scaled = this.scalesWindow(w);
+        const linkedPreview = Boolean(actor && (record.linkedResizePending || record.linkedResizeEligible));
+        const preserveScale = linkedPreview || Boolean(scaled && actor && record.visualScale < 0.999);
         if (!preserveScale) this.resetWindowScale(w);
         record.tileRect = {...rect};
-        const configuredMinimum = this.scalesApp(w) ? this.minimumSize(w) : null;
+        const configuredMinimum = scaled ? this.minimumSize(w) : null;
         const minimum = configuredMinimum?.width || configuredMinimum?.height
             ? configuredMinimum : record.scaleMinimum ?? {width: 0, height: 0};
         const fitted = scaled ? fitMinimumSize(rect, minimum.width, minimum.height) : {frame: rect, scale: 1};
@@ -1444,7 +1517,8 @@ export default class SnapTess extends Extension {
         const currentFrame = w.get_frame_rect();
         const interimScale = preserveScale ? Math.max(0.05, Math.min(fitted.scale,
             rect.width / Math.max(1, currentFrame.width), rect.height / Math.max(1, currentFrame.height))) : 1;
-        if (preserveScale) {
+        if (linkedPreview) this.fitLinkedResize(w, actor, rect);
+        else if (preserveScale) {
             this.applyWindowScale(w, actor, interimScale, rect);
             record.visualScale = interimScale;
         }
@@ -1452,7 +1526,8 @@ export default class SnapTess extends Extension {
             Math.abs(currentFrame.width - record.backingRect.width) <= 1 &&
             Math.abs(currentFrame.height - record.backingRect.height) <= 1;
         this.requestWindowGeometry(w, restoring ? 'restore' : 'place', record.backingRect, sameBackingSize);
-        if (preserveScale) this.applyWindowScale(w, actor, interimScale, rect);
+        if (linkedPreview) this.fitLinkedResize(w, actor, rect);
+        else if (preserveScale) this.applyWindowScale(w, actor, interimScale, rect);
         if (actor) this.scheduleWindowScale(w);
     }
     accentColor() {
@@ -1536,7 +1611,7 @@ export default class SnapTess extends Extension {
         const slots = this.groups.get(this.swapKey) ?? [];
         const from = slots.indexOf(w);
         if (from < 0) { this.hideSwapHints(); return; }
-        const rects = layout(this.area(w.get_monitor()), slots.length, this.options(w.get_monitor()));
+        const rects = this.slotRects(w.get_monitor(), slots.length);
         const source = rects[from], frame = this.visualWindowRect(w);
         if (!source || !frame) { this.hideSwapHints(); return; }
         for (const [direction, hint] of this.swapHints) {
@@ -2053,7 +2128,7 @@ export default class SnapTess extends Extension {
         const slots = this.groups.get(this.swapKey) ?? [];
         const from = slots.indexOf(w);
         if (from < 0) { this.exitSwap(false); return; }
-        const rects = layout(this.area(w.get_monitor()), slots.length, this.options(w.get_monitor()));
+        const rects = this.slotRects(w.get_monitor(), slots.length);
         const to = directionalSlot(rects, from, direction);
         if (to < 0 || this.reservedPinnedSlot(w.get_monitor(), to, slots)) return;
         this.showSwapGuides(rects[from], rects[to], w, slots[to]);
@@ -2202,7 +2277,167 @@ export default class SnapTess extends Extension {
         this.playSpaceTransition(transition);
     }
 
+    beginLinkedResize(w, op) {
+        const edges = new Map([
+            [Meta.GrabOp.RESIZING_N, ['N']], [Meta.GrabOp.RESIZING_S, ['S']],
+            [Meta.GrabOp.RESIZING_E, ['E']], [Meta.GrabOp.RESIZING_W, ['W']],
+            [Meta.GrabOp.RESIZING_NE, ['N', 'E']], [Meta.GrabOp.RESIZING_NW, ['N', 'W']],
+            [Meta.GrabOp.RESIZING_SE, ['S', 'E']], [Meta.GrabOp.RESIZING_SW, ['S', 'W']],
+        ]).get(op);
+        if (!edges || !this.running || this.busy || this.drag || !this.records.has(w) ||
+            this.records.get(w).floating || this.isSpecialWindow(w) || w.minimized ||
+            this.matchesAppRule(w, 'excluded-apps')) return false;
+        const monitor = w.get_monitor(), space = this.activeSpace(monitor);
+        const slots = this.groups.get(this.key(monitor, space)) ?? [];
+        const index = slots.indexOf(w);
+        if (index < 0) return false;
+        const record = this.records.get(w);
+        this.cancel(record.restoreTimer); record.restoreTimer = 0;
+        this.cancel(record.settleTimer); record.settleTimer = 0;
+        record.restorePending = false;
+        if (this.motionGuides?.size) this.clearMotionGuides();
+        this.resizeGrab = {window: w, monitor, space, slots: [...slots], index, edges,
+            rects: this.slotRects(monitor, slots.length, space),
+            pointer: global.get_pointer(), checkpoint: this.captureCheckpoint(), updated: null};
+        this.hideWindowActions();
+        this.resizeLater = global.compositor.get_laters().add(Meta.LaterType.BEFORE_REDRAW, () => {
+            if (!this.resizeGrab) { this.resizeLater = 0; return GLib.SOURCE_REMOVE; }
+            if (!global.display.is_grabbed()) { this.endLinkedResize(); return GLib.SOURCE_REMOVE; }
+            this.updateLinkedResize();
+            return GLib.SOURCE_CONTINUE;
+        });
+        return true;
+    }
+
+    cancelLinkedResizeFrame() {
+        for (const key of ['resizeLater', 'linkedFitLater']) {
+            if (this[key]) global.compositor.get_laters().remove(this[key]);
+            this[key] = 0;
+        }
+    }
+
+    queueLinkedResizeFit() {
+        if (!this.running || this.resizeGrab || this.linkedFitLater) return;
+        this.linkedFitLater = global.compositor.get_laters().add(Meta.LaterType.BEFORE_REDRAW, () => {
+            this.linkedFitLater = 0;
+            if (!this.running || this.busy || this.drag || global.display.is_grabbed()) return GLib.SOURCE_REMOVE;
+            for (const [w, record] of this.records) {
+                if ((!record.linkedResizePending && !record.linkedResizeEligible) || !record.tileRect ||
+                    record.floating || w.minimized || this.isSpecialWindow(w)) continue;
+                const actor = this.windowActor(w);
+                if (actor && !this.windowEffectActive(actor)) this.fitLinkedResize(w, actor, record.tileRect);
+            }
+            this.updateBorder();
+            return GLib.SOURCE_REMOVE;
+        });
+    }
+
+    updateLinkedResize() {
+        const grab = this.resizeGrab;
+        if (!grab || !this.running || this.busy || grab.updating) return;
+        grab.updating = true;
+        try {
+            const rects = advanceLinkedResize(grab, global.get_pointer());
+            const changed = rects.some((r, i) =>
+                ['x', 'y', 'width', 'height'].some(key => r[key] !== grab.rects[i][key]));
+            const previous = grab.updated ?? grab.rects;
+            grab.updated = changed ? rects : null;
+            grab.slots.forEach((w, i) => {
+                if (!w || !this.records.has(w) || w.minimized || this.isSpecialWindow(w)) return;
+                const actor = this.windowActor(w);
+                if (!actor) return;
+                const frame = w.get_frame_rect(), target = rects[i];
+                const lastFrame = grab.previewFrames?.get(w);
+                if (w !== grab.window && lastFrame &&
+                    ['x', 'y', 'width', 'height'].every(key => target[key] === previous[i][key] &&
+                        frame[key] === lastFrame[key])) return;
+                grab.previewFrames ??= new Map();
+                grab.previewFrames.set(w, frame);
+                if (w !== grab.window &&
+                    (target.width > frame.width + 1 || target.height > frame.height + 1)) {
+                    const native = {x: target.x, y: target.y,
+                        width: Math.max(frame.width, target.width),
+                        height: Math.max(frame.height, target.height)};
+                    const last = grab.nativeRequests?.get(w);
+                    if (!last || ['x', 'y', 'width', 'height'].some(key => last[key] !== native[key])) {
+                        grab.nativeRequests ??= new Map();
+                        grab.nativeRequests.set(w, native);
+                        this.requestWindowGeometry(w, 'linked-resize-live', native);
+                    }
+                }
+                // During a grab Mutter can keep changing the native frame after the
+                // divider reaches its limit. Fit each axis independently so the
+                // visible tile stays at that limit instead of shrinking backward.
+                this.fitLinkedResize(w, actor, target);
+            });
+            this.updateBorder();
+        } finally { grab.updating = false; }
+    }
+
+    endLinkedResize() {
+        const grab = this.resizeGrab;
+        if (!grab) return;
+        this.cancelLinkedResizeFrame();
+        this.resizeGrab = null;
+        const rects = grab.updated ?? grab.rects;
+        const settleWindows = new Set(grab.nativeRequests?.keys() ?? []);
+        // Mutter can resize the grabbed window even when the divider is blocked,
+        // or while the pointer returns to its start. Restore its displayed slot
+        // on release even if the geometry solver made no layout change.
+        grab.slots.forEach((w, i) => {
+            if (!w || !this.records.has(w) || typeof w.get_frame_rect !== 'function') return;
+            const frame = w.get_frame_rect();
+            if (['x', 'y', 'width', 'height'].some(key => frame[key] !== rects[i][key])) settleWindows.add(w);
+        });
+        for (const w of settleWindows) {
+            const record = this.records.get(w);
+            if (record) {
+                record.backingRect = null;
+                record.linkedResizePending = true;
+                record.linkedResizeEligible = true;
+            }
+        }
+        grab.slots.forEach((w, i) => {
+            if (w && this.records.has(w) && grab.updated && ['x', 'y', 'width', 'height'].some(key =>
+                grab.updated[i][key] !== grab.rects[i][key]))
+                this.records.get(w).linkedResizeEligible = true;
+        });
+        if (grab.updated && this.running && this.records.has(grab.window) &&
+            this.groups.get(this.key(grab.monitor, grab.space))?.length === grab.slots.length) {
+            this.pushCheckpoint(grab.checkpoint);
+            grab.slots.forEach((w, i) => {
+                if (w && this.records.has(w) && ['x', 'y', 'width', 'height'].some(key =>
+                    grab.updated[i][key] !== grab.rects[i][key]))
+                    this.records.get(w).linkedResizePending = true;
+            });
+            const profileKey = this.profileKey(grab.monitor, grab.space);
+            const profile = this.profiles[profileKey] ??= {preset: this.options(grab.monitor, grab.space).preset,
+                apps: grab.slots.filter(Boolean).map(w => this.appId(w))};
+            profile.resize = {preset: this.options(grab.monitor, grab.space).preset,
+                count: grab.rects.length,
+                offsets: resizeOffsets(layout(this.area(grab.monitor), grab.rects.length,
+                    this.options(grab.monitor, grab.space)), grab.updated, this.area(grab.monitor))};
+            const value = JSON.stringify(this.profiles);
+            this.linkedResizeProfileWrite = value;
+            this.settings.set_string('profiles', value);
+        }
+        if (this.running && (grab.updated || settleWindows.size)) {
+            this.busy = true;
+            try {
+                grab.slots.forEach((w, i) => {
+                    if (w && this.records.has(w) && !w.minimized &&
+                        (grab.updated || settleWindows.has(w)))
+                        this.place(w, rects[i], false, false, false);
+                });
+            } finally { this.busy = false; }
+            this.updateBorder();
+            this.publishPreviewState();
+        }
+        if (this.records.has(grab.window)) this.queueWindowActions(grab.window);
+    }
+
     grabBegin(w, op) {
+        if (this.beginLinkedResize(w, op)) return;
         if (!this.running || !this.records.has(w) || this.records.get(w).floating ||
             this.matchesAppRule(w, 'excluded-apps') ||
             ![Meta.GrabOp.MOVING, Meta.GrabOp.KEYBOARD_MOVING].includes(op)) return;
@@ -2236,7 +2471,7 @@ export default class SnapTess extends Extension {
             if (monitor >= 0) {
                 let slots = [...(this.groups.get(this.key(monitor)) ?? this.windows(monitor))];
                 if (!slots.includes(w)) slots.push(w);
-                const rects = layout(this.area(monitor), slots.length, this.options(monitor));
+                const rects = this.slotRects(monitor, slots.length);
                 const index = nearestSlot(rects, x, y);
                 if (index >= 0) {
                     if (this.reservedPinnedSlot(monitor, index, slots)) {
@@ -2278,6 +2513,7 @@ export default class SnapTess extends Extension {
         tick();
     }
     grabEnd() {
+        if (this.resizeGrab) { this.endLinkedResize(); return; }
         if (!this.drag) return;
         this.cancel(this.dragTimer); this.dragTimer = 0;
         const {window: w, target, monitor: source, checkpoint, startX, startY, started, blocked} = this.drag;
@@ -2331,6 +2567,8 @@ export default class SnapTess extends Extension {
     }
 
     monitorsChanged() {
+        this.cancelLinkedResizeFrame();
+        this.resizeGrab = null;
         this.rebuildMonitorMenus();
         this.updatePanelStatus();
         if (!this.running) return;

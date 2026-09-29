@@ -25,4 +25,4 @@ GNOME_SHELL_BUILDDIR="$PWD/scripts" SNAPTESS_PERF_HELPER="$perf_helper" \
 XDG_DATA_HOME="$test_data_home" timeout 90s dbus-run-session -- \
     gnome-shell-test-tool --headless --disable-animations \
     "${monitor_args[@]}" \
-    --extension dist/snaptess@c0sm0cats.github.io.shell-extension.zip tests/shell.js
+    --extension dist/snaptess@c0sm0cats.github.io.shell-extension.zip "${1:-tests/shell.js}"

@@ -24,6 +24,7 @@ SnapTess is a standalone GNOME Shell extension. It starts paused: enabling it do
 - **Layout Studio:** a desktop overlay with application icons, numbered slots, drag-to-swap, layout presets, display/space selection, and a window library for assigning windows across displays. Create a named layout from a blank fixed preset or edit the current space. Edits stay in a draft until applied or saved.
 - **Quick layout switcher:** open it from the panel menu or press Ctrl+Alt+L. See how many windows each saved layout will reuse, open, or hide before applying it to the focused display and space. Switch to Auto or a compatible preset without opening apps.
 - **Drag to snap:** move a tiled window by its title bar, see the translucent target, and release. Same-display drops swap; cross-display drops insert and reflow both displays.
+- **Linked tile resize:** drag a shared window edge or corner to resize neighboring tiles, with movement continuing into further tiles when a neighbor reaches its minimum. Proportions are saved for that display and space. Undo restores the previous arrangement; Arrange again (Ctrl+Alt+R) resets the proportions.
 - **Three spaces per display:** independent window groups within each native GNOME workspace. Switching parks windows with native minimization; stopping reveals and restores them.
 - **Stay in control:** floating windows, app exclusions, configurable compaction, maximize/fullscreen freeze, focused-window outline, animated guides, saved layout/app order, and ten-level arrangement undo.
 - **Pinned slots:** a compact card marks a reserved tile when its app is minimized, floating, or closed. Click it to restore, retile, or reopen the app; unpinned empty tiles stay clear.
@@ -59,7 +60,7 @@ All shortcuts can be changed in Preferences. In swap mode, use the arrow keys an
 | Ctrl+Alt+T | Start / stop tiling and restore |
 | Ctrl+Alt+P | Layout Studio |
 | Ctrl+Alt+L | Change layout |
-| Ctrl+Alt+R | Arrange again |
+| Ctrl+Alt+R | Arrange again and reset manually resized tile proportions |
 | Ctrl+Alt+F | Float / tile the focused window |
 | Ctrl+Alt+S | Enter / leave swap mode |
 | Ctrl+Alt+Z | Undo the last manual arrangement |
