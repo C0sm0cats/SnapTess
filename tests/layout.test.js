@@ -1,7 +1,122 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {layout, autoLayout, capacity, fitMinimumSize, frameScalePivot, nearestSlot, directionalSlot, reconcileSlots,
-    activePinnedSlots, reserveAppSlots, swapNeighbor, PRESETS, sortedSavedLayouts} from '../lib/layout.js';
+    activePinnedSlots, reserveAppSlots, swapNeighbor, PRESETS, sortedSavedLayouts,
+    resizeDivider, resizedLayout, resizeOffsets} from '../lib/layout.js';
+
+test('a shared divider resizes only its neighboring row or column', () => {
+    const area = {x: 0, y: 0, width: 1000, height: 800};
+    const base = layout(area, 4, {preset: '2x2', gap: 12, padding: 12});
+    const horizontal = resizeDivider(base, 0, 'E', 100);
+    assert.equal(horizontal[0].width, base[0].width + 100);
+    assert.deepEqual(horizontal[2], base[2]);
+    assert.equal(horizontal[1].x, base[1].x + 100);
+    assert.deepEqual(horizontal[3], base[3]);
+    assert.equal(horizontal[0].x + horizontal[0].width + 12, horizontal[1].x);
+    const corner = resizeDivider(base, 0, 'S', 50);
+    assert.equal(corner[0].height, base[0].height + 50);
+    assert.equal(corner[1].height, base[1].height);
+    assert.equal(corner[2].y, base[2].y + 50);
+    assert.deepEqual(corner[3], base[3]);
+    assert.deepEqual(resizeDivider(base, 0, 'W', 40), base, 'outside edge has no neighbor');
+    assert.equal(resizeDivider(base, 0, 'E', 9999)[1].width, 80);
+});
+
+test('focus layout resizes its column and its right-hand row independently', () => {
+    const base = layout({x: 0, y: 0, width: 1000, height: 800}, 3, {preset: 'master'});
+    const column = resizeDivider(base, 0, 'E', -90);
+    assert.equal(column[1].x, base[1].x - 90);
+    assert.equal(column[2].x, base[2].x - 90);
+    const row = resizeDivider(column, 1, 'S', 55);
+    assert.deepEqual(row[0], column[0]);
+    assert.equal(row[2].y, column[2].y + 55);
+    const fromStack = resizeDivider(base, 1, 'W', -90);
+    assert.equal(fromStack[0].width, base[0].width - 90);
+    assert.equal(fromStack[1].x, base[1].x - 90);
+    assert.equal(fromStack[2].x, base[2].x - 90,
+        'a full-height master requires both stacked neighbors to move');
+});
+
+test('a dragged divider uses every later column before reaching its limit', () => {
+    const base = layout({x: 0, y: 0, width: 1000, height: 800}, 16,
+        {preset: '4x4', gap: 12, padding: 12});
+    const firstCapacity = base[1].width - 80;
+    const expanded = resizeDivider(base, 0, 'E', firstCapacity + 60);
+    assert.equal(expanded[0].width, base[0].width + firstCapacity + 60);
+    assert.equal(expanded[1].width, 80);
+    assert.equal(expanded[2].width, base[2].width - 60);
+    assert.equal(expanded[3].width, base[3].width);
+    assert.deepEqual(expanded[4], base[4], 'other rows keep their geometry');
+    let previous = base[0].width;
+    for (let delta = 0; delta <= 1000; delta += 25) {
+        const rects = resizeDivider(base, 0, 'E', delta);
+        assert.ok(rects[0].width >= previous, 'dragged tile never shrinks as the divider advances');
+        previous = rects[0].width;
+        assert.ok(rects.every(r => r.width >= 80));
+        for (let i = 0; i < 3; i++)
+            assert.equal(rects[i].x + rects[i].width + 12, rects[i + 1].x);
+    }
+    assert.deepEqual(resizeDivider(base, 0, 'E', 1000), resizeDivider(base, 0, 'E', 2000),
+        'the outer edge caps further movement without reversing it');
+    const fromRight = resizeDivider(base, 3, 'W', -(base[2].width - 80 + 60));
+    assert.equal(fromRight[3].width, base[3].width + base[2].width - 80 + 60);
+    assert.equal(fromRight[2].width, 80);
+    assert.equal(fromRight[1].width, base[1].width - 60);
+    assert.deepEqual(fromRight[7], base[7]);
+});
+
+test('the same pressure propagation works across later rows', () => {
+    const base = layout({x: 0, y: 0, width: 1000, height: 800}, 16,
+        {preset: '4x4', gap: 12, padding: 12});
+    const firstCapacity = base[4].height - 80;
+    const resized = resizeDivider(base, 0, 'S', firstCapacity + 40);
+    assert.equal(resized[0].height, base[0].height + firstCapacity + 40);
+    assert.equal(resized[4].height, 80);
+    assert.equal(resized[8].height, base[8].height - 40);
+    assert.equal(resized[12].height, base[12].height);
+    assert.deepEqual(resized[1], base[1], 'other columns keep their geometry');
+});
+
+test('shrinking a grabbed tile stops at its minimum without moving its far edge', () => {
+    const base = layout({x: 0, y: 0, width: 1000, height: 800}, 16,
+        {preset: '4x4', gap: 12, padding: 12});
+    for (const [index, edge, delta, start, size] of [
+        [1, 'E', -500, 'x', 'width'], [1, 'W', 500, 'x', 'width'],
+        [4, 'S', -500, 'y', 'height'], [4, 'N', 500, 'y', 'height'],
+    ]) {
+        const result = resizeDivider(base, index, edge, delta);
+        assert.equal(result[index][size], 80, `${edge} reaches the minimum`);
+        const far = edge === 'E' || edge === 'S'
+            ? r => r[start] : r => r[start] + r[size];
+        assert.equal(far(result[index]), far(base[index]), `${edge} keeps its far edge fixed`);
+        assert.deepEqual(resizeDivider(base, index, edge, delta * 2), result,
+            `${edge} stops moving after reaching the minimum`);
+    }
+});
+
+test('a staggered neighboring tile caps a local divider before overlap', () => {
+    const rects = [
+        {x: 0, y: 0, width: 100, height: 200},
+        {x: 110, y: 0, width: 100, height: 120},
+        {x: 0, y: 210, width: 150, height: 200},
+    ];
+    const resized = resizeDivider(rects, 2, 'N', -100);
+    assert.equal(resized[2].y, 120);
+    assert.equal(resized[0].height, 110);
+    assert.deepEqual(resized[1], rects[1]);
+});
+
+test('saved resize offsets follow work-area changes', () => {
+    const area = {x: 0, y: 0, width: 1000, height: 800};
+    const base = layout(area, 2, {preset: 'split'});
+    const resized = resizeDivider(base, 0, 'E', 100);
+    const saved = {offsets: resizeOffsets(base, resized, area)};
+    assert.deepEqual(resizedLayout(base, area, saved), resized);
+    const wide = {x: 1000, y: 0, width: 2000, height: 800};
+    const restored = resizedLayout(layout(wide, 2, {preset: 'split'}), wide, saved);
+    assert.equal(restored[0].width, layout(wide, 2, {preset: 'split'})[0].width + 200);
+    assert.equal(resizedLayout(base, area, {offsets: [[Infinity, 0, 0, 0], [0, 0, 0, 0]]}), base);
+});
 
 test('saved layouts sort by tile count without changing stored order or equal-count order', () => {
     const saved = [{id: 'two', slotCount: 2}, {id: 'one-a', slotCount: 1},

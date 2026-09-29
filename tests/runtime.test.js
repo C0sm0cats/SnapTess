@@ -65,7 +65,9 @@ function harness(options = {}) {
                     get_app_info: () => ({launch: () => { launches.push(id); return true; }})} :
                 options.installedApps?.find(info => info.get_id() === id)?.app ?? null})},
         WindowTracker: {get_default: () => ({get_window_app: () => options.trackedApp ?? null})}},
-        Meta: {WindowType: {NORMAL: 0}, GrabOp: {MOVING: 1, KEYBOARD_MOVING: 2}},
+        Meta: {WindowType: {NORMAL: 0}, GrabOp: {MOVING: 1, KEYBOARD_MOVING: 2,
+            RESIZING_N: 3, RESIZING_S: 4, RESIZING_E: 5, RESIZING_W: 6,
+            RESIZING_NE: 7, RESIZING_NW: 8, RESIZING_SE: 9, RESIZING_SW: 10}},
         Mtk: {Rectangle: class { constructor(rect) { Object.assign(this, rect); } }},
         global: {display: {is_grabbed: () => grabbed, get_current_monitor: () => monitor, focus_window: null}, get_pointer: () => pointer,
             workspace_manager: {get_active_workspace: () => workspace, get_active_workspace_index: () => 0}, get_window_actors: () => [actor]},
@@ -116,6 +118,240 @@ function harness(options = {}) {
         effectsDone, settleInitial, frame: () => frame, grab: value => { grabbed = value; },
         monitor: value => { monitor = value; }, pointer: (x, y) => { pointer = [x, y]; }};
 }
+
+test('resize grab moves its neighbor and persists only the active space', () => {
+    const h = harness(), app = h.app;
+    const otherActor = {get_width: () => 383, get_height: () => 576,
+        set_pivot_point() {}, set_scale(x) { this.scale_x = x; }};
+    const other = {get_frame_rect: () => ({x: 405, y: 12, width: 383, height: 576}),
+        get_compositor_private: () => otherActor,
+        move_resize_frame() { assert.fail('neighbors must not receive native resizes during the grab'); }};
+    app.records.set(other, {floating: false});
+    app.groups = new Map([['space-0', [h.w, other]]]);
+    app.profiles = {};
+    app.history = [];
+    const setString = app.settings.set_string;
+    app.settings.set_string = (key, value) => {
+        setString(key, value);
+        if (key === 'profiles') app.settingsChanged(key);
+    };
+    app.key = (_monitor, space = 0) => `space-${space}`;
+    app.profileKey = (_monitor, space = 0) => `profile-${space}`;
+    app.activeSpace = () => 0;
+    app.isSpecialWindow = () => false;
+    app.matchesAppRule = () => false;
+    app.hideWindowActions = () => {};
+    app.queueWindowActions = () => {};
+    app.captureCheckpoint = () => ({before: true});
+    app.tile = () => assert.fail('releasing a divider must not recalculate the layout');
+    const placements = [];
+    app.place = (w, rect, _restoring, _force, motionGuides) => {
+        assert.equal(motionGuides, false);
+        placements.push([w, rect]);
+    };
+    const base = app.slotRects(0, 2);
+    h.commit(base[0]);
+    h.grab(true);
+    app.grabBegin(h.w, 5);
+    assert.equal(app.resizeGrab.window, h.w);
+    h.pointer(210, 80); h.advance(32);
+    assert.equal(h.frame().width, base[0].width, 'the pointer drives the divider before the client responds');
+    assert.equal(otherActor.translation_x, base[1].x + 60 - 405);
+    assert.ok(otherActor.scale_x < 1);
+    const preview = app.resizeGrab.updated.map(rect => ({...rect}));
+    h.pointer(240, 80); // No new preview tick: release must save the last visible geometry.
+    h.grab(false);
+    app.grabEnd();
+    assert.equal(app.history.length, 1);
+    assert.deepEqual(placements.map(([, rect]) => rect), preview);
+    assert.equal(app.slotRects(0, 2)[0].width, base[0].width + 60);
+    assert.deepEqual(app.slotRects(0, 2, 1), base);
+    assert.equal(app.profiles['profile-0'].apps.length, 2);
+});
+
+test('an external profile change still schedules a retile', () => {
+    const h = harness(), scheduled = [];
+    h.app.schedule = compact => scheduled.push(compact);
+    h.app.settings.set_string('profiles', '{}');
+    h.app.settingsChanged('profiles');
+    assert.deepEqual(scheduled, [true]);
+});
+
+test('a growing neighbor receives native geometry during the grab', () => {
+    const h = harness(), app = h.app;
+    app.profileKey = () => 'profile';
+    app.profiles = {};
+    const base = app.slotRects(0, 2);
+    let neighborFrame = {...base[1]};
+    const nativeRequests = [], nativeMoves = [];
+    const actor = {get_width: () => neighborFrame.width, get_height: () => neighborFrame.height,
+        set_pivot_point() {}, set_scale(x, y) { this.scale_x = x; this.scale_y = y; }};
+    const neighbor = {get_frame_rect: () => ({...neighborFrame}), get_compositor_private: () => actor,
+        move_frame(_user, x, y) { nativeMoves.push({x, y}); },
+        move_resize_frame(_user, x, y, width, height) {
+            nativeRequests.push({x, y, width, height});
+        }};
+    app.records.set(neighbor, {floating: false, placing: false, traceUntil: 0, requestSequence: 0,
+        backingRect: {...base[1]}});
+    app.groups = new Map([['space', [h.w, neighbor]]]);
+    app.key = () => 'space'; app.activeSpace = () => 0;
+    app.isSpecialWindow = () => false; app.matchesAppRule = () => false;
+    app.hideWindowActions = () => {}; app.captureCheckpoint = () => ({});
+    let guideDestroyed = false;
+    app.motionGuides = new Set([{destroy: () => { guideDestroyed = true; }}]);
+    h.commit(base[0]); h.grab(true);
+    app.grabBegin(h.w, 5);
+    assert.equal(guideDestroyed, true);
+    h.pointer(90, 80); h.advance(32);
+    assert.equal(nativeRequests.length, 1);
+    assert.equal(nativeRequests[0].x, base[1].x - 60);
+    assert.deepEqual(nativeMoves, [{x: nativeRequests[0].x, y: nativeRequests[0].y}],
+        'native neighbors move before resizing even during a grab');
+    assert.equal(nativeRequests[0].width, base[1].width + 60);
+    assert.equal(actor.scale_x, 1, 'preview does not zoom the client content');
+    neighborFrame = {...nativeRequests[0]};
+    app.updateLinkedResize();
+    assert.equal(actor.scale_x, 1);
+    h.advance(32);
+    assert.equal(nativeRequests.length, 1, 'an unchanged target is not requested again');
+    h.pointer(150, 80); h.advance(32); h.grab(false);
+    app.tile = () => assert.fail('releasing a divider must not recalculate the layout');
+    const place = app.place.bind(app);
+    let restoredNeighbor = false;
+    app.place = (w, rect, ...args) => {
+        if (w === neighbor) {
+            assert.equal(app.records.get(neighbor).backingRect, null,
+                'returning to the original divider must request native placement again');
+            restoredNeighbor = true;
+        }
+        return place(w, rect, ...args);
+    };
+    app.endLinkedResize();
+    assert.equal(restoredNeighbor, true);
+    assert.equal(app.records.get(neighbor).linkedResizePending, true);
+    assert.equal(app.records.get(neighbor).linkedResizeEligible, true,
+        'a neighbor touched by live resizing keeps the late-response fallback');
+});
+
+test('returning a resize divider to its start does not save a stale change', () => {
+    const h = harness(), app = h.app;
+    const otherActor = {get_width: () => 383, get_height: () => 576,
+        set_pivot_point() {}, set_scale() {}};
+    const other = {get_frame_rect: () => ({x: 405, y: 12, width: 383, height: 576}),
+        get_compositor_private: () => otherActor};
+    app.records.set(other, {floating: false});
+    app.groups = new Map([['space-0', [h.w, other]]]);
+    app.profiles = {}; app.history = [];
+    app.key = () => 'space-0'; app.profileKey = () => 'profile-0';
+    app.isSpecialWindow = () => false; app.matchesAppRule = () => false;
+    app.hideWindowActions = () => {}; app.queueWindowActions = () => {};
+    app.captureCheckpoint = () => ({}); app.tile = () => {};
+    const base = app.slotRects(0, 2);
+    h.commit(base[0]); h.grab(true);
+    app.grabBegin(h.w, 5);
+    h.pointer(190, 80); h.advance(32);
+    h.pointer(150, 80); h.advance(32); h.grab(false);
+    app.grabEnd();
+    assert.equal(app.history.length, 0);
+    assert.equal(app.profiles['profile-0'], undefined);
+    assert.equal(otherActor.translation_x, base[1].x - 405);
+});
+
+test('a client rejecting a linked resize remains tiled with a visual fit', () => {
+    const h = harness(); h.settleInitial();
+    const target = {...h.slot, width: 300, height: 250};
+    h.record.linkedResizePending = true;
+    h.record.visualScale = 0.5;
+    h.app.place(h.w, target);
+    h.advance(8000);
+    assert.equal(h.record.floating, false);
+    assert.equal(h.record.linkedResizeScale, true);
+    assert.equal(h.record.tileRect.width, target.width);
+    assert.ok(h.actor.scale_x < 1);
+});
+
+test('release keeps the live linked fit until the native frame arrives', () => {
+    for (const targetOf of [
+        slot => ({...slot, x: slot.x + 80, width: 300, height: 250}),
+        slot => ({...slot, x: slot.x + 80, width: 700, height: 450}),
+    ]) {
+        const h = harness(); h.settleInitial();
+        const target = targetOf(h.slot);
+        h.record.linkedResizePending = true;
+        h.record.linkedResizeEligible = true;
+        h.app.fitLinkedResize(h.w, h.actor, target);
+        const visible = {scaleX: h.actor.scale_x, scaleY: h.actor.scale_y,
+            x: h.actor.translation_x, y: h.actor.translation_y};
+        h.app.place(h.w, target, false, false, false);
+        assert.deepEqual({scaleX: h.actor.scale_x, scaleY: h.actor.scale_y,
+            x: h.actor.translation_x, y: h.actor.translation_y}, visible);
+        h.advance(100);
+        assert.deepEqual({scaleX: h.actor.scale_x, scaleY: h.actor.scale_y,
+            x: h.actor.translation_x, y: h.actor.translation_y}, visible,
+        'asynchronous clients keep their live preview while placement settles');
+        h.commit(target); h.advance(100);
+        assert.equal(h.actor.scale_x, 1);
+        assert.equal(h.actor.scale_y, 1);
+        assert.equal(h.actor.translation_x, 0);
+    }
+});
+
+test('a late resize response cannot float a previously linked neighbor', () => {
+    const h = harness(); h.settleInitial();
+    h.record.linkedResizeEligible = true;
+    h.record.linkedResizePending = true;
+    h.app.correctWindowScale(h.w);
+    assert.equal(h.record.linkedResizePending, false,
+        'a first accepted frame clears the short-lived pending flag');
+    h.commit({...h.slot, width: h.slot.width + 100});
+    h.advance(8000);
+    assert.equal(h.record.floating, false);
+    assert.equal(h.record.linkedResizeScale, true);
+    assert.ok(h.actor.scale_x < 1);
+});
+
+test('dragging past the last available column never shrinks the visible grabbed tile', () => {
+    const h = harness(), app = h.app;
+    const others = Array.from({length: 3}, () => ({}));
+    for (const w of others) app.records.set(w, {floating: false});
+    app.groups = new Map([['space', [h.w, ...others]]]);
+    app.profiles = {profile: {preset: '4x3', apps: []}};
+    app.key = () => 'space'; app.profileKey = () => 'profile';
+    app.isSpecialWindow = () => false; app.matchesAppRule = () => false;
+    app.hideWindowActions = () => {}; app.captureCheckpoint = () => ({});
+    const base = app.slotRects(0, 4), original = base[0];
+    h.commit(original); h.grab(true);
+    app.grabBegin(h.w, 5);
+    h.pointer(1150, 80);
+    h.commit({...original, width: original.width + 1000, height: original.height + 150});
+    const target = app.resizeGrab.updated[0];
+    const firstVisibleWidth = h.frame().width * h.actor.scale_x;
+    assert.equal(Math.round(firstVisibleWidth), target.width);
+    h.pointer(1350, 80);
+    h.commit({...original, width: original.width + 1200, height: original.height + 350});
+    assert.equal(app.resizeGrab.updated[0].width, target.width);
+    assert.equal(Math.round(h.frame().width * h.actor.scale_x), target.width);
+    assert.equal(Math.round(h.frame().height * h.actor.scale_y), target.height);
+});
+
+test('Arrange again clears only the focused space resize and keeps its preset', () => {
+    const h = harness(), app = h.app;
+    app.groups = new Map(); app.history = [];
+    app.currentMonitor = () => 0;
+    app.profileKey = (_monitor, space = 0) => `profile-${space}`;
+    app.profiles = {
+        'profile-0': {preset: '2x2', apps: ['test.desktop'], resize: {preset: '2x2', count: 4, offsets: []}},
+        'profile-1': {preset: 'split', apps: [], resize: {preset: 'split', count: 2, offsets: []}},
+    };
+    let tiles = 0;
+    app.tile = compact => { assert.equal(compact, true); tiles++; };
+    app.arrangeAgain();
+    assert.equal(tiles, 1);
+    assert.equal(app.profiles['profile-0'].preset, '2x2');
+    assert.equal(app.profiles['profile-0'].resize, undefined);
+    assert.ok(app.profiles['profile-1'].resize);
+    assert.ok(JSON.parse(app.history[0].profiles)['profile-0'].resize, 'Undo retains the prior proportions');
+});
 
 test('a titlebar click leaves drag feedback hidden and does not retile', () => {
     const h = harness(); h.settleInitial(); h.grab(true);
