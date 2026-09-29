@@ -37,6 +37,15 @@ test('focus layout resizes its column and its right-hand row independently', () 
         'a full-height master requires both stacked neighbors to move');
 });
 
+test('a staggered shared edge cannot open an empty band after another tile was resized', () => {
+    const area = {x: 0, y: 0, width: 2560, height: 1408};
+    let rects = layout(area, 15, {preset: 'auto', gap: 12, padding: 12});
+    rects = resizeDivider(rects, 12, 'N', -385);
+    rects = resizeDivider(rects, 2, 'W', -52);
+    assert.deepEqual(resizeDivider(rects, 7, 'N', -328), rects,
+        'the tile below cannot fill the extra 52 pixels of the wider tile above');
+});
+
 test('a dragged divider uses every later column before reaching its limit', () => {
     const base = layout({x: 0, y: 0, width: 1000, height: 800}, 16,
         {preset: '4x4', gap: 12, padding: 12});
@@ -116,6 +125,22 @@ test('saved resize offsets follow work-area changes', () => {
     const restored = resizedLayout(layout(wide, 2, {preset: 'split'}), wide, saved);
     assert.equal(restored[0].width, layout(wide, 2, {preset: 'split'})[0].width + 200);
     assert.equal(resizedLayout(base, area, {offsets: [[Infinity, 0, 0, 0], [0, 0, 0, 0]]}), base);
+});
+
+test('restoring compound resizes never overlaps tiles after an aspect-ratio change', () => {
+    const options = {preset: 'split', gap: 12, padding: 12};
+    const originalArea = {x: 0, y: 0, width: 819, height: 816};
+    const original = layout(originalArea, 9, options);
+    let resized = resizeDivider(original, 8, 'N', 259);
+    resized = resizeDivider(resized, 6, 'E', 378);
+    resized = resizeDivider(resized, 5, 'W', -214);
+    const saved = {offsets: resizeOffsets(original, resized, originalArea)};
+    assert.deepEqual(resizedLayout(original, originalArea, saved), resized);
+
+    const newArea = {x: 0, y: 0, width: 2474, height: 1660};
+    const base = layout(newArea, 9, options);
+    assert.deepEqual(resizedLayout(base, newArea, saved), base,
+        'invalid saved proportions fall back to a non-overlapping layout');
 });
 
 test('saved layouts sort by tile count without changing stored order or equal-count order', () => {
