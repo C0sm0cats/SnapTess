@@ -4,6 +4,23 @@ import {layout, autoLayout, capacity, fitMinimumSize, frameScalePivot, nearestSl
     activePinnedSlots, reserveAppSlots, swapNeighbor, PRESETS, sortedSavedLayouts,
     resizeDivider, advanceLinkedResize, resizedLayout, resizeOffsets} from '../lib/layout.js';
 
+function assertPartition(rects, base, gap = 12) {
+    const covered = values => values.reduce((sum, r) => sum + (r.width + gap) * (r.height + gap), 0);
+    assert.equal(covered(rects), covered(base), 'resizing preserves the complete tiled area');
+    const left = Math.min(...base.map(r => r.x)), top = Math.min(...base.map(r => r.y));
+    const right = Math.max(...base.map(r => r.x + r.width)), bottom = Math.max(...base.map(r => r.y + r.height));
+    rects.forEach((r, i) => {
+        assert.ok(r.x >= left && r.y >= top && r.x + r.width <= right && r.y + r.height <= bottom);
+        assert.ok(r.width >= Math.min(80, base[i].width) && r.height >= Math.min(80, base[i].height));
+        for (let j = i + 1; j < rects.length; j++) {
+            const b = rects[j];
+            assert.ok(r.x + r.width + gap <= b.x || b.x + b.width + gap <= r.x ||
+                r.y + r.height + gap <= b.y || b.y + b.height + gap <= r.y,
+            `tiles ${i} and ${j} preserve the gutter`);
+        }
+    });
+}
+
 test('a shared divider resizes only its neighboring row or column', () => {
     const area = {x: 0, y: 0, width: 1000, height: 800};
     const base = layout(area, 4, {preset: '2x2', gap: 12, padding: 12});
@@ -37,28 +54,18 @@ test('focus layout resizes its column and its right-hand row independently', () 
         'a full-height master requires both stacked neighbors to move');
 });
 
-test('a staggered shared edge realigns neighboring tiles before moving', () => {
+test('a staggered shared edge moves on the requested axis without leaving holes', () => {
     const area = {x: 0, y: 0, width: 2560, height: 1408};
     let rects = layout(area, 15, {preset: 'auto', gap: 12, padding: 12});
     rects = resizeDivider(rects, 12, 'N', -385);
     rects = resizeDivider(rects, 2, 'W', -52);
-    const partial = resizeDivider(rects, 7, 'N', -26);
-    assert.equal(partial[7].x, rects[7].x - 26);
-    assert.equal(partial[7].y, rects[7].y, 'the vertical boundary waits for the sides to align');
-    assert.equal(partial[6].width, rects[6].width - 26);
-    const aligned = resizeDivider(rects, 7, 'N', -52);
-    assert.equal(aligned[7].x, aligned[2].x);
-    const moved = resizeDivider(rects, 7, 'N', -380);
-    assert.equal(moved[7].x, moved[2].x);
-    assert.equal(moved[7].y, rects[7].y - 328);
-    assert.equal(moved[2].y + moved[2].height + 12, moved[7].y);
-    const corner = resizeDivider(moved, 7, 'E', 100);
-    assert.equal(corner[7].width, moved[7].width + 100);
-    assert.equal(corner[7].x + corner[7].width + 12, corner[8].x);
-    assert.equal(corner[7].x, corner[12].x);
-    assert.ok(corner.every((r, i) => corner.every((other, j) => i === j ||
-        r.x >= other.x + other.width || other.x >= r.x + r.width ||
-        r.y >= other.y + other.height || other.y >= r.y + r.height)));
+    const moved = resizeDivider(rects, 7, 'N', -26);
+    assert.equal(moved[7].y, rects[7].y - 26, 'the dragged edge follows the pointer immediately');
+    rects.forEach((r, i) => {
+        assert.equal(moved[i].x, r.x, 'vertical resizing never shifts a horizontal border');
+        assert.equal(moved[i].width, r.width);
+    });
+    assertPartition(moved, rects);
 });
 
 test('a dragged divider uses every later column before reaching its limit', () => {
@@ -97,11 +104,12 @@ test('pressure continues past a minimum neighbor with a staggered far band', () 
     const atMinimum = resizeDivider(staggered, 0, 'E', firstCapacity);
     assert.equal(atMinimum[1].width, 80);
     const aligning = resizeDivider(staggered, 0, 'E', firstCapacity + 1);
-    assert.equal(aligning[0].width, atMinimum[0].width);
-    assert.equal(aligning[1].height, atMinimum[1].height + 1);
+    assert.equal(aligning[0].width, atMinimum[0].width + 1);
+    assert.equal(aligning[1].height, atMinimum[1].height);
+    assertPartition(aligning, base);
     const continued = resizeDivider(staggered, 0, 'E', firstCapacity + 81);
-    assert.equal(continued[0].width, atMinimum[0].width + 1);
-    assert.equal(continued[2].width, staggered[2].width - 1);
+    assert.equal(continued[0].width, atMinimum[0].width + 81);
+    assert.equal(continued[2].width, staggered[2].width - 81);
     let previousWidth = staggered[0].width;
     for (let delta = 0; delta <= 600; delta += 10) {
         const rects = resizeDivider(staggered, 0, 'E', delta);
@@ -177,8 +185,8 @@ test('a staggered neighboring tile caps a local divider before overlap', () => {
         {x: 0, y: 210, width: 150, height: 200},
     ];
     const resized = resizeDivider(rects, 2, 'N', -100);
-    assert.equal(resized[2].y, 120);
-    assert.equal(resized[0].height, 110);
+    assert.equal(resized[2].y, 130);
+    assert.equal(resized[0].height, 120);
     assert.deepEqual(resized[1], rects[1]);
 });
 
@@ -198,11 +206,18 @@ test('restoring compound resizes never overlaps tiles after an aspect-ratio chan
     const options = {preset: 'split', gap: 12, padding: 12};
     const originalArea = {x: 0, y: 0, width: 819, height: 816};
     const original = layout(originalArea, 9, options);
-    let resized = resizeDivider(original, 8, 'N', 259);
-    resized = resizeDivider(resized, 6, 'E', 378);
-    resized = resizeDivider(resized, 5, 'W', -214);
+    // Persisted geometry produced by the old solver; keep this fixture independent
+    // of the corrected solver so the aspect-ratio fallback remains exercised.
+    const resized = [
+        {x:12,y:12,width:245,height:231}, {x:269,y:12,width:257,height:231},
+        {x:538,y:12,width:269,height:256}, {x:12,y:255,width:245,height:80},
+        {x:269,y:255,width:257,height:80}, {x:538,y:280,width:269,height:432},
+        {x:12,y:347,width:434,height:457}, {x:446,y:347,width:80,height:457},
+        {x:538,y:724,width:269,height:80},
+    ];
     const saved = {offsets: resizeOffsets(original, resized, originalArea)};
-    assert.deepEqual(resizedLayout(original, originalArea, saved), resized);
+    assert.deepEqual(resizedLayout(original, originalArea, saved), original,
+        'old geometry with missing gutters is rejected even on the original monitor');
 
     const newArea = {x: 0, y: 0, width: 2474, height: 1660};
     const base = layout(newArea, 9, options);
@@ -312,4 +327,86 @@ test('invalid preset falls back and empty groups are empty', () => {
     const area={x:0,y:0,width:100,height:100};
     assert.deepEqual(layout(area,0),[]);
     assert.equal(layout(area,3,{preset:'broken'}).length,3);
+});
+
+test('alternating windows and axes preserves coverage, gutters and opposite edges', () => {
+    let seed = 41374;
+    const random = () => ((seed = Math.imul(seed, 1664525) + 1013904223 >>> 0) / 2 ** 32);
+    for (const count of [4, 9, 15, 16, 25]) {
+        const base = layout({x: -1000, y: 32, width: 2560, height: 1408}, count);
+        let rects = base;
+        for (let step = 0; step < 500; step++) {
+            const index = Math.floor(random() * count), edge = ['E', 'W', 'N', 'S'][Math.floor(random() * 4)];
+            const delta = Math.round(random() * 1200 - 600);
+            const next = resizeDivider(rects, index, edge, delta);
+            const horizontal = edge === 'E' || edge === 'W';
+            const start = horizontal ? 'x' : 'y', size = horizontal ? 'width' : 'height';
+            const far = r => r[start] + (edge === 'W' || edge === 'N' ? r[size] : 0);
+            assert.equal(far(next[index]), far(rects[index]), 'the opposite edge stays anchored');
+            rects.forEach((r, i) => {
+                assert.equal(next[i][horizontal ? 'y' : 'x'], r[horizontal ? 'y' : 'x']);
+                assert.equal(next[i][horizontal ? 'height' : 'width'], r[horizontal ? 'height' : 'width']);
+            });
+            assertPartition(next, base);
+            rects = next;
+        }
+    }
+});
+
+test('a straight grab solves large deltas directly and reverses without retained pixel states', () => {
+    const rects = layout({x: 0, y: 0, width: 2560, height: 1408}, 25);
+    const grab = {rects, index: 0, pointer: [0, 0], edges: ['E']};
+    assertPartition(advanceLinkedResize(grab, [10000, 10000]), rects);
+    assert.equal(grab.steps, undefined);
+    assert.deepEqual(advanceLinkedResize(grab, [0, 10000]), rects);
+});
+
+test('corner drags preserve coverage across changing windows and reversals', () => {
+    const base = layout({x: 0, y: 0, width: 1600, height: 900}, 16);
+    let rects = base;
+    for (let index = 0; index < 16; index++) {
+        const grab = {rects, index, pointer: [0, 0], edges: [index % 2 ? 'W' : 'E', index % 3 ? 'S' : 'N']};
+        for (const pointer of [[90, 90], [30, 30], [220, 60], [-70, 140], [-90, -90], [0, 0]]) {
+            rects = advanceLinkedResize(grab, pointer);
+            assertPartition(rects, base);
+        }
+    }
+});
+
+test('fast corner motion matches slow motion at topology changes', () => {
+    let seed = 418;
+    const random = () => ((seed = Math.imul(seed, 1664525) + 1013904223 >>> 0) / 2 ** 32);
+    for (let trial = 0; trial < 32; trial++) {
+        let rects = layout({x: 0, y: 0, width: 1600, height: 900}, 16);
+        for (let n = 0; n < 10; n++) rects = resizeDivider(rects, Math.floor(random() * 16),
+            ['E', 'W', 'N', 'S'][Math.floor(random() * 4)], Math.round(random() * 800 - 400));
+        const index = Math.floor(random() * 16), edges = [random() < .5 ? 'E' : 'W', random() < .5 ? 'N' : 'S'];
+        const dx = random() < .5 ? -1 : 1, dy = random() < .5 ? -1 : 1;
+        const grab = {rects, index, edges, pointer: [0, 0]};
+        const batched = advanceLinkedResize(grab, [dx * 200, dy * 200]);
+        const slow = {rects, index, edges, pointer: [0, 0]};
+        let stepped;
+        for (let n = 1; n <= 200; n++) stepped = advanceLinkedResize(slow, [dx * n, dy * n]);
+        assert.ok(slow.steps.length < 50, 'steady motion does not retain one layout per pointer sample');
+        assert.deepEqual(batched, stepped, `sampling frequency does not change the layout (${trial})`);
+        assertPartition(batched, rects);
+        assert.deepEqual(advanceLinkedResize(grab, [0, 0]), rects, 'batched steps reverse exactly');
+    }
+});
+
+test('restored proportions preserve gutters and coverage after monitor changes', () => {
+    let seed = 814;
+    const random = () => ((seed = Math.imul(seed, 1664525) + 1013904223 >>> 0) / 2 ** 32);
+    for (let trial = 0; trial < 100; trial++) {
+        const area = {x: 0, y: 32, width: 1200 + Math.floor(random() * 1600), height: 800 + Math.floor(random() * 700)};
+        const base = layout(area, 16);
+        let rects = base;
+        for (let n = 0; n < 8; n++) rects = resizeDivider(rects, Math.floor(random() * 16),
+            ['E', 'W', 'N', 'S'][Math.floor(random() * 4)], Math.round(random() * 500 - 250));
+        const saved = {offsets: resizeOffsets(base, rects, area)};
+        assert.deepEqual(resizedLayout(base, area, saved), rects, 'saving and restoring the same screen is lossless');
+        const dest = {x: 0, y: 32, width: 1400 + Math.floor(random() * 1200), height: 900 + Math.floor(random() * 600)};
+        const next = layout(dest, 16);
+        assertPartition(resizedLayout(next, dest, saved), next);
+    }
 });

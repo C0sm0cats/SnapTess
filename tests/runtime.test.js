@@ -46,7 +46,7 @@ function harness(options = {}) {
     const Runtime = vm.runInNewContext(source, {
         ...geometry, Extension: class {}, console, TextDecoder,
         Date: class extends Date { static now() { return now; } },
-        GLib: {file_get_contents(path) {
+        GLib: {SOURCE_CONTINUE: true, SOURCE_REMOVE: false, file_get_contents(path) {
             if (path === `/proc/${options.launchPid ?? 979491}/environ` && options.launchEnvironment)
                 return [true, new TextEncoder().encode(options.launchEnvironment)];
             throw new Error('trace disabled');
@@ -65,11 +65,19 @@ function harness(options = {}) {
                     get_app_info: () => ({launch: () => { launches.push(id); return true; }})} :
                 options.installedApps?.find(info => info.get_id() === id)?.app ?? null})},
         WindowTracker: {get_default: () => ({get_window_app: () => options.trackedApp ?? null})}},
-        Meta: {WindowType: {NORMAL: 0}, GrabOp: {MOVING: 1, KEYBOARD_MOVING: 2,
+        Meta: {LaterType: {BEFORE_REDRAW: 0}, WindowType: {NORMAL: 0}, GrabOp: {MOVING: 1, KEYBOARD_MOVING: 2,
             RESIZING_N: 3, RESIZING_S: 4, RESIZING_E: 5, RESIZING_W: 6,
             RESIZING_NE: 7, RESIZING_NW: 8, RESIZING_SE: 9, RESIZING_SW: 10}},
         Mtk: {Rectangle: class { constructor(rect) { Object.assign(this, rect); } }},
-        global: {display: {is_grabbed: () => grabbed, get_current_monitor: () => monitor, focus_window: null}, get_pointer: () => pointer,
+        global: {compositor: {get_laters: () => ({
+            add(_phase, callback) {
+                const id = nextId++;
+                const fn = () => { if (callback()) timers.set(id, {at: now + 16, fn}); };
+                timers.set(id, {at: now + 16, fn});
+                return id;
+            },
+            remove(id) { timers.delete(id); },
+        })}, display: {is_grabbed: () => grabbed, get_current_monitor: () => monitor, focus_window: null}, get_pointer: () => pointer,
             workspace_manager: {get_active_workspace: () => workspace, get_active_workspace_index: () => 0}, get_window_actors: () => [actor]},
     });
     const app = new Runtime();
@@ -208,7 +216,8 @@ test('a growing neighbor receives native geometry during the grab', () => {
     assert.deepEqual(nativeMoves, [{x: nativeRequests[0].x, y: nativeRequests[0].y}],
         'native neighbors move before resizing even during a grab');
     assert.equal(nativeRequests[0].width, base[1].width + 60);
-    assert.equal(actor.scale_x, 1, 'preview does not zoom the client content');
+    assert.equal(actor.scale_x * neighborFrame.width, nativeRequests[0].width,
+        'preview fills the tile before the asynchronous client commits its new width');
     neighborFrame = {...nativeRequests[0]};
     app.updateLinkedResize();
     assert.equal(actor.scale_x, 1);
@@ -247,6 +256,7 @@ test('returning a resize divider to its start does not save a stale change', () 
     app.hideWindowActions = () => {}; app.queueWindowActions = () => {};
     app.captureCheckpoint = () => ({}); app.tile = () => {};
     const base = app.slotRects(0, 2);
+    other.get_frame_rect = () => ({...base[1]});
     h.commit(base[0]); h.grab(true);
     app.grabBegin(h.w, 5);
     h.pointer(190, 80); h.advance(32);
@@ -254,7 +264,30 @@ test('returning a resize divider to its start does not save a stale change', () 
     app.grabEnd();
     assert.equal(app.history.length, 0);
     assert.equal(app.profiles['profile-0'], undefined);
-    assert.equal(otherActor.translation_x, base[1].x - 405);
+    assert.equal(otherActor.translation_x, 0);
+});
+
+test('releasing a blocked exterior border restores native geometry even without a layout change', () => {
+    const h = harness(), app = h.app;
+    app.groups = new Map([['space-0', [h.w]]]);
+    app.profiles = {}; app.history = [];
+    app.key = () => 'space-0'; app.profileKey = () => 'profile-0';
+    app.isSpecialWindow = () => false; app.matchesAppRule = () => false;
+    app.hideWindowActions = () => {}; app.queueWindowActions = () => {};
+    app.captureCheckpoint = () => ({});
+    const original = app.slotRects(0, 1)[0];
+    h.commit(original); h.grab(true);
+    app.grabBegin(h.w, 6);
+    h.pointer(100, 80);
+    h.commit({...original, x: original.x - 50, width: original.width + 50});
+    h.advance(16);
+    assert.equal(app.resizeGrab.updated, null);
+    h.grab(false); app.endLinkedResize();
+    assert.equal(h.record.linkedResizeEligible, true);
+    assert.equal(h.requests.at(-1).width, original.width);
+    assert.equal(h.requests.at(-1).x, original.x);
+    assert.equal(h.actor.scale_x * h.frame().width, original.width);
+    assert.equal(app.profiles['profile-0'], undefined, 'a blocked drag does not save false proportions');
 });
 
 test('a client rejecting a linked resize remains tiled with a visual fit', () => {
@@ -280,6 +313,8 @@ test('release keeps the live linked fit until the native frame arrives', () => {
         h.record.linkedResizePending = true;
         h.record.linkedResizeEligible = true;
         h.app.fitLinkedResize(h.w, h.actor, target);
+        assert.equal(h.actor.scale_x * h.w.get_frame_rect().width, target.width);
+        assert.equal(h.actor.scale_y * h.w.get_frame_rect().height, target.height);
         const visible = {scaleX: h.actor.scale_x, scaleY: h.actor.scale_y,
             x: h.actor.translation_x, y: h.actor.translation_y};
         h.app.place(h.w, target, false, false, false);
@@ -289,8 +324,8 @@ test('release keeps the live linked fit until the native frame arrives', () => {
         assert.deepEqual({scaleX: h.actor.scale_x, scaleY: h.actor.scale_y,
             x: h.actor.translation_x, y: h.actor.translation_y}, visible,
         'asynchronous clients keep their live preview while placement settles');
-        h.commit(target); h.advance(100);
-        assert.equal(h.actor.scale_x, 1);
+        h.commit(target); h.advance(16);
+        assert.equal(h.actor.scale_x, 1, 'native commits are fitted before the next rendered frame');
         assert.equal(h.actor.scale_y, 1);
         assert.equal(h.actor.translation_x, 0);
     }
@@ -324,11 +359,13 @@ test('dragging past the last available column never shrinks the visible grabbed 
     app.grabBegin(h.w, 5);
     h.pointer(1150, 80);
     h.commit({...original, width: original.width + 1000, height: original.height + 150});
+    h.advance(16);
     const target = app.resizeGrab.updated[0];
     const firstVisibleWidth = h.frame().width * h.actor.scale_x;
     assert.equal(Math.round(firstVisibleWidth), target.width);
     h.pointer(1350, 80);
     h.commit({...original, width: original.width + 1200, height: original.height + 350});
+    h.advance(16);
     assert.equal(app.resizeGrab.updated[0].width, target.width);
     assert.equal(Math.round(h.frame().width * h.actor.scale_x), target.width);
     assert.equal(Math.round(h.frame().height * h.actor.scale_y), target.height);

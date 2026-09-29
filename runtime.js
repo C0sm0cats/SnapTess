@@ -17,7 +17,7 @@ import {LayoutSwitcher} from './lib/layout-switcher.js';
 import {WindowBorder} from './lib/window-border.js';
 import {radiusFromPixels, radiusStyle, plausibleWindowRadius, visualFrameRect} from './lib/window-radius.js';
 
-const RUNTIME_REVISION = 51;
+const RUNTIME_REVISION = 52;
 const RESTORE_STABILIZE_MS = 1400;
 const RESTORE_QUIET_MS = 120;
 const MAX_RESTORE_MOVES = 8;
@@ -48,7 +48,8 @@ export default class SnapTess extends Extension {
         this.radiusReadbackReady = false;
         this.drag = null;
         this.resizeGrab = null;
-        this.resizeTimer = 0;
+        this.resizeLater = 0;
+        this.linkedFitLater = 0;
         this.linkedResizeProfileWrite = null;
         this.swapMode = false;
         this.borderSwapActive = false;
@@ -389,7 +390,7 @@ export default class SnapTess extends Extension {
             this.records.delete(w);
             if (this.drag?.window === w) this.drag = null;
             if (this.resizeGrab?.window === w) {
-                this.cancel(this.resizeTimer); this.resizeTimer = 0;
+                this.cancelLinkedResizeFrame();
                 this.resizeGrab = null;
             }
             if (this.swapWindow === w) this.exitSwap(false);
@@ -426,6 +427,7 @@ export default class SnapTess extends Extension {
         });
         watch('position-changed', () => {
             this.traceWindow(w, 'position-changed');
+            if (record.linkedResizePending || record.linkedResizeEligible) this.queueLinkedResizeFit();
             if (record.placementMoves) this.scheduleRepairBudgetReset(w);
             const monitor = w.get_monitor();
             if (!this.busy && !this.drag && !record.placing && !record.restorePending &&
@@ -447,7 +449,7 @@ export default class SnapTess extends Extension {
         });
         watch('size-changed', () => {
             this.traceWindow(w, 'size-changed');
-            if (this.resizeGrab?.slots.includes(w) && !record.placing) this.updateLinkedResize();
+            if (record.linkedResizePending || record.linkedResizeEligible) this.queueLinkedResizeFit();
             this.invalidateWindowRadius(w, true);
             if (record.restorePending && Date.now() >= record.restoreQuietUntil && !record.placing && !this.busy && !this.drag)
                 this.queueWindowRestore(w, 80);
@@ -955,7 +957,7 @@ export default class SnapTess extends Extension {
         } else {
             this.cancel(this.pending); this.pending = 0;
             this.exitSwap(false); this.drag = null; this.resizeGrab = null;
-            this.cancel(this.resizeTimer); this.resizeTimer = 0;
+            this.cancelLinkedResizeFrame();
             this.hideGuides(); this.clearPinnedPlaceholders();
             this.clearMotionGuides();
             this.clearSpaceTransitions();
@@ -1312,8 +1314,8 @@ export default class SnapTess extends Extension {
     }
     fitLinkedResize(w, actor, target) {
         const frame = w.get_frame_rect();
-        const scaleX = Math.max(0.05, Math.min(1, target.width / Math.max(1, frame.width)));
-        const scaleY = Math.max(0.05, Math.min(1, target.height / Math.max(1, frame.height)));
+        const scaleX = target.width / Math.max(1, frame.width);
+        const scaleY = target.height / Math.max(1, frame.height);
         this.applyWindowScale(w, actor, scaleX, target, scaleY);
         const record = this.records.get(w);
         if (record) record.visualScale = Math.min(scaleX, scaleY);
@@ -2298,14 +2300,36 @@ export default class SnapTess extends Extension {
             rects: this.slotRects(monitor, slots.length, space),
             pointer: global.get_pointer(), checkpoint: this.captureCheckpoint(), updated: null};
         this.hideWindowActions();
-        const tick = () => {
-            if (!this.resizeGrab) return;
-            if (!global.display.is_grabbed()) { this.endLinkedResize(); return; }
+        this.resizeLater = global.compositor.get_laters().add(Meta.LaterType.BEFORE_REDRAW, () => {
+            if (!this.resizeGrab) { this.resizeLater = 0; return GLib.SOURCE_REMOVE; }
+            if (!global.display.is_grabbed()) { this.endLinkedResize(); return GLib.SOURCE_REMOVE; }
             this.updateLinkedResize();
-            this.resizeTimer = this.later(32, tick);
-        };
-        this.resizeTimer = this.later(32, tick);
+            return GLib.SOURCE_CONTINUE;
+        });
         return true;
+    }
+
+    cancelLinkedResizeFrame() {
+        for (const key of ['resizeLater', 'linkedFitLater']) {
+            if (this[key]) global.compositor.get_laters().remove(this[key]);
+            this[key] = 0;
+        }
+    }
+
+    queueLinkedResizeFit() {
+        if (!this.running || this.resizeGrab || this.linkedFitLater) return;
+        this.linkedFitLater = global.compositor.get_laters().add(Meta.LaterType.BEFORE_REDRAW, () => {
+            this.linkedFitLater = 0;
+            if (!this.running || this.busy || this.drag || global.display.is_grabbed()) return GLib.SOURCE_REMOVE;
+            for (const [w, record] of this.records) {
+                if ((!record.linkedResizePending && !record.linkedResizeEligible) || !record.tileRect ||
+                    record.floating || w.minimized || this.isSpecialWindow(w)) continue;
+                const actor = this.windowActor(w);
+                if (actor && !this.windowEffectActive(actor)) this.fitLinkedResize(w, actor, record.tileRect);
+            }
+            this.updateBorder();
+            return GLib.SOURCE_REMOVE;
+        });
     }
 
     updateLinkedResize() {
@@ -2353,11 +2377,19 @@ export default class SnapTess extends Extension {
     endLinkedResize() {
         const grab = this.resizeGrab;
         if (!grab) return;
-        this.cancel(this.resizeTimer); this.resizeTimer = 0;
+        this.cancelLinkedResizeFrame();
         this.resizeGrab = null;
-        // A neighbor may have grown natively and then returned to its original
-        // slot. Force placement even when the saved tile geometry is unchanged.
-        for (const w of grab.nativeRequests?.keys() ?? []) {
+        const rects = grab.updated ?? grab.rects;
+        const settleWindows = new Set(grab.nativeRequests?.keys() ?? []);
+        // Mutter can resize the grabbed window even when the divider is blocked,
+        // or while the pointer returns to its start. Restore its displayed slot
+        // on release even if the geometry solver made no layout change.
+        grab.slots.forEach((w, i) => {
+            if (!w || !this.records.has(w) || typeof w.get_frame_rect !== 'function') return;
+            const frame = w.get_frame_rect();
+            if (['x', 'y', 'width', 'height'].some(key => frame[key] !== rects[i][key])) settleWindows.add(w);
+        });
+        for (const w of settleWindows) {
             const record = this.records.get(w);
             if (record) {
                 record.backingRect = null;
@@ -2389,13 +2421,12 @@ export default class SnapTess extends Extension {
             this.linkedResizeProfileWrite = value;
             this.settings.set_string('profiles', value);
         }
-        if (this.running && (grab.updated || grab.nativeRequests?.size)) {
-            const rects = grab.updated ?? grab.rects;
+        if (this.running && (grab.updated || settleWindows.size)) {
             this.busy = true;
             try {
                 grab.slots.forEach((w, i) => {
                     if (w && this.records.has(w) && !w.minimized &&
-                        (grab.updated || grab.nativeRequests?.has(w)))
+                        (grab.updated || settleWindows.has(w)))
                         this.place(w, rects[i], false, false, false);
                 });
             } finally { this.busy = false; }
@@ -2536,7 +2567,7 @@ export default class SnapTess extends Extension {
     }
 
     monitorsChanged() {
-        this.cancel(this.resizeTimer); this.resizeTimer = 0;
+        this.cancelLinkedResizeFrame();
         this.resizeGrab = null;
         this.rebuildMonitorMenus();
         this.updatePanelStatus();
