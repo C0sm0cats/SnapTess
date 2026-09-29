@@ -11,7 +11,7 @@ import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import * as PanelMenu from 'resource:///org/gnome/shell/ui/panelMenu.js';
 import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js';
 import {layout, PRESETS, capacity, fitMinimumSize, frameScalePivot, nearestSlot, directionalSlot, reconcileSlots,
-    activePinnedSlots, reserveAppSlots, swapNeighbor, resizeDivider, resizedLayout, resizeOffsets} from './lib/layout.js';
+    activePinnedSlots, reserveAppSlots, swapNeighbor, advanceLinkedResize, resizedLayout, resizeOffsets} from './lib/layout.js';
 import {Studio} from './lib/studio.js';
 import {LayoutSwitcher} from './lib/layout-switcher.js';
 import {WindowBorder} from './lib/window-border.js';
@@ -2313,13 +2313,7 @@ export default class SnapTess extends Extension {
         if (!grab || !this.running || this.busy || grab.updating) return;
         grab.updating = true;
         try {
-            const [x, y] = global.get_pointer();
-            const [startX, startY] = grab.pointer;
-            let rects = grab.rects;
-            for (const edge of grab.edges) {
-                const delta = edge === 'E' || edge === 'W' ? x - startX : y - startY;
-                rects = resizeDivider(rects, grab.index, edge, delta);
-            }
+            const rects = advanceLinkedResize(grab, global.get_pointer());
             const changed = rects.some((r, i) =>
                 ['x', 'y', 'width', 'height'].some(key => r[key] !== grab.rects[i][key]));
             const previous = grab.updated ?? grab.rects;

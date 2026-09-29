@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {layout, autoLayout, capacity, fitMinimumSize, frameScalePivot, nearestSlot, directionalSlot, reconcileSlots,
     activePinnedSlots, reserveAppSlots, swapNeighbor, PRESETS, sortedSavedLayouts,
-    resizeDivider, resizedLayout, resizeOffsets} from '../lib/layout.js';
+    resizeDivider, advanceLinkedResize, resizedLayout, resizeOffsets} from '../lib/layout.js';
 
 test('a shared divider resizes only its neighboring row or column', () => {
     const area = {x: 0, y: 0, width: 1000, height: 800};
@@ -87,6 +87,58 @@ test('a dragged divider uses every later column before reaching its limit', () =
     assert.equal(fromRight[2].width, 80);
     assert.equal(fromRight[1].width, base[1].width - 60);
     assert.deepEqual(fromRight[7], base[7]);
+});
+
+test('pressure continues past a minimum neighbor with a staggered far band', () => {
+    const base = layout({x: 0, y: 0, width: 1000, height: 800}, 16,
+        {preset: '4x4', gap: 12, padding: 12});
+    const staggered = resizeDivider(base, 2, 'S', 80);
+    const firstCapacity = staggered[1].width - 80;
+    const atMinimum = resizeDivider(staggered, 0, 'E', firstCapacity);
+    assert.equal(atMinimum[1].width, 80);
+    const aligning = resizeDivider(staggered, 0, 'E', firstCapacity + 1);
+    assert.equal(aligning[0].width, atMinimum[0].width);
+    assert.equal(aligning[1].height, atMinimum[1].height + 1);
+    const continued = resizeDivider(staggered, 0, 'E', firstCapacity + 81);
+    assert.equal(continued[0].width, atMinimum[0].width + 1);
+    assert.equal(continued[2].width, staggered[2].width - 1);
+    let previousWidth = staggered[0].width;
+    for (let delta = 0; delta <= 600; delta += 10) {
+        const rects = resizeDivider(staggered, 0, 'E', delta);
+        assert.ok(rects[0].width >= previousWidth, 'the grabbed tile never reverses after far-band alignment');
+        previousWidth = rects[0].width;
+        assert.ok(rects.every((r, i) => rects.every((other, j) => i === j ||
+            r.x >= other.x + other.width || other.x >= r.x + r.width ||
+            r.y >= other.y + other.height || other.y >= r.y + r.height)));
+    }
+});
+
+test('a corner drag crosses a newly connected distant tile without a jump', () => {
+    const base = layout({x: 0, y: 0, width: 1600, height: 900}, 12,
+        {preset: '4x3', gap: 12, padding: 12});
+    let rects = base;
+    for (const [index, edge, delta] of [[2, 'S', 15], [5, 'S', -98],
+        [8, 'N', 58], [6, 'S', 152], [3, 'S', 52]])
+        rects = resizeDivider(rects, index, edge, delta);
+    const grab = {pointer: [0, 0], rects, index: 3, edges: ['S', 'W']};
+    let previous = rects;
+    for (let d = 1; d <= 400; d++) {
+        const current = advanceLinkedResize(grab, [-d, d]);
+        for (let i = 0; i < current.length; i++) {
+            for (const key of ['x', 'y', 'width', 'height'])
+                assert.ok(Math.abs(current[i][key] - previous[i][key]) <= 2,
+                    `tile ${i} ${key} jumped at pointer step ${d}`);
+            for (let j = i + 1; j < current.length; j++) {
+                const a = current[i], b = current[j];
+                assert.ok(a.x >= b.x + b.width || b.x >= a.x + a.width ||
+                    a.y >= b.y + b.height || b.y >= a.y + a.height,
+                `tiles ${i} and ${j} overlap at pointer step ${d}`);
+            }
+        }
+        previous = current;
+    }
+    assert.deepEqual(advanceLinkedResize(grab, [0, 0]), rects,
+        'reversing the pointer restores the exact initial geometry');
 });
 
 test('the same pressure propagation works across later rows', () => {
