@@ -37,13 +37,28 @@ test('focus layout resizes its column and its right-hand row independently', () 
         'a full-height master requires both stacked neighbors to move');
 });
 
-test('a staggered shared edge cannot open an empty band after another tile was resized', () => {
+test('a staggered shared edge realigns neighboring tiles before moving', () => {
     const area = {x: 0, y: 0, width: 2560, height: 1408};
     let rects = layout(area, 15, {preset: 'auto', gap: 12, padding: 12});
     rects = resizeDivider(rects, 12, 'N', -385);
     rects = resizeDivider(rects, 2, 'W', -52);
-    assert.deepEqual(resizeDivider(rects, 7, 'N', -328), rects,
-        'the tile below cannot fill the extra 52 pixels of the wider tile above');
+    const partial = resizeDivider(rects, 7, 'N', -26);
+    assert.equal(partial[7].x, rects[7].x - 26);
+    assert.equal(partial[7].y, rects[7].y, 'the vertical boundary waits for the sides to align');
+    assert.equal(partial[6].width, rects[6].width - 26);
+    const aligned = resizeDivider(rects, 7, 'N', -52);
+    assert.equal(aligned[7].x, aligned[2].x);
+    const moved = resizeDivider(rects, 7, 'N', -380);
+    assert.equal(moved[7].x, moved[2].x);
+    assert.equal(moved[7].y, rects[7].y - 328);
+    assert.equal(moved[2].y + moved[2].height + 12, moved[7].y);
+    const corner = resizeDivider(moved, 7, 'E', 100);
+    assert.equal(corner[7].width, moved[7].width + 100);
+    assert.equal(corner[7].x + corner[7].width + 12, corner[8].x);
+    assert.equal(corner[7].x, corner[12].x);
+    assert.ok(corner.every((r, i) => corner.every((other, j) => i === j ||
+        r.x >= other.x + other.width || other.x >= r.x + r.width ||
+        r.y >= other.y + other.height || other.y >= r.y + r.height)));
 });
 
 test('a dragged divider uses every later column before reaching its limit', () => {
