@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
 import * as geometry from '../lib/layout.js';
+import {radiusStyle} from '../lib/window-radius.js';
 
 // Execute the actual runtime methods with asynchronous client commits and a
 // deterministic clock. GI imports alone are replaced; no duplicate restore code.
@@ -44,7 +45,7 @@ function harness(options = {}) {
         move_frame(user, x, y) { userOps.push(user); requests.push({type: 'move', x, y}); },
     };
     const Runtime = vm.runInNewContext(source, {
-        ...geometry, Extension: class {}, console, TextDecoder,
+        ...geometry, radiusStyle, Extension: class {}, console, TextDecoder,
         Date: class extends Date { static now() { return now; } },
         GLib: {SOURCE_CONTINUE: true, SOURCE_REMOVE: false, file_get_contents(path) {
             if (path === `/proc/${options.launchPid ?? 979491}/environ` && options.launchEnvironment)
@@ -858,6 +859,49 @@ test('a saved layout is active only while its slots and pins still match', () =>
     app.groups.set(app.key(0, 0), [h.w]);
     app.profiles[app.profileKey(0, 0)].pinned = ['test.desktop'];
     assert.equal(app.savedLayoutActive(saved, 0, 0), false);
+});
+
+test('disable tolerates enable failing before settings are acquired', () => {
+    const {app} = harness();
+    delete app.settings;
+    app.getSettings = () => { throw new Error('schema unavailable'); };
+    assert.throws(() => app.enable(), /schema unavailable/);
+    assert.doesNotThrow(() => app.disable());
+});
+
+test('closed pinned cards use the window grid despite trailing unpinned profile entries', () => {
+    const h = harness(), app = h.app;
+    h.shellMain.overview = {visible: false};
+    app.spaceTransitions = new Set();
+    app.key = () => 'workspace'; app.profileKey = () => 'profile'; app.activeSpace = () => 0;
+    app.windows = () => [h.w];
+    const pinned = Array.from({length: 16}, (_, i) => i < 15 ? `app-${i}.desktop` : null);
+    app.profiles = {profile: {preset: 'auto', pinned}};
+    app.pinnedSlotState = () => ({window: null, state: 'CLOSED'});
+    const button = {
+        set_size(width, height) { this.width = width; this.height = height; },
+        set_position(x, y) { this.x = x; this.y = y; },
+        set_style() {}, add_style_class_name() {}, remove_style_class_name() {},
+        destroy() { assert.fail('the closed card should be reused'); },
+    };
+    app.pinnedPlaceholders = new Map([['0:8', {id: pinned[8], window: null, state: 'CLOSED',
+        button, title: {set_width() {}}}]]);
+    app.stackPinnedPlaceholders = () => {};
+    const windows = pinned.slice(0, 15).map((id, i) => i === 8 ? null : {id}).filter(Boolean);
+    const slots = geometry.reserveAppSlots(windows, pinned, w => w.id);
+    assert.equal(slots.length, 15);
+    app.groups = new Map([['workspace', slots]]);
+    for (const [preset, count] of [['auto', 15], ['4x4', 15], ['auto', 15], ['4x3', 12], ['auto', 15]]) {
+        app.profiles.profile.preset = preset;
+        app.profiles.profile.pinned = pinned.map((id, i) => i < count ? id : null);
+        app.groups.set('workspace', slots.slice(0, count));
+        const tile = app.slotRects(0, count)[8];
+        app.updatePinnedPlaceholders();
+        assert.equal(button.x, tile.x + 7, `${preset}: the card belongs in tile 9`);
+        assert.equal(button.y, tile.y + 7);
+        assert.equal(button.width, tile.width - 14);
+        assert.equal(button.height, tile.height - 14);
+    }
 });
 
 test('pinned slot state distinguishes minimized, floating, elsewhere, opening, and closed apps', () => {

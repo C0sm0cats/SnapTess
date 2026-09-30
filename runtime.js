@@ -17,7 +17,7 @@ import {LayoutSwitcher} from './lib/layout-switcher.js';
 import {WindowBorder} from './lib/window-border.js';
 import {radiusFromPixels, radiusStyle, plausibleWindowRadius, visualFrameRect} from './lib/window-radius.js';
 
-const RUNTIME_REVISION = 52;
+const RUNTIME_REVISION = 53;
 const RESTORE_STABILIZE_MS = 1400;
 const RESTORE_QUIET_MS = 120;
 const MAX_RESTORE_MOVES = 8;
@@ -1104,7 +1104,8 @@ export default class SnapTess extends Extension {
             if (!Array.isArray(pins) || !pins.some(Boolean) ||
                 this.windows(monitor).some(w => this.isSpecialWindow(w))) continue;
             const slots = this.groups.get(this.key(monitor, space)) ?? [];
-            const rects = this.slotRects(monitor, Math.max(slots.length, pins.length), space);
+            // Trailing unpinned entries must not select a larger grid than the windows use.
+            const rects = this.slotRects(monitor, slots.length, space);
             for (let index = 0; index < pins.length; index++) {
                 const id = pins[index], rect = rects[index];
                 if (!id || slots[index] || !rect) continue;
@@ -2665,6 +2666,8 @@ export default class SnapTess extends Extension {
     }
 
     disable() {
+        // getSettings() can fail before enable() initializes any runtime resources.
+        if (!this.settings) return;
         this.pendingLayoutApps.clear();
         this.layoutSwitcher?.dialog.destroy(); this.layoutSwitcher = null;
         this.studio?.dialog.destroy(); this.studio = null;

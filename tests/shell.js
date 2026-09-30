@@ -404,6 +404,15 @@ export async function run() {
     app.tile(true);
     assert(app.pinnedPlaceholders.get('0:4')?.state==='CLOSED' && app.pinnedPlaceholders.size===1,
         'only a genuinely vacant pinned tile shows the closed card');
+    app.profiles[profileKey].pinned.push(null,null);
+    app.tile(true);
+    const closedTileRect=app.slotRects(0,app.groups.get(app.key(0)).length)[4];
+    const closedCard=app.pinnedPlaceholders.get('0:4').button;
+    assert(closedCard.x===closedTileRect.x+7 && closedCard.y===closedTileRect.y+7 &&
+        closedCard.width===closedTileRect.width-14 && closedCard.height===closedTileRect.height-14,
+        'trailing unpinned entries keep the closed card aligned with the window grid');
+    app.profiles[profileKey].pinned.length=5;
+    app.tile(true);
     windows[0].minimize(); await Scripting.sleep(250);
     const placeholder=app.pinnedPlaceholders.get('0:0');
     const pinRect=app.area(0);
