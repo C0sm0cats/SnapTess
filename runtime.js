@@ -10,14 +10,14 @@ import {Extension} from 'resource:///org/gnome/shell/extensions/extension.js';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import * as PanelMenu from 'resource:///org/gnome/shell/ui/panelMenu.js';
 import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js';
-import {layout, PRESETS, capacity, fitMinimumSize, frameScalePivot, nearestSlot, directionalSlot, reconcileSlots,
+import {layout, PRESETS, capacity, fitMinimumSize, frameScalePivot, nearestSlot, directionalSlot, directionalFocusSlot, reconcileSlots,
     activePinnedSlots, reserveAppSlots, swapNeighbor, advanceLinkedResize, resizedLayout, resizeOffsets} from './lib/layout.js';
 import {Studio} from './lib/studio.js';
 import {LayoutSwitcher} from './lib/layout-switcher.js';
 import {WindowBorder} from './lib/window-border.js';
 import {radiusFromPixels, radiusStyle, plausibleWindowRadius, visualFrameRect} from './lib/window-radius.js';
 
-const RUNTIME_REVISION = 53;
+const RUNTIME_REVISION = 54;
 const RESTORE_STABILIZE_MS = 1400;
 const RESTORE_QUIET_MS = 120;
 const MAX_RESTORE_MOVES = 8;
@@ -178,6 +178,8 @@ export default class SnapTess extends Extension {
             toggle: () => this.setRunning(!this.running), retile: () => this.arrangeAgain(),
             studio: () => this.openStudio(), 'layout-switcher': () => this.openLayoutSwitcher(),
             floating: () => this.toggleFloating(),
+            'focus-left': () => this.focusDirection('left'), 'focus-right': () => this.focusDirection('right'),
+            'focus-up': () => this.focusDirection('up'), 'focus-down': () => this.focusDirection('down'),
             swap: () => this.toggleSwap(), undo: () => this.undo(), stop: () => this.setRunning(false),
             'space-1': () => this.switchSpace(0), 'space-2': () => this.switchSpace(1), 'space-3': () => this.switchSpace(2),
         };
@@ -2039,6 +2041,23 @@ export default class SnapTess extends Extension {
         }
         this.scheduleWindowActionsHide();
     }
+    focusDirection(direction) {
+        if (!this.running || this.busy || this.drag || this.resizeGrab || this.swapMode ||
+            this.studio || this.layoutSwitcher || Main.overview.visible || global.display.is_grabbed()) return;
+        const w = global.display.focus_window;
+        if (!w || !this.records.has(w) || this.isSpecialWindow(w)) return;
+        const monitor = w.get_monitor();
+        const slots = this.groups.get(this.key(monitor)) ?? [];
+        const from = slots.indexOf(w);
+        const available = new Set(this.windows(monitor).filter(candidate =>
+            !this.records.get(candidate)?.parked && !this.isSpecialWindow(candidate)));
+        if (from < 0 || !available.has(w)) return;
+        const rects = this.slotRects(monitor, slots.length).map((rect, i) =>
+            available.has(slots[i]) ? rect : null);
+        const to = directionalFocusSlot(rects, from, direction);
+        if (to >= 0) slots[to].activate(global.get_current_time());
+    }
+
     focusChanged() {
         if (this.drag && !global.display.is_grabbed()) this.grabEnd();
         else {

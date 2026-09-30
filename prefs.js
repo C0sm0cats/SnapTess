@@ -254,6 +254,8 @@ export default class SnapTessPreferences extends ExtensionPreferences {
         for (const [key, title] of [['toggle', 'Toggle tiling'], ['retile', 'Arrange again'], ['studio', 'Open Layout Studio'],
             ['layout-switcher', 'Change layout'],
             ['floating', 'Float focused window'], ['swap', 'Swap mode'], ['undo', 'Undo'],
+            ['focus-left', 'Focus window to the left'], ['focus-right', 'Focus window to the right'],
+            ['focus-up', 'Focus window above'], ['focus-down', 'Focus window below'],
             ['space-1', 'Monitor space 1'], ['space-2', 'Monitor space 2'], ['space-3', 'Monitor space 3'], ['stop', 'Stop and restore']]) {
             const row = new Adw.EntryRow({title, text: settings.get_strv(key)[0] ?? '', show_apply_button: true});
             const shortcutLabel = new Gtk.ShortcutLabel({accelerator: row.text, disabled_text: 'Off'});

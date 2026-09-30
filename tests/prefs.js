@@ -33,9 +33,20 @@ function visit(widget) {
     for (let child = widget.get_first_child(); child; child = child.get_next_sibling()) visit(child);
 }
 visit(window);
-if (entries.length !== 12) throw new Error(`Expected search and 11 shortcut rows, got ${entries.length}`);
-if (previews.length !== 1 || resetButtons.length !== 7 || shortcutLabels.length !== 11 || recordButtons.length !== 11)
+if (entries.length !== 16) throw new Error(`Expected search and 15 shortcut rows, got ${entries.length}`);
+if (previews.length !== 1 || resetButtons.length !== 7 || shortcutLabels.length !== 15 || recordButtons.length !== 15)
     throw new Error('Live layout preview or native shortcut controls are missing');
+for (const [key, title, direction] of [['focus-left', 'Focus window to the left', 'Left'],
+    ['focus-right', 'Focus window to the right', 'Right'], ['focus-up', 'Focus window above', 'Up'],
+    ['focus-down', 'Focus window below', 'Down']]) {
+    const row = entries.find(item => item.title === title);
+    if (!row || row.text !== `<Control><Super>${direction}`) throw new Error(`${key} default is missing`);
+    row.text = ''; row.emit('apply');
+    if (settings.get_strv(key).length) throw new Error(`${key} could not be disabled`);
+    row.text = `<Control><Alt><Super>${direction}`; row.emit('apply');
+    if (settings.get_strv(key)[0] !== row.text) throw new Error(`${key} could not be customized`);
+    settings.reset(key);
+}
 if (previews[0].get_content_width() !== 220 || previews[0].get_content_height() !== 116)
     throw new Error('Focus layout preview has no usable geometry');
 const previewRow = rows.find(row => row.title === 'Current space preview');

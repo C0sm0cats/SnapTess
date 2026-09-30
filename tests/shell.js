@@ -88,6 +88,20 @@ export async function run() {
     await Scripting.sleep(240);
     assert(app.motionGuides.size===0,'placement ghost is destroyed after its transition');
     windows[0].activate(global.get_current_time()); await pause();
+    const focusSlots = [...app.groups.get(app.key(0))];
+    const focusFrames = windows.map(geometry), focusHistory = app.history.length;
+    for (const [from, direction, to] of [[0,'right',1], [1,'down',3], [3,'left',2], [2,'up',0]]) {
+        focusSlots[from].activate(global.get_current_time()); await pause();
+        app.bindings[`focus-${direction}`](); await pause();
+        assert(global.display.focus_window === focusSlots[to], `${direction} activates the neighboring native window`);
+    }
+    focusSlots[0].activate(global.get_current_time()); await pause();
+    app.focusDirection('left'); await pause();
+    assert(global.display.focus_window === focusSlots[0], 'focus does not wrap at the layout edge');
+    assert(windows.every((w,i) => geometry(w) === focusFrames[i]) &&
+        app.groups.get(app.key(0)).every((w,i) => w === focusSlots[i]) && app.history.length === focusHistory,
+        'directional focus preserves native frames, tile order and undo history');
+    windows[0].activate(global.get_current_time()); await pause();
     app.updateMenuSensitivity();
     assert(app.floatItem.sensitive && app.swapItem.sensitive,
         'tray enables focused-window actions when they are available');
@@ -1065,6 +1079,11 @@ export async function run() {
         windows[0].activate(global.get_current_time()); await pause();
         assert(JSON.parse(app.settings.get_string('preview-state')).monitor===1,
             'preferences preview follows the focused display');
+        for (const direction of ['left', 'right', 'up', 'down']) {
+            app.focusDirection(direction); await pause();
+            assert(global.display.focus_window === windows[0],
+                'focus stays on its display when its only tiled window has no neighbor');
+        }
         app.openLayoutSwitcher(); await pause();
         assert(app.layoutSwitcher.monitor===1 && app.layoutSwitcher.space===app.activeSpace(1),
             'quick switcher targets the focused display and its active space');
