@@ -27,7 +27,8 @@ function harness(options = {}) {
         set_scale(x, y) { scaleWrites.push([x, y]); this.scale_x = x; this.scale_y = y; },
     };
     const workspace = {get_work_area_for_monitor: () => ({x: 0, y: 0, width: 800, height: 600})};
-    const shellMain = {layoutManager: {monitors: [{}]}, notify() {}};
+    const shellMain = {layoutManager: {monitors: [{}]}, overview: {visible: false}, notify() {}};
+    const shellDisplay = {is_grabbed: () => grabbed, get_current_monitor: () => monitor, focus_window: null};
     const w = {
         fullscreen: false, flags: 0, minimized: false,
         get_frame_rect: () => ({...frame}),
@@ -78,7 +79,7 @@ function harness(options = {}) {
                 return id;
             },
             remove(id) { timers.delete(id); },
-        })}, display: {is_grabbed: () => grabbed, get_current_monitor: () => monitor, focus_window: null}, get_pointer: () => pointer,
+        })}, display: shellDisplay, get_current_time: () => now, get_pointer: () => pointer,
             workspace_manager: {get_active_workspace: () => workspace, get_active_workspace_index: () => 0}, get_window_actors: () => [actor]},
     });
     const app = new Runtime();
@@ -123,10 +124,63 @@ function harness(options = {}) {
         requests.length = 0; scaleWrites.length = 0;
     }
     return {app, w, actor, record, requests, scaleWrites, userOps, launches, slot, timers, advance, commit, special,
-        shellMain,
+        shellMain, shellDisplay,
         effectsDone, settleInitial, frame: () => frame, grab: value => { grabbed = value; },
         monitor: value => { monitor = value; }, pointer: (x, y) => { pointer = [x, y]; }};
 }
+
+test('directional focus skips unavailable windows without changing geometry, slots or undo', () => {
+    const h = harness(), app = h.app;
+    const names = ['empty', 'minimized', 'floating', 'parked', 'space', 'monitor', 'workspace', 'excluded', 'maximized', 'closed', 'target'];
+    const activations = [];
+    const candidates = names.map(name => name === 'empty' ? null : {
+        ...h.w, name, minimized: name === 'minimized',
+        get_monitor: () => name === 'monitor' ? 1 : 0,
+        get_workspace: () => name === 'workspace' ? {} : h.w.get_workspace(),
+        get_maximize_flags: () => name === 'maximized' ? 1 : 0,
+        activate(time) { activations.push([this.name, time]); h.shellDisplay.focus_window = this; },
+    });
+    const slots = [h.w, ...candidates];
+    for (const w of candidates.filter(w => w && w.name !== 'closed'))
+        app.records.set(w, {space: w.name === 'space' ? 1 : 0, floating: w.name === 'floating', parked: w.name === 'parked'});
+    app.groups = new Map([['active', slots]]);
+    app.key = () => 'active'; app.activeSpace = () => 0;
+    app.matchesAppRule = w => w.name === 'excluded';
+    app.slotRects = (monitor, count) => {
+        assert.equal(monitor, 0); assert.equal(count, slots.length);
+        return slots.map((_, i) => ({x:i*110,y:0,width:100,height:100}));
+    };
+    app.history = [{before:true}];
+    const order = [...slots], history = JSON.stringify(app.history);
+    h.shellDisplay.focus_window = h.w;
+    app.focusDirection('right');
+    assert.deepEqual(activations, [['target', 1000]]);
+    app.focusDirection('right');
+    assert.equal(activations.length, 1, 'no wrap at the edge');
+    assert.deepEqual(slots, order);
+    assert.equal(JSON.stringify(app.history), history);
+    assert.equal(h.requests.length, 0);
+});
+
+test('directional focus is inactive outside tiling and during modal interactions', () => {
+    const h = harness(), app = h.app;
+    app.groups = new Map();
+    app.key = () => 'active'; app.activeSpace = () => 0;
+    app.slotRects = () => assert.fail('inactive focus navigation must not inspect or rearrange geometry');
+    h.shellDisplay.focus_window = h.w;
+    for (const [key, value] of [['running', false], ['busy', true], ['drag', {}], ['resizeGrab', {}],
+        ['swapMode', true], ['studio', {}], ['layoutSwitcher', {}]]) {
+        const previous = app[key]; app[key] = value;
+        app.focusDirection('right'); app[key] = previous;
+    }
+    h.shellMain.overview.visible = true; app.focusDirection('right'); h.shellMain.overview.visible = false;
+    h.grab(true); app.focusDirection('right'); h.grab(false);
+    h.w.flags = 1; app.focusDirection('right'); h.w.flags = 0;
+    h.shellDisplay.focus_window = null; app.focusDirection('right');
+    h.shellDisplay.focus_window = {}; app.focusDirection('right');
+    h.shellDisplay.focus_window = h.w; app.focusDirection('right');
+    assert.equal(h.requests.length, 0);
+});
 
 test('resize grab moves its neighbor and persists only the active space', () => {
     const h = harness(), app = h.app;

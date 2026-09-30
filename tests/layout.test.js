@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {layout, autoLayout, capacity, fitMinimumSize, frameScalePivot, nearestSlot, directionalSlot, reconcileSlots,
+import {layout, autoLayout, capacity, fitMinimumSize, frameScalePivot, nearestSlot, directionalSlot, directionalFocusSlot, reconcileSlots,
     activePinnedSlots, reserveAppSlots, swapNeighbor, PRESETS, sortedSavedLayouts,
     resizeDivider, advanceLinkedResize, resizedLayout, resizeOffsets} from '../lib/layout.js';
 
@@ -295,6 +295,27 @@ test('directional swap follows geometric neighbors', () => {
     assert.equal(swapNeighbor(withHole,0,'right'),1);
     assert.equal(swapNeighbor(withHole,2,'left'),1);
     assert.equal(swapNeighbor([{x:0,y:0,width:100,height:100},{x:110,y:110,width:100,height:100}],0,'right'),-1);
+});
+test('directional focus crosses holes, prefers aligned windows and never wraps', () => {
+    const rects = [{x:-500,y:0,width:100,height:100}, null,
+        {x:-280,y:0,width:100,height:100}, {x:-390,y:120,width:100,height:100}];
+    assert.equal(directionalFocusSlot(rects, 0, 'right'), 2);
+    assert.equal(directionalFocusSlot(rects, 0, 'down'), 3);
+    assert.equal(directionalFocusSlot(rects, 2, 'left'), 0);
+    assert.equal(directionalFocusSlot(rects, 2, 'right'), -1);
+    assert.equal(directionalFocusSlot(rects, 0, 'up'), -1);
+    assert.equal(directionalFocusSlot(rects, 1, 'right'), -1);
+    assert.equal(directionalFocusSlot(rects, 0, 'invalid'), -1);
+});
+test('directional focus follows unequal tiles and resized divider geometry', () => {
+    const master = layout({x:0,y:0,width:1000,height:800}, 3, {preset:'master', gap:0, padding:0});
+    assert.equal(directionalFocusSlot(master, 1, 'left'), 0);
+    assert.equal(directionalFocusSlot(master, 2, 'up'), 1);
+    assert.equal(directionalFocusSlot(master, 0, 'right'), 1);
+    const resized = [{x:0,y:0,width:200,height:300},
+        {x:210,y:0,width:100,height:100}, {x:210,y:110,width:100,height:190}];
+    assert.equal(directionalFocusSlot(resized, 0, 'right'), 2);
+    assert.equal(directionalFocusSlot(resized, 2, 'up'), 1);
 });
 test('compaction retains order and non-compact mode retains holes', () => {
     const a={},b={},c={},d={};

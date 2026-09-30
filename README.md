@@ -24,6 +24,7 @@ SnapTess is a standalone GNOME Shell extension. It starts paused: enabling it do
 - **Layout Studio:** a desktop overlay with application icons, numbered slots, drag-to-swap, layout presets, display/space selection, and a window library for assigning windows across displays. Create a named layout from a blank fixed preset or edit the current space. Edits stay in a draft until applied or saved.
 - **Quick layout switcher:** open it from the panel menu or press Ctrl+Alt+L. See how many windows each saved layout will reuse, open, or hide before applying it to the focused display and space. Switch to Auto or a compatible preset without opening apps.
 - **Drag to snap:** move a tiled window by its title bar, see the translucent target, and release. Same-display drops swap; cross-display drops insert and reflow both displays.
+- **Directional focus:** press Ctrl+Super+arrow to activate a neighboring tiled window without moving it. Keep typing immediately; no navigation mode is needed.
 - **Linked tile resize:** drag a shared window edge or corner to resize neighboring tiles, with movement continuing into further tiles when a neighbor reaches its minimum. Proportions are saved for that display and space. Undo restores the previous arrangement; Arrange again (Ctrl+Alt+R) resets the proportions.
 - **Three spaces per display:** independent window groups within each native GNOME workspace. Switching parks windows with native minimization; stopping reveals and restores them.
 - **Stay in control:** floating windows, app exclusions, configurable compaction, maximize/fullscreen freeze, focused-window outline, animated guides, saved layout/app order, and ten-level arrangement undo.
@@ -53,7 +54,7 @@ gnome-extensions uninstall snaptess@c0sm0cats.github.io
 
 ## Shortcuts
 
-All shortcuts can be changed in Preferences. In swap mode, use the arrow keys and finish with Escape or Enter.
+All shortcuts can be changed or disabled in Preferences. Super is usually the Windows key.
 
 | Shortcut | Action |
 |---|---|
@@ -63,9 +64,14 @@ All shortcuts can be changed in Preferences. In swap mode, use the arrow keys an
 | Ctrl+Alt+R | Arrange again and reset manually resized tile proportions |
 | Ctrl+Alt+F | Float / tile the focused window |
 | Ctrl+Alt+S | Enter / leave swap mode |
+| Ctrl+Super+← / → / ↑ / ↓ | Focus the tiled window to the left / right / above / below |
 | Ctrl+Alt+Z | Undo the last manual arrangement |
 | Ctrl+Alt+1 / 2 / 3 | Switch space on the focused display |
 | Ctrl+Alt+Q | Stop and restore windows |
+
+**Focus navigation:** while tiling is active, Ctrl+Super+arrow activates a visible tiled window on the same display and in the current SnapTess space. It skips empty, minimized and floating tiles, prefers windows in the same row or column, and uses the current geometry after resizing. With no window in that direction, focus stays put; it never wraps around or switches spaces. These defaults avoid GNOME's Ctrl+Alt+arrow workspace shortcuts. Focus navigation is inactive during swap, drag/resize, Overview and the layout dialogs.
+
+**Swap mode:** Ctrl+Alt+S starts a mode in which plain arrow keys exchange window positions. Enter (or Ctrl+Alt+S again) keeps the changes; Escape cancels them. Use directional focus to choose where to type and swap mode to rearrange windows.
 
 ## How spaces and profiles work
 

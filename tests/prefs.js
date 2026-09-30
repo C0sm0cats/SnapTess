@@ -19,7 +19,7 @@ const startupAlias = appInfo.get_startup_wm_class?.();
 settings.set_strv('scaled-apps', [legacyId, appId, ...(startupAlias ? [startupAlias] : []), 'custom-test.window']);
 const window = new Adw.PreferencesWindow();
 prefs.fillPreferencesWindow(window);
-const entries = [], apps = [], groups = [], rows = [], spins = [], previews = [], resetButtons = [], shortcutLabels = [], recordButtons = [];
+const entries = [], apps = [], groups = [], rows = [], spins = [], previews = [], resetButtons = [], shortcutLabels = [], recordButtons = [], editButtons = [];
 function visit(widget) {
     if (widget instanceof Adw.EntryRow) entries.push(widget);
     if (widget instanceof Adw.ExpanderRow) apps.push(widget);
@@ -30,12 +30,35 @@ function visit(widget) {
     if (widget instanceof Gtk.Button && widget.tooltip_text?.startsWith('Reset ')) resetButtons.push(widget);
     if (widget instanceof Gtk.ShortcutLabel) shortcutLabels.push(widget);
     if (widget instanceof Gtk.Button && widget.tooltip_text?.startsWith('Record ')) recordButtons.push(widget);
+    if (widget instanceof Gtk.MenuButton && widget.tooltip_text?.startsWith('Edit ')) editButtons.push(widget);
     for (let child = widget.get_first_child(); child; child = child.get_next_sibling()) visit(child);
 }
 visit(window);
-if (entries.length !== 12) throw new Error(`Expected search and 11 shortcut rows, got ${entries.length}`);
-if (previews.length !== 1 || resetButtons.length !== 7 || shortcutLabels.length !== 11 || recordButtons.length !== 11)
+if (entries.length !== 1) throw new Error(`Only application search should be an entry row, got ${entries.length}`);
+if (previews.length !== 1 || resetButtons.length !== 7 || shortcutLabels.length !== 15 || recordButtons.length !== 15 || editButtons.length !== 15)
     throw new Error('Live layout preview or native shortcut controls are missing');
+function shortcutEditor(title) {
+    const row = rows.find(item => item.title === title);
+    const button = editButtons.find(item => item.tooltip_text === `Edit ${title.toLowerCase()}`);
+    if (!row || row.subtitle || !button) throw new Error(`${title} must have a single title line and an edit button`);
+    const box = button.get_popover().get_child();
+    const entry = box.get_first_child(), apply = box.get_last_child();
+    if (!(entry instanceof Gtk.Entry) || !(apply instanceof Gtk.Button)) throw new Error(`${title} editor is missing`);
+    return {entry, apply};
+}
+for (const [key, title, direction] of [['focus-left', 'Focus window to the left', 'Left'],
+    ['focus-right', 'Focus window to the right', 'Right'], ['focus-up', 'Focus window above', 'Up'],
+    ['focus-down', 'Focus window below', 'Down']]) {
+    const {entry, apply} = shortcutEditor(title);
+    if (entry.text !== `<Control><Super>${direction}`) throw new Error(`${key} default is missing`);
+    entry.text = ''; apply.emit('clicked');
+    if (settings.get_strv(key).length) throw new Error(`${key} could not be disabled`);
+    entry.text = `<Control><Alt><Super>${direction}`; entry.emit('activate');
+    if (settings.get_strv(key)[0] !== entry.text) throw new Error(`${key} could not be customized`);
+    settings.reset(key);
+    if (!shortcutLabels.some(label => label.accelerator === `<Control><Super>${direction}`))
+        throw new Error(`${key} display did not follow an external reset`);
+}
 if (previews[0].get_content_width() !== 220 || previews[0].get_content_height() !== 116)
     throw new Error('Focus layout preview has no usable geometry');
 const previewRow = rows.find(row => row.title === 'Current space preview');
@@ -82,7 +105,7 @@ ratioReset.emit('clicked');
 if (Math.abs(settings.get_double('master-ratio') - settings.get_default_value('master-ratio').get_double()) > 0.001 || ratioReset.visible)
     throw new Error('Focus ratio did not reset to its default');
 settings.set_double('master-ratio', originalRatio);
-const toggle = entries.find(row => row.title === 'Toggle tiling');
+const toggle = shortcutEditor('Toggle tiling');
 const search = entries.find(row => row.title === 'Search applications');
 const appRow = apps.find(row => row.subtitle === appId);
 if (!appRow) throw new Error(`Installed application ${appId} is missing from selector`);
@@ -126,13 +149,13 @@ if (appRow.visible) throw new Error('Application search did not filter rows');
 search.text = appInfo.get_display_name();
 if (!appRow.visible) throw new Error('Application search did not restore matching row');
 const original = settings.get_strv('toggle')[0];
-toggle.text = 'invalid-shortcut'; toggle.emit('apply');
+toggle.entry.text = 'invalid-shortcut'; toggle.apply.emit('clicked');
 if (settings.get_strv('toggle')[0] !== original) throw new Error('Invalid accelerator was saved');
-toggle.text = '<Super>t'; toggle.emit('apply');
+toggle.entry.text = '<Super>t'; toggle.apply.emit('clicked');
 if (settings.get_strv('toggle')[0] !== '<Super>t') throw new Error('Valid accelerator was not saved');
 if (!shortcutLabels.some(label => label.accelerator === '<Super>t'))
     throw new Error('Shortcut display did not follow an edited accelerator');
-toggle.text = ''; toggle.emit('apply');
+toggle.entry.text = ''; toggle.apply.emit('clicked');
 if (settings.get_strv('toggle').length !== 0) throw new Error('Shortcut could not be disabled');
 recordButtons[0].emit('clicked');
 if (recordButtons[0].icon_name !== 'media-playback-stop-symbolic')

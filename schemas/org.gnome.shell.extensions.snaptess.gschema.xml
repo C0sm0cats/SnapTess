@@ -40,6 +40,14 @@
 </key>
 <key name="swap" type="as"><default>['&lt;Control&gt;&lt;Alt&gt;s']</default><summary>Swap</summary>
 </key>
+<key name="focus-left" type="as"><default>['&lt;Control&gt;&lt;Super&gt;Left']</default><summary>Focus the tiled window to the left</summary>
+</key>
+<key name="focus-right" type="as"><default>['&lt;Control&gt;&lt;Super&gt;Right']</default><summary>Focus the tiled window to the right</summary>
+</key>
+<key name="focus-up" type="as"><default>['&lt;Control&gt;&lt;Super&gt;Up']</default><summary>Focus the tiled window above</summary>
+</key>
+<key name="focus-down" type="as"><default>['&lt;Control&gt;&lt;Super&gt;Down']</default><summary>Focus the tiled window below</summary>
+</key>
 <key name="undo" type="as"><default>['&lt;Control&gt;&lt;Alt&gt;z']</default><summary>Undo</summary>
 </key>
 <key name="space-1" type="as"><default>['&lt;Control&gt;&lt;Alt&gt;1']</default><summary>Space 1</summary>

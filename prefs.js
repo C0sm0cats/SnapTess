@@ -249,33 +249,60 @@ export default class SnapTessPreferences extends ExtensionPreferences {
             refreshGroups();
         });
         const shortcuts = new Adw.PreferencesGroup({title: 'Keyboard shortcuts',
-            description: 'Record a combination, edit the text, or clear it to disable.'});
+            description: 'Record a combination or use the pencil to edit it. Clear it to disable.'});
         page.add(shortcuts);
         for (const [key, title] of [['toggle', 'Toggle tiling'], ['retile', 'Arrange again'], ['studio', 'Open Layout Studio'],
             ['layout-switcher', 'Change layout'],
             ['floating', 'Float focused window'], ['swap', 'Swap mode'], ['undo', 'Undo'],
+            ['focus-left', 'Focus window to the left'], ['focus-right', 'Focus window to the right'],
+            ['focus-up', 'Focus window above'], ['focus-down', 'Focus window below'],
             ['space-1', 'Monitor space 1'], ['space-2', 'Monitor space 2'], ['space-3', 'Monitor space 3'], ['stop', 'Stop and restore']]) {
-            const row = new Adw.EntryRow({title, text: settings.get_strv(key)[0] ?? '', show_apply_button: true});
-            const shortcutLabel = new Gtk.ShortcutLabel({accelerator: row.text, disabled_text: 'Off'});
+            const row = new Adw.ActionRow({title});
+            const shortcutLabel = new Gtk.ShortcutLabel({accelerator: settings.get_strv(key)[0] ?? '', disabled_text: 'Off'});
             row.add_suffix(shortcutLabel);
+            const entry = new Gtk.Entry({text: shortcutLabel.accelerator, width_chars: 28,
+                placeholder_text: 'Clear to disable', hexpand: true});
+            const applyButton = new Gtk.Button({icon_name: 'object-select-symbolic', tooltip_text: 'Apply shortcut'});
+            const editor = new Gtk.Box({spacing: 6, margin_top: 12, margin_bottom: 12, margin_start: 12, margin_end: 12});
+            editor.append(entry); editor.append(applyButton);
+            const popover = new Gtk.Popover({child: editor});
+            const editButton = new Gtk.MenuButton({icon_name: 'document-edit-symbolic',
+                valign: Gtk.Align.CENTER, tooltip_text: `Edit ${title.toLowerCase()}`, popover});
+            row.add_suffix(editButton);
             const recordButton = new Gtk.Button({icon_name: 'media-record-symbolic',
                 valign: Gtk.Align.CENTER, tooltip_text: `Record ${title.toLowerCase()}`});
             row.add_suffix(recordButton);
-            row.connect('apply', () => {
-                const value = row.text.trim();
+            const applyShortcut = value => {
+                value = value.trim();
                 const [valid, keyval, mods] = Gtk.accelerator_parse(value);
                 if (value && (!valid || !Gtk.accelerator_valid(keyval, mods) || !(mods &
                     (Gdk.ModifierType.CONTROL_MASK | Gdk.ModifierType.ALT_MASK | Gdk.ModifierType.SUPER_MASK)))) {
-                    row.add_css_class('error'); window.add_toast(new Adw.Toast({title: 'Use a valid shortcut with Ctrl, Alt or Super.'})); return;
+                    entry.add_css_class('error'); window.add_toast(new Adw.Toast({title: 'Use a valid shortcut with Ctrl, Alt or Super.'})); return false;
                 }
-                row.remove_css_class('error'); settings.set_strv(key, value ? [value] : []);
+                entry.remove_css_class('error'); settings.set_strv(key, value ? [value] : []);
                 shortcutLabel.accelerator = value;
+                entry.text = value;
+                return true;
+            };
+            const applyEdit = () => { if (applyShortcut(entry.text)) popover.popdown(); };
+            entry.connect('activate', applyEdit);
+            applyButton.connect('clicked', applyEdit);
+            const changed = settings.connect(`changed::${key}`, () => {
+                shortcutLabel.accelerator = settings.get_strv(key)[0] ?? '';
             });
+            window.connect('destroy', () => settings.disconnect(changed));
             let recording = false;
             const finishRecording = () => {
                 recording = false;
                 recordButton.icon_name = 'media-record-symbolic';
             };
+            popover.connect('notify::visible', () => {
+                if (!popover.visible) return;
+                finishRecording();
+                entry.text = settings.get_strv(key)[0] ?? '';
+                entry.remove_css_class('error');
+                entry.grab_focus();
+            });
             recordButton.connect('clicked', () => {
                 recording = true;
                 recordButton.icon_name = 'media-playback-stop-symbolic';
@@ -287,15 +314,15 @@ export default class SnapTessPreferences extends ExtensionPreferences {
                 if (!recording) return false;
                 if (keyval === Gdk.KEY_Escape) { finishRecording(); return true; }
                 if (keyval === Gdk.KEY_BackSpace || keyval === Gdk.KEY_Delete) {
-                    row.text = ''; row.emit('apply'); finishRecording(); return true;
+                    applyShortcut(''); finishRecording(); return true;
                 }
                 const mods = state & (Gdk.ModifierType.CONTROL_MASK | Gdk.ModifierType.ALT_MASK |
                     Gdk.ModifierType.SUPER_MASK | Gdk.ModifierType.SHIFT_MASK);
                 if (!Gtk.accelerator_valid(keyval, mods) || !(mods &
                     (Gdk.ModifierType.CONTROL_MASK | Gdk.ModifierType.ALT_MASK | Gdk.ModifierType.SUPER_MASK)))
                     return true;
-                row.text = Gtk.accelerator_name(keyval, mods);
-                row.emit('apply'); finishRecording(); return true;
+                applyShortcut(Gtk.accelerator_name(keyval, mods));
+                finishRecording(); return true;
             });
             recordButton.add_controller(controller);
             shortcuts.add(row);
