@@ -891,9 +891,11 @@ test('closed pinned cards use the window grid despite trailing unpinned profile 
     const slots = geometry.reserveAppSlots(windows, pinned, w => w.id);
     assert.equal(slots.length, 15);
     app.groups = new Map([['workspace', slots]]);
-    for (const preset of ['auto', '4x4', 'auto']) {
+    for (const [preset, count] of [['auto', 15], ['4x4', 15], ['auto', 15], ['4x3', 12], ['auto', 15]]) {
         app.profiles.profile.preset = preset;
-        const tile = app.slotRects(0, slots.length)[8];
+        app.profiles.profile.pinned = pinned.map((id, i) => i < count ? id : null);
+        app.groups.set('workspace', slots.slice(0, count));
+        const tile = app.slotRects(0, count)[8];
         app.updatePinnedPlaceholders();
         assert.equal(button.x, tile.x + 7, `${preset}: the card belongs in tile 9`);
         assert.equal(button.y, tile.y + 7);
