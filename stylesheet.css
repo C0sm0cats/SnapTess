@@ -84,6 +84,7 @@
 .snaptess-saved-replace-label { color: #f5d8d8; font-size: 11px; padding-top: 8px; }
 .snaptess-saved-chooser { background-color: #10161d; border: 1px solid #2d3b44; border-radius: 12px; }
 .snaptess-saved-chooser-list { spacing: 5px; padding: 8px; }
+.snaptess-saved-group-title { color: #8ce8c3; font-size: 11px; font-weight: 700; padding: 9px 5px 4px; }
 .snaptess-saved-row { background-color: #242e38; border: 1px solid transparent; border-radius: 9px; padding: 11px 12px; }
 .snaptess-saved-row:hover, .snaptess-saved-row:focus { background-color: #35454c; border-color: #73cfa8; }
 .snaptess-saved-row.selected { background-color: #28483f; border-color: #73cfa8; }
