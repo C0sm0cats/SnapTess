@@ -25,6 +25,10 @@ jobs:
         run: ./scripts/test-shell.sh
       - name: Custom layout Studio and native window placement
         run: ./scripts/test-shell.sh tests/custom-layout-shell.js
+      - name: Studio Escape after navigation and search
+        run: ./scripts/test-shell.sh tests/studio-escape-shell.js
+      - name: Shared windows across Spaces and displays
+        run: SNAPTESS_TWO_MONITORS=1 ./scripts/test-shell.sh tests/shared-spaces-shell.js
       - name: Linked resizing with native windows and delayed clients
         run: ./scripts/test-shell.sh tests/linked-resize-shell.js
       - name: GNOME Shell 50 two-monitor integration test

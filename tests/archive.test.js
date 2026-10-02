@@ -58,3 +58,22 @@ test('custom geometry round trips in templates and profiles while legacy archive
     assert.throws(() => makeArchive([{...custom, slotCount: 1}], {}));
     assert.throws(() => makeArchive([], {'0:DP-1:0': {...customProfile, tiles: []}}));
 });
+
+test('archives omit live window identities while preserving portable profile settings', () => {
+    const shared = {...profile, sharedWindows: [{sequence: 42, pid: 1234, appId: 'editor.desktop'}]};
+    const text = makeArchive([], {'0:DP-1:0': shared});
+    assert.deepEqual(parseArchive(text).profiles['0:DP-1:0'], profile);
+    assert.equal(shared.sharedWindows.length, 1, 'export leaves live memberships intact');
+    const legacyText = JSON.stringify({format: 'snaptess-layouts', version: 1, layouts: [],
+        profiles: {'0:DP-1:0': shared}});
+    assert.deepEqual(mergeArchive(legacyText, [], {}, () => 'id').profiles['0:DP-1:0'], profile);
+});
+
+test('profiles with deliberately empty tiles round-trip without pending launch metadata', () => {
+    const profiles = {'0:DP-1:0': {preset: 'split', apps: [null, 'app.desktop'], pinned: [],
+        slotCount: 2, preserveSlots: true, pendingApps: ['app.desktop']}};
+    const archive = parseArchive(makeArchive([], profiles));
+    assert.deepEqual(archive.profiles['0:DP-1:0'].apps, [null, 'app.desktop']);
+    assert.equal(archive.profiles['0:DP-1:0'].preserveSlots, true);
+    assert.equal(archive.profiles['0:DP-1:0'].pendingApps, undefined);
+});

@@ -8,7 +8,10 @@ import St from 'gi://St';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import * as Scripting from 'resource:///org/gnome/shell/ui/scripting.js';
 export const METRICS = {};
-const assert = (condition, message) => { if (!condition) throw new Error(`SnapTess: ${message}`); };
+const assert = (condition, message) => {
+    if (!condition) throw new Error(`SnapTess: ${message}`);
+    if (GLib.getenv('SNAPTESS_TEST_PROGRESS')) console.log(`SNAPTESS_CHECK: ${message}`);
+};
 const pause = () => Scripting.sleep(400);
 const geometry = w => { const r=w.get_frame_rect(); return [r.x,r.y,r.width,r.height].join(','); };
 async function waitRuntime(loader) {
@@ -63,7 +66,7 @@ export async function run() {
     await pause();
     const initialPreview=JSON.parse(app.settings.get_string('preview-state'));
     assert(initialPreview.running && initialPreview.monitor===0 && initialPreview.space===0 &&
-        initialPreview.count===4 && initialPreview.occupied.length===4 && initialPreview.preset==='auto',
+        initialPreview.count===4 && initialPreview.occupied.length===4 && initialPreview.preset==='2x2',
         'preferences preview follows the active tiled space');
     assert(app.statusItem.label.text.includes('ON') && app.monitorMenus.length===Main.layoutManager.monitors.length &&
         app.monitorMenus[0].menu.label.text.includes('Display 1') &&
@@ -664,9 +667,12 @@ export async function run() {
         stream.close(null);
     }
     app.studio.choosePreset('3x2');
-    assert(app.studio.canvas.get_first_child().width<initialCardWidth,
-        'a compatible layout updates the Studio preview immediately');
+    assert(app.studio.canvas.get_first_child().width===initialCardWidth && app.studio.displayedPreset()==='2x2',
+        'classic Studio preview follows the actual window count rather than a minimum preset size');
     app.studio.undo();
+    const beforeDenseDraft=[...app.studio.draft], beforeDensePins=[...app.studio.pins];
+    while(app.studio.draft.length<25) app.studio.draft.push(null);
+    app.studio.pins[24]='test.desktop';
     app.studio.preset='5x5'; app.studio.render();
     assert(app.studio.canvas.get_n_children()===25 &&
         app.studio.canvas.get_first_child().get_child().get_n_children()<=3,
@@ -679,16 +685,19 @@ export async function run() {
         await new Shell.Screenshot().screenshot_area(m.x,m.y,m.width,m.height,stream);
         stream.close(null);
     }
+    app.studio.draft.splice(0,app.studio.draft.length,...beforeDenseDraft);
+    app.studio.pins.splice(0,app.studio.pins.length,...beforeDensePins);
     app.studio.preset=initialPreset; app.studio.render();
     const studioWidth=app.studio.width;
     app.studio.width=700; app.studio.render();
     assert(app.studio.presetMenu,'compact Studio renders the layout menu');
     app.studio.width=studioWidth; app.studio.render();
     const unassigned=app.studio.draft.pop();
-    app.studio.showLibrary=true; app.studio.render();
-    const library=app.studio.canvas.get_first_child().get_child();
-    library.get_first_child().emit('clicked',1);
+    app.studio.selected=app.studio.draft.length; app.studio.assignWindow(unassigned);
     assert(app.studio.draft.includes(unassigned) && !app.studio.showLibrary,'window library assigns to draft');
+    // Preview badges below are checked in the unselected overview, where the
+    // tile-action toolbar does not reduce the available preview height.
+    app.studio.selected=-1; app.studio.render();
     const studioPreset=app.studio.preset, scaledRecord=app.records.get(app.studio.draft[0]);
     const originalScale=scaledRecord.visualScale;
     scaledRecord.visualScale=0.8;
@@ -775,23 +784,32 @@ export async function run() {
     app.openStudio(); await pause();
     const moveStudio=app.studio;
     moveStudio.changeContext(0,1);
-    moveStudio.showLibrary=true; moveStudio.render();
-    moveStudio.canvas.get_first_child().get_child().get_first_child().emit('clicked',1);
-    assert(moveStudio.dirtyContexts.has('0:0') && moveStudio.dirtyContexts.has('0:1'),
-        'moving a window marks both source and destination drafts');
+    moveStudio.selected=0; moveStudio.assignWindow(app.windows(0,0)[0]);
+    assert(!moveStudio.dirtyContexts.has('0:0') && moveStudio.dirtyContexts.has('0:1'),
+        'sharing a window changes only the destination draft');
     moveStudio.undo();
     assert(moveStudio.dirtyContexts.size===0 && moveStudio.draft.length===0,
         'Studio Undo restores both drafts after adding a window');
-    moveStudio.showLibrary=true; moveStudio.render();
-    moveStudio.canvas.get_first_child().get_child().get_first_child().emit('clicked',1);
+    moveStudio.selected=0; moveStudio.assignWindow(app.windows(0,0)[0]);
     const movedWindow=moveStudio.draft[0];
     moveStudio.apply(); await pause();
     assert(app.records.get(movedWindow).space===1 && app.groups.get(app.key(0,1)).includes(movedWindow) &&
-        !app.groups.get(app.key(0,0)).includes(movedWindow),
-        'Apply moves a window and updates both spaces together');
+        app.groups.get(app.key(0,0)).includes(movedWindow) && app.windowInSpace(movedWindow,0) &&
+        app.windowInSpace(movedWindow,1) && !movedWindow.minimized,
+        'Apply shares the same native window without removing its source assignment');
+    const sharedRect=movedWindow.get_frame_rect();
+    app.switchSpace(0,0); await pause();
+    assert(!movedWindow.minimized && app.windows(0,0).includes(movedWindow),
+        'switching back keeps the shared window visible in its original layout');
+    app.switchSpace(1,0); await pause();
+    const returnedRect=movedWindow.get_frame_rect();
+    assert(!movedWindow.minimized && returnedRect.x===sharedRect.x && returnedRect.y===sharedRect.y &&
+        returnedRect.width===sharedRect.width && returnedRect.height===sharedRect.height,
+        'returning restores the destination layout geometry for the same window');
     app.undo(); await pause();
-    assert(app.records.get(movedWindow).space===0 && app.groups.get(app.key(0,0)).includes(movedWindow),
-        'one undo restores a cross-space Studio assignment');
+    assert(app.records.get(movedWindow).space===0 && app.groups.get(app.key(0,0)).includes(movedWindow) &&
+        !app.windowInSpace(movedWindow,1),
+        'one undo removes only the added membership and restores the source layout');
     app.openStudio(); await pause();
     const savedStudio=app.studio;
     savedStudio.drafts.set('0:0',[windows[0],windows[1]]);
@@ -1044,9 +1062,11 @@ export async function run() {
     newStudio.choosePreset('auto');
     assert(newStudio.newLayout.preset==='2x2','Auto is unavailable in New layout');
     newStudio.canvas.get_first_child().emit('clicked',1);
-    const catalog=newStudio.canvas.get_first_child();
-    const search=catalog.get_first_child();
-    const rows=catalog.get_children()[1].get_child().get_children();
+    const sections=newStudio.appCatalogSections;
+    assert(!sections.windows.body.visible && !sections.installed.body.visible, 'app catalog sections start collapsed');
+    sections.installed.header.emit('clicked',1);
+    const search=sections.installed.search;
+    const rows=sections.installed.rows.map(item=>item.row);
     assert(rows.length>0 && search.hint_text==='Search installed apps',
         'New layout offers a searchable installed-app catalog');
     if (GLib.getenv('SNAPTESS_NEW_CATALOG_SCREENSHOT')) {

@@ -11,7 +11,7 @@ import {Extension} from 'resource:///org/gnome/shell/extensions/extension.js';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import * as PanelMenu from 'resource:///org/gnome/shell/ui/panelMenu.js';
 import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js';
-import {layout, PRESETS, capacity, fitMinimumSize, frameScalePivot, nearestSlot, directionalSlot, directionalFocusSlot, reconcileSlots,
+import {layout, autoLayout, PRESETS, capacity, fitMinimumSize, frameScalePivot, nearestSlot, directionalSlot, directionalFocusSlot, reconcileSlots,
     activePinnedSlots, reserveAppSlots, swapNeighbor, advanceLinkedResize, resizedLayout, resizeOffsets, validCustomTiles} from './lib/layout.js';
 import {validSavedLayout} from './lib/archive.js';
 import {Studio} from './lib/studio.js';
@@ -19,7 +19,7 @@ import {LayoutSwitcher} from './lib/layout-switcher.js';
 import {WindowBorder} from './lib/window-border.js';
 import {radiusFromPixels, radiusStyle, plausibleWindowRadius, visualFrameRect} from './lib/window-radius.js';
 
-const RUNTIME_REVISION = 59;
+const RUNTIME_REVISION = 73;
 const RESTORE_STABILIZE_MS = 1400;
 const RESTORE_QUIET_MS = 120;
 const MAX_RESTORE_MOVES = 8;
@@ -380,6 +380,7 @@ export default class SnapTess extends Extension {
             traceUntil: 0, traceSignals: [], traceTimer: 0, requestSequence: 0, effectActor: null, effectSignal: 0, specialState: this.isSpecialWindow(w),
             restorePending: false, restoreTimer: 0, settleTimer: 0, restoreUntil: 0, restoreQuietUntil: 0};
         this.records.set(w, record);
+        this.restoreWindowSharing(w, record);
         this.watchWindowEffects(w);
         const actor = this.windowActor(w);
         if (actor) {
@@ -440,6 +441,7 @@ export default class SnapTess extends Extension {
             if (record.parked && !w.minimized) {
                 record.parked = false;
                 record.space = this.activeSpace(w.get_monitor());
+                if (record.spaces) record.spaces.add(record.space);
             }
             this.schedule(this.settings.get_boolean('compact-minimize'));
         });
@@ -452,6 +454,7 @@ export default class SnapTess extends Extension {
         watch('workspace-changed', () => {
             if (!this.busy) {
                 record.space = this.activeSpace(w.get_monitor(), w.get_workspace());
+                record.spaces = null;
                 this.schedule(true);
             }
         });
@@ -464,6 +467,7 @@ export default class SnapTess extends Extension {
                 (!this.running || record.floating || !record.tileRect) && record.monitor !== monitor) {
                 record.monitor = monitor;
                 record.space = this.activeSpace(monitor);
+                record.spaces = null;
                 this.schedule(true);
             }
             if (record.restorePending && Date.now() >= record.restoreQuietUntil && !record.placing && !this.busy && !this.drag)
@@ -710,6 +714,47 @@ export default class SnapTess extends Extension {
             this.profiles = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
         } catch { this.profiles = {}; }
     }
+    windowSpaces(w) {
+        const r = this.records.get(w);
+        return r?.spaces ?? new Set(r ? [r.space] : []);
+    }
+    windowInSpace(w, space) { return this.windowSpaces(w).has(space); }
+    windowIdentity(w) {
+        const sequence = w.get_stable_sequence?.(), pid = w.get_pid?.();
+        return Number.isInteger(sequence) && Number.isInteger(pid)
+            ? {sequence, pid, appId: this.appId(w)} : null;
+    }
+    restoreWindowSharing(w, record) {
+        const identity = this.windowIdentity(w);
+        if (!identity || w.get_workspace() !== global.workspace_manager.get_active_workspace()) return;
+        const spaces = [0, 1, 2].filter(space => {
+            const saved = this.profiles[this.profileKey(w.get_monitor(), space)]?.sharedWindows;
+            return Array.isArray(saved) && saved.some(item => item?.sequence === identity.sequence &&
+                item.pid === identity.pid && item.appId === identity.appId);
+        });
+        if (spaces.length > 1) {
+            record.spaces = new Set(spaces);
+            record.space = spaces.includes(this.activeSpace(w.get_monitor())) ? this.activeSpace(w.get_monitor()) : spaces[0];
+        }
+    }
+    persistWindowSharing() {
+        for (let monitor = 0; monitor < Main.layoutManager.monitors.length; monitor++) {
+            for (let space = 0; space < 3; space++) {
+                const sharedWindows = [...this.records].filter(([w, r]) =>
+                    w.get_workspace() === global.workspace_manager.get_active_workspace() && w.get_monitor() === monitor &&
+                    r.spaces?.size > 1 && r.spaces.has(space)).map(([w]) => this.windowIdentity(w)).filter(Boolean);
+                const key = this.profileKey(monitor, space);
+                let profile = this.profiles[key];
+                if (!profile && sharedWindows.length) {
+                    const slots = this.groups.get(this.key(monitor, space)) ?? [];
+                    profile = this.profiles[key] = {preset: 'auto', apps: slots.filter(Boolean).map(w => this.appId(w)), pinned: []};
+                }
+                if (!profile) continue;
+                if (sharedWindows.length) profile.sharedWindows = sharedWindows;
+                else delete profile.sharedWindows;
+            }
+        }
+    }
     loadSavedLayouts() {
         try {
             const layouts = JSON.parse(this.settings.get_string('saved-layouts'));
@@ -744,7 +789,8 @@ export default class SnapTess extends Extension {
             !Array.isArray(apps) || !Array.isArray(pinned) || apps.length !== count ||
             pinned.length !== count || apps.some(id => id !== null &&
                 (typeof id !== 'string' || !id.length || id.length > 256 ||
-                    (!editingExisting && !id.endsWith('.desktop')))) ||
+                    (!editingExisting && !id.endsWith('.desktop') &&
+                        ![...this.records.keys()].some(w => this.appId(w) === id)))) ||
             (!replaceId && new Set(apps.filter(Boolean)).size !== apps.filter(Boolean).length) ||
             pinned.some((id, index) => id !== null && id !== apps[index])) return false;
         return this.saveLayout(name, preset, apps, pinned, replaceId, tiles);
@@ -789,12 +835,15 @@ export default class SnapTess extends Extension {
     }
     savedLayoutPlan(layout, monitor, space) {
         const candidates = this.layoutCandidates(monitor, space), used = new Set();
+        const elsewhere = [...this.records].filter(([w, r]) => w.get_monitor() === monitor &&
+            w.get_workspace() === global.workspace_manager.get_active_workspace() && this.eligible(w) &&
+            !r.floating && !this.matchesAppRule(w, 'excluded-apps') && !candidates.includes(w)).map(([w]) => w);
         const normalize = id => (id ?? '').replace(/\.desktop$/i, '').toLowerCase();
         // Older templates used pinned for every saved app; keep their restore behavior.
         const apps = layout.apps ?? layout.pinned;
         const slots = apps.map(id => {
             if (!id) return null;
-            const found = candidates.find(w => !used.has(w) && normalize(this.appId(w)) === normalize(id));
+            const found = [...candidates, ...elsewhere].find(w => !used.has(w) && normalize(this.appId(w)) === normalize(id));
             if (found) used.add(found);
             return found ?? null;
         });
@@ -850,18 +899,28 @@ export default class SnapTess extends Extension {
         const {slots, missing, extras} = this.savedLayoutPlan(layout, monitor, space);
         this.applyProfiles([{monitor, space, preset: layout.preset, windows: slots,
             pinned: [...layout.pinned], slotCount: layout.slotCount, tiles: layout.tiles, parkUnused: extras}], {monitor, space});
+        this.launchLayoutApps(missing, monitor, space, workspace);
+        return true;
+    }
+    launchLayoutApps(missing, monitor, space, workspace, assignments = []) {
         const appSystem = Shell.AppSystem.get_default();
         const unavailable = [];
         for (const appId of missing) {
             const key = appId.toLowerCase().replace(/\.desktop$/i, '');
             if (this.pendingLayoutApps.has(key)) {
-                Object.assign(this.pendingLayoutApps.get(key), {monitor, space, workspace});
+                const pending = this.pendingLayoutApps.get(key);
+                const target = {monitor, space, index: assignments.indexOf(appId)};
+                if (pending.workspace === workspace && pending.monitor === monitor) {
+                    pending.targets ??= [{monitor: pending.monitor, space: pending.space, index: pending.index}];
+                    pending.targets = pending.targets.filter(item => item.space !== space);
+                    pending.targets.push(target);
+                } else { Object.assign(pending, {monitor, space, workspace, index: target.index}); delete pending.targets; }
                 continue;
             }
             const app = appSystem.lookup_app(appId) ?? appSystem.lookup_app(`${appId}.desktop`);
             const info = app?.get_app_info?.();
             if (!info) { unavailable.push(appId); continue; }
-            const pending = {monitor, space, workspace};
+            const pending = {monitor, space, workspace, index: assignments.indexOf(appId)};
             this.pendingLayoutApps.set(key, pending);
             try {
                 if (!info.launch([], null)) {
@@ -892,12 +951,33 @@ export default class SnapTess extends Extension {
         if (w.get_monitor() !== pending.monitor) w.move_to_monitor(pending.monitor);
         r.parked = this.activeSpace(pending.monitor) !== pending.space;
         if (r.parked) w.minimize();
+        const targets = pending.targets ?? [pending];
+        if (targets.length > 1) {
+            r.spaces = new Set(targets.map(target => target.space));
+            r.space = r.spaces.has(this.activeSpace(pending.monitor)) ? this.activeSpace(pending.monitor) : pending.space;
+            r.parked = !r.spaces.has(this.activeSpace(pending.monitor));
+            if (!r.parked && w.minimized) w.unminimize();
+        }
+        for (const target of targets) {
+            if (!(target.index >= 0)) continue;
+            const slots = this.groups.get(this.key(target.monitor, target.space));
+            const profile = this.profiles[this.profileKey(target.monitor, target.space)];
+            const normalize = id => id?.toLowerCase().replace(/\.desktop$/i, '');
+            if (slots && normalize(profile?.apps?.[target.index]) === key) {
+                slots[target.index] = w;
+                profile.pendingApps = profile.pendingApps?.filter(id => normalize(id) !== key);
+            }
+        }
+        if (targets.some(target => target.index >= 0)) {
+            this.persistWindowSharing();
+            this.settings.set_string('profiles', JSON.stringify(this.profiles));
+        }
         this.schedule(true);
         return true;
     }
     options(monitor, space = this.activeSpace(monitor)) {
         const profile = this.profiles[this.profileKey(monitor, space)];
-        return {preset: profile?.preset ?? 'auto', tiles: profile?.tiles,
+        return {preset: profile?.preset ?? 'auto', tiles: profile?.tiles, adaptive: profile?.preset !== 'custom',
             gap: this.settings.get_int('gap'), padding: paddingOptions(this.settings),
             ratio: this.settings.get_double('master-ratio')};
     }
@@ -914,7 +994,7 @@ export default class SnapTess extends Extension {
     windows(monitor, space = this.activeSpace(monitor), includeMinimized = false) {
         const workspace = global.workspace_manager.get_active_workspace();
         return [...this.records].filter(([w, r]) => this.eligible(w) && w.get_monitor() === monitor &&
-            w.get_workspace() === workspace && r.space === space && !r.floating &&
+            w.get_workspace() === workspace && this.windowInSpace(w, space) && !r.floating &&
             !this.matchesAppRule(w, 'excluded-apps') && (includeMinimized || !w.minimized)).map(([w]) => w);
     }
 
@@ -930,6 +1010,7 @@ export default class SnapTess extends Extension {
         return {windows: new Map([...this.records.keys()].map(w => [w, this.snapshot(w)])),
             groups: new Map([...this.groups].map(([k, g]) => [k, [...g]])),
             records: new Map([...this.records].map(([w, r]) => [w, {floating: r.floating, space: r.space,
+                spaces: r.spaces ? new Set(r.spaces) : null,
                 parked: r.parked, restoreParked: r.restoreParked}])),
             spaces: new Map([...this.spaces].map(([w, m]) => [w, new Map(m)])),
             profiles: JSON.stringify(this.profiles)};
@@ -982,7 +1063,16 @@ export default class SnapTess extends Extension {
         this.switchItem.setToggleState(value);
         this.indicator[value ? 'add_style_class_name' : 'remove_style_class_name']('snaptess-on');
         if (value) {
-            for (const [w, r] of this.records) r.original = this.snapshot(w);
+            this.busy = true;
+            try {
+                for (const [w, r] of this.records) {
+                    r.original = this.snapshot(w);
+                    this.restoreWindowSharing(w, r);
+                    if (r.spaces && !r.spaces.has(this.activeSpace(w.get_monitor()))) {
+                        r.parked = true; w.minimize();
+                    }
+                }
+            } finally { this.busy = false; }
             this.tile(true, true);
         } else {
             this.cancel(this.pending); this.pending = 0;
@@ -1003,7 +1093,7 @@ export default class SnapTess extends Extension {
                     r.linkedResizePending = false;
                     r.linkedResizeEligible = false;
                     r.linkedResizeScale = false;
-                    r.original = null; r.space = 0;
+                    r.original = null; r.space = 0; r.spaces = null;
                 }
             } finally { this.busy = false; }
             this.groups.clear(); this.spaces.clear(); this.history = [];
@@ -1022,7 +1112,8 @@ export default class SnapTess extends Extension {
             const slots = this.groups.get(this.key(monitor, space)) ?? [];
             const area = this.area(monitor);
             state = {running: true, monitor, workspace: this.workspaceIndex(), space,
-                preset: this.options(monitor, space).preset, tiles: this.options(monitor, space).tiles, count: slots.length,
+                preset: this.options(monitor, space).preset === 'custom' ? 'custom' : autoLayout(Math.max(1, slots.length)),
+                tiles: this.options(monitor, space).tiles, count: slots.length,
                 occupied: slots.map((w, index) => w ? index : -1).filter(index => index >= 0),
                 focused: slots.indexOf(global.display.focus_window), width: area.width, height: area.height};
         }
@@ -1068,10 +1159,13 @@ export default class SnapTess extends Extension {
                 const savedPins = profile?.pinned;
                 // An explicit drag/swap may temporarily move a live pinned window.
                 // Reserve its saved slot again only when that window is absent or reopens.
-                const pinned = activePinnedSlots(existingGroup, windows, savedPins, w => this.appId(w));
-                const slots = reserveAppSlots(reconcileSlots(previous, windows, compact), pinned,
-                    w => this.appId(w), compact);
-                if (profile?.slotCount) {
+                const reservations = savedPins ? [...savedPins] : [];
+                for (let i = 0; i < (profile?.apps?.length ?? 0); i++)
+                    if (profile.pendingApps?.includes(profile.apps[i])) reservations[i] = profile.apps[i];
+                const pinned = activePinnedSlots(existingGroup, windows, reservations, w => this.appId(w));
+                const slots = reserveAppSlots(reconcileSlots(previous, windows, compact && profile?.preset !== 'custom'), pinned,
+                    w => this.appId(w), compact && profile?.preset !== 'custom');
+                if (profile?.preset === 'custom' && profile.slotCount) {
                     while (slots.length < profile.slotCount) slots.push(null);
                 }
                 this.groups.set(key, slots);
@@ -1101,13 +1195,13 @@ export default class SnapTess extends Extension {
         const workspace = global.workspace_manager.get_active_workspace();
         const matches = [...this.records].filter(([w]) => normalize(this.appId(w)) === normalize(id));
         const minimized = matches.filter(([w, record]) => !used.has(w) && w.minimized &&
-            !record.parked && !record.restoreParked && !record.floating && record.space === space &&
+            !record.parked && !record.restoreParked && !record.floating && this.windowInSpace(w, space) &&
             w.get_monitor() === monitor && w.get_workspace() === workspace);
         const window = minimized.find(([w, record]) => record.minimizeSlots?.[index] === w)?.[0] ??
             minimized[0]?.[0] ?? null;
         if (window) return {window, state: 'MINIMIZED'};
         const floating = matches.find(([w, record]) => !used.has(w) && record.floating &&
-            record.space === space && w.get_monitor() === monitor && w.get_workspace() === workspace)?.[0];
+            this.windowInSpace(w, space) && w.get_monitor() === monitor && w.get_workspace() === workspace)?.[0];
         if (floating) return {window: floating, state: 'FLOATING'};
         const pending = this.pendingLayoutApps?.get(normalize(id));
         if (pending?.monitor === monitor && pending.space === space && pending.workspace === workspace)
@@ -1615,7 +1709,9 @@ export default class SnapTess extends Extension {
         this.statusItem.label.text = `SnapTess  ·  ${this.running ? 'ON' : 'PAUSED'}`;
         for (const [monitor, {menu, spaces}] of (this.monitorMenus ?? []).entries()) {
             const space = this.activeSpace(monitor);
-            const preset = PRESETS.find(([id]) => id === this.options(monitor, space).preset)?.[1] ?? (this.options(monitor, space).preset === 'custom' ? 'Custom' : 'Auto');
+            const displayed = this.options(monitor, space).preset === 'custom' ? 'custom' :
+                autoLayout(Math.max(1, this.groups.get(this.key(monitor, space))?.length ?? 1));
+            const preset = PRESETS.find(([id]) => id === displayed)?.[1] ?? (displayed === 'custom' ? 'Custom' : displayed);
             menu.label.text = `Display ${monitor + 1}  ·  ${preset}  ·  Space ${space + 1}`;
             spaces.forEach((item, index) => item.setOrnament(index === space
                 ? PopupMenu.Ornament.DOT : PopupMenu.Ornament.NONE));
@@ -2319,16 +2415,18 @@ export default class SnapTess extends Extension {
         const outgoing = [], incoming = [];
         for (const [w, r] of this.records) {
             if (w.get_monitor() !== monitor || w.get_workspace() !== workspace) continue;
-            if (r.space === old && !w.minimized) outgoing.push(w);
-            if (r.space === space && r.parked) incoming.push(w);
+            if (this.windowInSpace(w, old) && !this.windowInSpace(w, space) && !w.minimized) outgoing.push(w);
+            if (this.windowInSpace(w, space) && r.parked) incoming.push(w);
         }
         const transition = this.createSpaceTransition(monitor, old, space, outgoing, incoming);
         this.busy = true;
         try {
             for (const [w, r] of this.records) {
                 if (w.get_monitor() !== monitor || w.get_workspace() !== workspace) continue;
-                if (r.space === old && !w.minimized) { r.parked = true; w.minimize(); }
-                if (r.space === space && r.parked) { r.parked = false; w.unminimize(); }
+                if (this.windowInSpace(w, space)) {
+                    r.space = space;
+                    if (r.parked) { r.parked = false; w.unminimize(); }
+                } else if (this.windowInSpace(w, old) && !w.minimized) { r.parked = true; w.minimize(); }
             }
             if (!this.spaces.has(workspace)) this.spaces.set(workspace, new Map());
             this.spaces.get(workspace).set(monitor, space);
@@ -2617,7 +2715,7 @@ export default class SnapTess extends Extension {
                 this.pushCheckpoint(checkpoint);
                 this.busy = true;
                 try { w.move_to_monitor(target.monitor); } finally { this.busy = false; }
-                const r = this.records.get(w); r.monitor = target.monitor; r.space = this.activeSpace(target.monitor);
+                const r = this.records.get(w); r.monitor = target.monitor; r.space = this.activeSpace(target.monitor); r.spaces = null;
                 const clean = slots.filter(item => item !== w);
                 clean.splice(target.index, 0, w);
                 slots.splice(0, slots.length, ...clean);
@@ -2640,7 +2738,7 @@ export default class SnapTess extends Extension {
         try {
             for (const [w, r] of this.records) {
                 if (r.parked) { r.parked = false; w.unminimize(); }
-                r.monitor = w.get_monitor(); r.space = 0;
+                r.monitor = w.get_monitor(); r.space = 0; r.spaces = null;
             }
             this.spaces.clear(); this.groups.clear();
             this.deferredRetile.clear();
@@ -2683,27 +2781,66 @@ export default class SnapTess extends Extension {
         this.checkpoint();
         this.switchSpace(focus.space, focus.monitor);
         const workspace = global.workspace_manager.get_active_workspace();
-        const claimed = new Set();
-        const plans = changes.map(change => ({...change, slots: change.windows.map(w => {
-            if (!w || !this.records.has(w) || w.get_workspace() !== workspace || claimed.has(w)) return null;
-            claimed.add(w); return w;
-        })}));
+        const claimed = new Map();
+        const plans = changes.map(change => {
+            const local = new Set();
+            return {...change, slots: change.windows.map(w => {
+                if (!w || !this.records.has(w) || w.get_workspace() !== workspace || local.has(w) ||
+                    (claimed.has(w) && claimed.get(w) !== change.monitor)) return null;
+                local.add(w); claimed.set(w, change.monitor); return w;
+            })};
+        });
+        // An app already launching must not reclaim a tile cleared by a later
+        // Apply or Reset. Keep its requests in other Spaces intact.
+        const normalize = id => id?.toLowerCase().replace(/\.desktop$/i, '');
+        for (const [id, pending] of this.pendingLayoutApps ?? []) {
+            if (pending.workspace !== workspace) continue;
+            const targets = (pending.targets ?? [{monitor: pending.monitor, space: pending.space, index: pending.index}]).filter(target => {
+                const plan = plans.find(item => item.monitor === target.monitor && item.space === target.space);
+                return !plan || (!plan.reset && (!(target.index >= 0) || normalize(plan.apps?.[target.index]) === id));
+            });
+            if (!targets.length) this.pendingLayoutApps.delete(id);
+            else { pending.targets = targets; Object.assign(pending, targets[0]); }
+        }
         this.busy = true;
         try {
             for (const [key, group] of this.groups)
                 if (key.startsWith(`${this.workspaceIndex()}:`))
-                    this.groups.set(key, group.filter(w => !claimed.has(w)));
-            for (const {monitor, space, preset, slots, pinned = [], slotCount, tiles, parkUnused = []} of plans) {
+                    this.groups.set(key, group.filter(w => !claimed.has(w) || claimed.get(w) === Number(key.split(':')[1])));
+            for (const {monitor, space, slots, reset, releaseWindows = []} of plans) {
+                for (const [w, r] of this.records) {
+                    if (w.get_monitor() !== monitor || w.get_workspace() !== workspace || !this.windowInSpace(w, space) ||
+                        slots.includes(w) || (!reset && !releaseWindows.includes(w) && !claimed.has(w) && !(r.spaces?.size > 1))) continue;
+                    if (reset && r.floating) continue;
+                    if ((reset || releaseWindows.includes(w)) && !claimed.has(w) && this.windowSpaces(w).size === 1) {
+                        // A local window has no other Space to return to. Untile it
+                        // without closing it or assigning it to another Space.
+                        r.floating = true; r.parked = false; r.restoreParked = false;
+                        if (r.original) this.restore(w, r.original);
+                        r.tileRect = null;
+                        continue;
+                    }
+                    r.spaces = new Set(this.windowSpaces(w)); r.spaces.delete(space);
+                    if (r.spaces.size && r.space === space) r.space = [...r.spaces][0];
+                }
+            }
+            for (const {monitor, space, preset, slots, pinned = [], slotCount, tiles, parkUnused = [], apps, preserveSlots} of plans) {
                 for (const w of parkUnused) {
                     if (!this.records.has(w)) continue;
                     const r = this.records.get(w);
-                    r.restoreParked = true;
-                    if (!w.minimized) w.minimize();
+                    if (r.spaces?.size > 1 || (r.spaces?.size === 1 && !r.spaces.has(space))) {
+                        r.spaces.delete(space); r.space = [...r.spaces][0];
+                        r.restoreParked = false; r.parked = !r.spaces.has(this.activeSpace(monitor));
+                    } else r.restoreParked = true;
+                    if ((r.restoreParked || r.parked) && !w.minimized) w.minimize();
                 }
                 for (const w of slots) {
                     if (!w) continue;
                     const r = this.records.get(w); r.original ??= this.snapshot(w);
-                    r.floating = false; r.space = space; r.monitor = monitor; r.restoreParked = false;
+                    const spaces = w.get_monitor() === monitor && !r.floating ? new Set(this.windowSpaces(w)) : new Set();
+                    spaces.add(space); r.spaces = spaces.size > 1 || r.spaces ? spaces : null;
+                    r.floating = false; r.space = spaces.has(this.activeSpace(monitor)) ? this.activeSpace(monitor) : space;
+                    r.monitor = monitor; r.restoreParked = false;
                     w.move_to_monitor(monitor);
                     if (w.get_monitor() !== monitor) {
                         // A secondary-display window may be workspace-sticky, so
@@ -2711,20 +2848,34 @@ export default class SnapTess extends Extension {
                         const area = this.area(monitor);
                         w.move_frame(true, area.x + 12, area.y + 12);
                     }
-                    r.parked = this.activeSpace(monitor) !== space;
+                    r.parked = !this.windowInSpace(w, this.activeSpace(monitor));
                     if (r.parked) w.minimize(); else w.unminimize();
                 }
                 this.groups.set(this.key(monitor, space), slots);
                 this.profiles[this.profileKey(monitor, space)] = {
-                    preset, apps: slots.filter(Boolean).map(w => this.appId(w)), pinned,
+                    preset, apps: apps || preserveSlots ? slots.map((w, i) => w ? this.appId(w) : apps?.[i] ?? null) : slots.filter(Boolean).map(w => this.appId(w)), pinned,
+                    ...(apps?.some(Boolean) ? {pendingApps: apps.filter(Boolean)} : {}),
+                    ...(preserveSlots ? {preserveSlots: true, ...(slots.length ? {slotCount: slots.length} : {})} : {}),
                     ...(slotCount ? {slotCount} : {}),
                     ...(preset === 'custom' ? {tiles: tiles.map(t => ({...t})), slotCount: tiles.length} : {}),
                 };
             }
+            // Removing a shared assignment must also update its visibility, even
+            // when the Studio plan has no explicit parkUnused list.
+            for (const [w, r] of this.records) {
+                if (w.get_workspace() !== workspace || !r.spaces?.size || r.floating || r.restoreParked) continue;
+                const parked = !this.windowInSpace(w, this.activeSpace(w.get_monitor()));
+                if (parked && !w.minimized) w.minimize();
+                else if (!parked && r.parked) w.unminimize();
+                r.parked = parked;
+            }
         } finally { this.busy = false; }
+        this.persistWindowSharing();
         this.settings.set_string('profiles', JSON.stringify(this.profiles));
         this.tile(true, true);
         this.updatePanelStatus();
+        for (const {monitor, space, apps = []} of plans)
+            if (apps.some(Boolean)) this.launchLayoutApps(apps.filter(Boolean), monitor, space, workspace, apps);
         this.deletedLayouts?.splice(0);
     }
 
