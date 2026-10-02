@@ -3,6 +3,7 @@ import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
 import Meta from 'gi://Meta';
 import Shell from 'gi://Shell';
+import St from 'gi://St';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import * as Scripting from 'resource:///org/gnome/shell/ui/scripting.js';
 export const METRICS = {};
@@ -144,6 +145,13 @@ export async function run() {
         app.undo(); await pause();
         assert(windows.every(w => w.get_monitor() === 0), 'Undo restores the original monitor');
     }
+    app.saveNewLayout('Preset group test', '2x2', [null, null, null, null], [null, null, null, null]);
+    app.openLayoutSwitcher(); await pause();
+    const headings = app.layoutSwitcher.list.get_children()
+        .filter(actor => actor instanceof St.Label).map(actor => actor.text);
+    assert(headings.includes('CUSTOM LAYOUTS') && headings.includes('PRESET LAYOUTS'),
+        'quick layout switcher separates saved custom and preset layouts');
+    app.layoutSwitcher.dialog.close(); await pause();
     app.setRunning(false); await Scripting.destroyTestWindows();
     console.log('SNAPTESS_CUSTOM_LAYOUT_TESTS_PASSED');
 }
