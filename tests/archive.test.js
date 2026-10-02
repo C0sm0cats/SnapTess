@@ -46,3 +46,15 @@ test('invalid or oversized files leave import state untouched', () => {
         JSON.stringify({format: 'snaptess-layouts', version: 1, layouts: [], profiles: {'0:HDMI-A-1:0': {preset: 'bogus'}}})])
         assert.throws(() => mergeArchive(text, [layout], {}, () => 'new-id'));
 });
+
+test('custom geometry round trips in templates and profiles while legacy archives remain valid', () => {
+    const tiles = [{x: 0, y: 0, width: .6, height: 1}, {x: .6, y: 0, width: .4, height: 1}];
+    const custom = {...layout, preset: 'custom', tiles};
+    const customProfile = {...profile, preset: 'custom', tiles};
+    const parsed = parseArchive(makeArchive([layout, custom], {'0:DP-1:0': customProfile}));
+    assert.deepEqual(parsed.layouts[1].tiles, tiles);
+    assert.deepEqual(parsed.profiles['0:DP-1:0'].tiles, tiles);
+    assert.throws(() => makeArchive([{...custom, tiles: [{...tiles[0], width: .5}, tiles[1]]}], {}));
+    assert.throws(() => makeArchive([{...custom, slotCount: 1}], {}));
+    assert.throws(() => makeArchive([], {'0:DP-1:0': {...customProfile, tiles: []}}));
+});

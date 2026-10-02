@@ -108,11 +108,11 @@ export default class SnapTessPreferences extends ExtensionPreferences {
         };
         const updatePreview = () => {
             const state = currentPreview();
-            const preset = state.preset === 'auto' || capacity(state.preset) < state.count
+            const preset = state.preset === 'auto' || capacity(state.preset, state.tiles) < state.count
                 ? autoLayout(state.count) : state.preset;
             ratio.visible = !!state.running && state.count > 0 && preset === 'master';
             if (state.running) {
-                const name = state.count ? PRESETS.find(([id]) => id === preset)?.[1] ?? preset : 'No tiled windows';
+                const name = state.count ? PRESETS.find(([id]) => id === preset)?.[1] ?? (preset === 'custom' ? 'Custom' : preset) : 'No tiled windows';
                 previewRow.subtitle = `Workspace ${state.workspace + 1} · Display ${state.monitor + 1} · Space ${state.space + 1} · ${name}`;
             } else previewRow.subtitle = 'Start arranging windows to see the current layout';
             preview.queue_draw();
@@ -127,7 +127,7 @@ export default class SnapTessPreferences extends ExtensionPreferences {
             const scaledWidth = state.width * factor, scaledHeight = state.height * factor;
             const x = Math.round((width - scaledWidth) / 2), y = Math.round((height - scaledHeight) / 2);
             const rects = layout({x, y, width: scaledWidth, height: scaledHeight}, state.count, {
-                preset: state.preset, gap: settings.get_int('gap') * factor,
+                preset: state.preset, tiles: state.tiles, gap: settings.get_int('gap') * factor,
                 padding: paddingOptions(settings, factor),
                 ratio: settings.get_double('master-ratio')});
             rects.forEach((rect, index) => {

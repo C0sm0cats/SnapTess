@@ -84,6 +84,7 @@
 .snaptess-saved-replace-label { color: #f5d8d8; font-size: 11px; padding-top: 8px; }
 .snaptess-saved-chooser { background-color: #10161d; border: 1px solid #2d3b44; border-radius: 12px; }
 .snaptess-saved-chooser-list { spacing: 5px; padding: 8px; }
+.snaptess-saved-group-title { color: #8ce8c3; font-size: 11px; font-weight: 700; padding: 9px 5px 4px; }
 .snaptess-saved-row { background-color: #242e38; border: 1px solid transparent; border-radius: 9px; padding: 11px 12px; }
 .snaptess-saved-row:hover, .snaptess-saved-row:focus { background-color: #35454c; border-color: #73cfa8; }
 .snaptess-saved-row.selected { background-color: #28483f; border-color: #73cfa8; }
@@ -119,6 +120,7 @@
 .snaptess-drop-caption { color: #b5f7db; font-size: 8px; font-weight: 800; }
 .snaptess-slot-content { spacing: 7px; }
 .snaptess-slot-content.compact { spacing: 2px; }
+.snaptess-preview-heading { spacing: 5px; }
 .snaptess-slot-content.dense { spacing: 5px; }
 .snaptess-slot-content.dense .snaptess-slot-number { font-size: 10px; }
 .snaptess-slot-content.dense .snaptess-app-name, .snaptess-slot-content.dense .snaptess-reserved-name,
@@ -164,3 +166,19 @@
 .snaptess-library-row-labels { spacing: 3px; }
 .snaptess-library-title { color: #ecf4f2; font-size: 12px; font-weight: 700; }
 .snaptess-library-meta { color: #93a6ad; font-size: 10px; }
+
+.snaptess-custom-controls { spacing: 7px; margin-bottom: 10px; }
+.snaptess-custom-actions { spacing: 7px; }
+.snaptess-custom-values { spacing: 14px; }
+.snaptess-custom-value { spacing: 5px; }
+.snaptess-custom-title { color: #b5c9c8; font-size: 11px; padding-top: 8px; }
+.snaptess-custom-entry { width: 62px; padding: 5px 7px; font-size: 11px; border-radius: 7px; }
+.snaptess-custom-divider { background-color: #73cfa8; border-radius: 3px; }
+.snaptess-custom-divider:hover { background-color: #b5f7db; }
+.snaptess-slot.merge-target { border: 3px dashed #f3bd72; background-color: #51412a; }
+.snaptess-slot.merge-target:hover { border-color: #ffdda8; background-color: #6a5130; }
+.snaptess-custom-actions .snaptess-chip:insensitive { color: #667980; background-color: #1a232b; }
+.snaptess-new-slot.empty.selected { border: 2px solid #ff9b91; background-color: #513a3f; }
+.snaptess-custom-entry { background-color: #202b34; color: #edf5f2; border: 1px solid #435761; }
+.snaptess-custom-entry:focus { border-color: #73cfa8; }
+.snaptess-custom-entry.fixed { color: #91a5a9; background-color: #171e26; border-color: #303e45; }

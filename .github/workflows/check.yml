@@ -23,6 +23,8 @@ jobs:
           gnome-shell --version | grep -E '^GNOME Shell 50\.'
       - name: GNOME Shell 50 and GTK preferences integration tests
         run: ./scripts/test-shell.sh
+      - name: Custom layout Studio and native window placement
+        run: ./scripts/test-shell.sh tests/custom-layout-shell.js
       - name: Linked resizing with native windows and delayed clients
         run: ./scripts/test-shell.sh tests/linked-resize-shell.js
       - name: GNOME Shell 50 two-monitor integration test
