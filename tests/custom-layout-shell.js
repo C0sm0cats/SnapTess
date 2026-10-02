@@ -31,9 +31,10 @@ export async function run() {
     studio.choosePreset('2x2');
     assert(!studio.redoButton.reactive, 'a new current-space edit clears Redo');
     studio.undo();
-    assert(studio.modeControls.visible && studio.automaticButton.has_style_class_name('selected') &&
-        !studio.presets.get_children().some(actor => actor.label === 'Auto'),
-        'Automatic mode is separate from fixed layout choices');
+    assert(!studio.automaticButton && !studio.fixedSizeButton &&
+        studio.presets.get_children().some(actor => actor.has_style_class_name?.('selected')) &&
+        studio.presetStatus.text.includes('Grows and shrinks'),
+        'Current space highlights its active preset without an automatic-mode control');
     if (GLib.getenv('SNAPTESS_MODE_SCREENSHOT')) {
         const stream = Gio.File.new_for_path(GLib.getenv('SNAPTESS_MODE_SCREENSHOT'))
             .replace(null, false, Gio.FileCreateFlags.NONE, null);
@@ -57,7 +58,33 @@ export async function run() {
     await pause();
     assert(app.studio === studio && studio.dialog.dialogLayout.mapped && JSON.stringify(app.profiles) === before,
         'Enter saves the template without applying or closing Studio');
-    studio.openNewLayout(); studio.choosePreset('custom'); await pause();
+    studio.openNewLayout(); studio.choosePreset('3x3'); await pause();
+    assert(studio.customCards.length === 9 && studio.canvas.get_n_children() === 9,
+        'New layout renders every empty tile in a 3x3 preset');
+    const profilesBeforeCatalog = JSON.stringify(app.profiles);
+    studio.canvas.get_first_child().emit('clicked', 1);
+    const catalog = studio.appCatalogSections;
+    assert(!catalog.windows.body.visible && !catalog.installed.body.visible && catalog.windows.rows.length === windows.length,
+        'New layout offers separate collapsed Open windows and Installed apps sections');
+    if (GLib.getenv('SNAPTESS_APP_SECTIONS_SCREENSHOT')) {
+        await pause();
+        const stream = Gio.File.new_for_path(GLib.getenv('SNAPTESS_APP_SECTIONS_SCREENSHOT'))
+            .replace(null, false, Gio.FileCreateFlags.NONE, null);
+        const m = Main.layoutManager.monitors[0];
+        await new Shell.Screenshot().screenshot_area(m.x, m.y, m.width, m.height, stream);
+        stream.close(null);
+    }
+    catalog.windows.header.emit('clicked', 1);
+    catalog.windows.search.set_text(windows[0].get_title() ?? '');
+    assert(catalog.installed.search.get_text() === '', 'Open windows search is independent from Installed apps');
+    catalog.windows.rows[0].row.emit('clicked', 1);
+    assert(studio.newLayout.apps[0] === app.appId(windows[0]) && !studio.showLibrary &&
+        JSON.stringify(app.profiles) === profilesBeforeCatalog,
+        'choosing an open window assigns its app to the template without applying it');
+    studio.clearNewTile();
+    studio.choosePreset('custom'); await pause();
+    assert(studio.customCards.length === 1 && studio.customCards[0].accessible_name.includes('Choose an app'),
+        'New custom layout renders its initial empty tile');
     assert(studio.newLayout.tiles.length === 1 && studio.customControls.visible,
         'Custom starts with a full tile and shows geometry controls');
     assert(studio.customEntries.get('width').get_text() === '100', 'percentage editor uses 0–100 values');
@@ -153,7 +180,7 @@ export async function run() {
     const descendants = actor => actor.get_children().flatMap(child => [child, ...descendants(child)]);
     const clones = descendants(app.studio.canvas).filter(actor => actor instanceof Clutter.Clone);
     assert(clones.length === windows.length && clones.every(clone => clone.width > 0 && clone.height > 0),
-        '5x5 layout displays a scaled preview for each live window');
+        'adaptive current-space layout displays a scaled preview for each live window');
     app.studio.undo(); app.studio.showPreviews = false; app.studio.render(); await pause();
     assert(app.studio.draftTiles.get(app.studio.contextKey())?.[0].width === .6,
         'current-space Studio previews preserve custom geometry');
@@ -219,6 +246,40 @@ export async function run() {
     assert(headings.includes('CUSTOM LAYOUTS') && headings.includes('PRESET LAYOUTS'),
         'quick layout switcher separates saved custom and preset layouts');
     app.layoutSwitcher.dialog.close(); await pause();
+    app.applyProfiles([{monitor: 0, space: 0, preset: '4x4', windows, pinned: [], slotCount: 16}]); await pause();
+    assert(app.groups.get(app.key(0)).length === 3, 'classic presets ignore a saved minimum tile count');
+    windows[0].minimize(); await pause();
+    assert(app.groups.get(app.key(0)).length === 2, 'classic preset shrinks when a window is minimized');
+    windows[0].unminimize(); await pause();
+    assert(app.groups.get(app.key(0)).length === 3, 'classic preset grows when a window returns');
+    const adaptiveSaved = app.saveLayout('Adaptive saved regression', 'auto', windows, []);
+    app.restoreSavedLayout(adaptiveSaved, 0, 0); await pause();
+    windows[0].minimize(); await pause();
+    assert(app.groups.get(app.key(0)).length === 2, 'a restored saved Auto layout also shrinks');
+    windows[0].unminimize(); await pause();
+    app.applyProfiles([{monitor: 0, space: 0, preset: '4x4', windows, pinned: [null, null, app.appId(windows[2])]}]); await pause();
+    windows[0].minimize(); await pause();
+    assert(app.groups.get(app.key(0)).length === 3, 'pinned tile remains reserved during automatic sizing');
+    windows[0].unminimize(); await pause();
+    app.applyProfiles([{monitor: 0, space: 0, preset: 'custom', tiles: saved.tiles,
+        windows, pinned: [null, null, null]}]); await pause();
+    const customFrame = windows[2].get_frame_rect();
+    windows[0].minimize(); await pause();
+    assert(app.groups.get(app.key(0)).length === 3 && app.groups.get(app.key(0))[0] === null &&
+        app.groups.get(app.key(0))[2] === windows[2] && windows[2].get_frame_rect().x === customFrame.x,
+        'Custom retains its empty tile and neighboring positions when a window is minimized');
+    windows[0].unminimize(); await pause();
+    app.openStudio(); await pause();
+    const resetStudio = app.studio; resetStudio.reset();
+    assert(resetStudio.preset === 'auto' && resetStudio.draftTiles.get('0:0').length === 0 && resetStudio.draft.length === 0,
+        'Reset clears tiles and does not reload saved custom geometry');
+    resetStudio.undo();
+    assert(resetStudio.preset === 'custom' && resetStudio.draftTiles.get('0:0').length === 3,
+        'Undo restores custom geometry after Reset');
+    resetStudio.redo(); resetStudio.apply(); await pause();
+    assert(app.profiles[app.profileKey(0,0)].preset === 'auto' && !app.profiles[app.profileKey(0,0)].tiles && app.windows(0,0).length === 0 &&
+        windows.every(w => app.records.get(w).floating),
+        'Apply after Reset removes custom geometry from the selected profile');
     app.setRunning(false); await Scripting.destroyTestWindows();
     console.log('SNAPTESS_CUSTOM_LAYOUT_TESTS_PASSED');
 }

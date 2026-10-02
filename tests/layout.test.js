@@ -431,3 +431,28 @@ test('restored proportions preserve gutters and coverage after monitor changes',
         assertPartition(resizedLayout(next, dest, saved), next);
     }
 });
+
+test('noncompact Space switches do not expand a 4x4 because of trailing unpinned profile entries', () => {
+    const windows = Array.from({length: 16}, (_, i) => ({id: `app-${i}`}));
+    const pins = [...windows.slice(0, 15).map(w => w.id), null, null, null, null];
+    const slots = reserveAppSlots(windows, pins, w => w.id, false);
+    assert.deepEqual(slots, windows);
+    assert.equal(layout({x: 0, y: 0, width: 2560, height: 1408}, slots.length).length, 16);
+    const hole = [...windows]; hole[8] = null;
+    assert.equal(reserveAppSlots(hole, pins, w => w.id, false)[8], null,
+        'an actual reserved empty tile remains in place');
+    assert.equal(reserveAppSlots([...windows, null], pins, w => w.id, false).length, 17,
+        'noncompact layouts keep explicit existing holes');
+});
+
+test('adaptive classic presets grow and shrink to the window count while Custom keeps its tiles', () => {
+    const area = {x: 0, y: 0, width: 1600, height: 900};
+    for (const [preset] of PRESETS) {
+        for (const count of [2, 9, 16, 20]) {
+            assert.deepEqual(layout(area, count, {preset, adaptive: true}), layout(area, count));
+        }
+    }
+    const tiles = [{x: 0, y: 0, width: .7, height: 1}, {x: .7, y: 0, width: .3, height: 1}];
+    assert.deepEqual(layout(area, 1, {preset: 'custom', tiles, adaptive: true}),
+        layout(area, 2, {preset: 'custom', tiles}).slice(0, 1));
+});

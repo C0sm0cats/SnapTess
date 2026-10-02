@@ -1629,3 +1629,223 @@ test('Arrange again resets custom resize offsets while keeping the saved custom 
     assert.deepEqual(placed, base);
     assert.equal(JSON.parse(app.history[0].profiles)[key].resize.count, 2);
 });
+
+function sharingHarness() {
+    const h = harness(), app = h.app;
+    app.groups = new Map([['0:0:0', [h.w]]]); app.profiles = {}; app.history = [];
+    app.workspaceIndex = () => 0;
+    app.key = (monitor, space = app.activeSpace(monitor)) => `0:${monitor}:${space}`;
+    app.profileKey = (monitor, space = app.activeSpace(monitor)) => `${monitor}:${space}`;
+    app.snapshot = () => ({}); app.restore = () => {};
+    app.tile = () => {}; app.updatePanelStatus = () => {}; app.notifyStatus = () => {};
+    app.exitSwap = () => {}; app.hideGuides = () => {};
+    app.createSpaceTransition = () => null; app.playSpaceTransition = () => {};
+    h.w.move_to_monitor = value => h.monitor(value);
+    h.w.minimize = () => { h.w.minimized = true; };
+    h.w.unminimize = () => { h.w.minimized = false; };
+    h.w.get_stable_sequence = () => 42; h.w.get_pid = () => 1234;
+    return h;
+}
+
+test('sharing preserves source slots and geometry, switches visibility and supports Undo', () => {
+    const {app, w} = sharingHarness();
+    const source = {preset: 'custom', apps: ['test.desktop'], pinned: [],
+        tiles: [{x: 0, y: 0, width: 1, height: 1}], resize: {marker: 'source'}};
+    app.profiles['0:0'] = source;
+    app.applyProfiles([{monitor: 0, space: 1, preset: 'full', windows: [w]}]);
+    assert.equal(app.groups.get('0:0:0')[0], w);
+    assert.equal(app.groups.get('0:0:1')[0], w);
+    assert.equal(app.profiles['0:0'], source);
+    assert.equal(app.profiles['0:0'].resize.marker, 'source');
+    assert.deepEqual([...app.windowSpaces(w)], [0, 1]);
+    assert.equal(w.minimized, false);
+    app.switchSpace(0, 0);
+    assert.equal(w.minimized, false);
+    app.switchSpace(2, 0);
+    assert.equal(w.minimized, true);
+    app.switchSpace(1, 0);
+    assert.equal(w.minimized, false);
+    app.undo();
+    assert.equal(app.windowInSpace(w, 0), true);
+    assert.equal(app.windowInSpace(w, 1), false);
+    assert.equal(app.groups.has('0:0:1'), false);
+});
+
+test('saved layouts reuse a window from another Space without launching or parking source extras', () => {
+    const {app, w} = sharingHarness();
+    app.layoutCandidates = () => [];
+    const plan = app.savedLayoutPlan({apps: ['test.desktop'], pinned: [], slotCount: 1}, 0, 1);
+    assert.equal(plan.slots[0], w);
+    assert.equal(plan.missing.length, 0);
+    assert.equal(plan.extras.length, 0);
+});
+
+test('live identity restores memberships after reload but never matches another process', () => {
+    const {app, w, record} = sharingHarness();
+    app.applyProfiles([{monitor: 0, space: 1, preset: 'full', windows: [w]}]);
+    record.spaces = null; record.space = 0;
+    app.restoreWindowSharing(w, record);
+    assert.deepEqual([...record.spaces], [0, 1]);
+    record.spaces = null; w.get_pid = () => 9999;
+    app.restoreWindowSharing(w, record);
+    assert.equal(record.spaces, null);
+});
+
+test('removing a shared window from one layout preserves its other assignment', () => {
+    const {app, w} = sharingHarness();
+    app.applyProfiles([{monitor: 0, space: 1, preset: 'full', windows: [w]}]);
+    app.applyProfiles([{monitor: 0, space: 1, preset: 'full', windows: [], parkUnused: [w]}]);
+    assert.equal(app.windowInSpace(w, 0), true);
+    assert.equal(app.windowInSpace(w, 1), false);
+    assert.equal(app.records.get(w).parked, true);
+    app.switchSpace(0, 0);
+    assert.equal(w.minimized, false);
+    assert.equal(app.groups.get('0:0:0')[0], w);
+});
+
+test('one native window can occupy multiple Space plans but never two slots in one plan', () => {
+    const {app, w} = sharingHarness();
+    app.applyProfiles([
+        {monitor: 0, space: 0, preset: 'split', windows: [w, w]},
+        {monitor: 0, space: 1, preset: 'full', windows: [w]},
+    ]);
+    assert.equal(app.groups.get('0:0:0')[0], w);
+    assert.equal(app.groups.get('0:0:0')[1], null);
+    assert.equal(app.groups.get('0:0:1')[0], w);
+    assert.deepEqual([...app.windowSpaces(w)], [0, 1]);
+});
+
+test('surplus windows retain their sole membership so Auto can restore them', () => {
+    const {app, w} = sharingHarness();
+    app.applyProfiles([{monitor: 0, space: 0, preset: 'full', windows: [], parkUnused: [w]}]);
+    assert.equal(app.records.get(w).restoreParked, true);
+    assert.equal(app.windowInSpace(w, 0), true);
+    assert.equal(app.windows(0, 0, true)[0], w);
+});
+
+test('removing a shared assignment without parkUnused hides it only in the removed Space', () => {
+    const {app, w} = sharingHarness();
+    app.applyProfiles([{monitor: 0, space: 1, preset: 'full', windows: [w]}]);
+    app.applyProfiles([{monitor: 0, space: 1, preset: 'auto', windows: [], pinned: []}]);
+    assert.equal(app.windowInSpace(w, 1), false);
+    assert.equal(app.windowInSpace(w, 0), true);
+    assert.equal(w.minimized, true);
+    assert.equal(app.records.get(w).parked, true);
+    app.switchSpace(0, 0);
+    assert.equal(w.minimized, false);
+    assert.equal(app.groups.get('0:0:0')[0], w);
+});
+
+test('resetting one shared Space preserves both other profiles, memberships and slots', () => {
+    const {app, w} = sharingHarness();
+    app.applyProfiles([
+        {monitor: 0, space: 0, preset: '4x4', windows: [w], pinned: ['test.desktop']},
+        {monitor: 0, space: 1, preset: 'master', windows: [w], pinned: ['test.desktop']},
+        {monitor: 0, space: 2, preset: 'split', windows: [w], pinned: ['test.desktop']},
+    ]);
+    const source = JSON.stringify(app.profiles['0:0']), third = JSON.stringify(app.profiles['0:2']);
+    const sourceSlots = [...app.groups.get('0:0:0')], thirdSlots = [...app.groups.get('0:0:2')];
+    app.applyProfiles([{monitor: 0, space: 1, preset: 'auto', windows: [], pinned: [], reset: true}]);
+    assert.equal(JSON.stringify(app.profiles['0:0']), source);
+    assert.equal(JSON.stringify(app.profiles['0:2']), third);
+    assert.deepEqual([...app.groups.get('0:0:0')], sourceSlots);
+    assert.deepEqual([...app.groups.get('0:0:2')], thirdSlots);
+    assert.deepEqual([...app.windowSpaces(w)], [0, 2]);
+    assert.equal(app.profiles['0:1'].preset, 'auto');
+    assert.equal(app.profiles['0:1'].pinned.length, 0);
+});
+
+test('Reset empties the selected tile group and floats local windows without changing other Spaces', () => {
+    const {app, w} = sharingHarness();
+    const shared = {...w, minimized: false, get_stable_sequence: () => 43};
+    shared.minimize = () => { shared.minimized = true; };
+    shared.unminimize = () => { shared.minimized = false; };
+    app.records.set(shared, {space: 1, spaces: new Set([0, 1]), floating: false, parked: false});
+    app.records.get(w).space = 1;
+    app.groups = new Map([['0:0:0', [shared]], ['0:0:1', [shared, w]]]);
+    app.profiles = {'0:0': {preset: '4x4', apps: ['test.desktop'], pinned: [], resize: {count: 1}}};
+    const original = JSON.stringify(app.profiles['0:0']);
+    app.applyProfiles([{monitor: 0, space: 1, preset: 'auto', windows: [], pinned: [], reset: true}]);
+    assert.equal(app.groups.get('0:0:1').length, 0);
+    assert.equal(app.records.get(w).floating, true);
+    assert.equal(app.records.has(w), true, 'local window remains open');
+    assert.equal(app.windowInSpace(shared, 0), true);
+    assert.equal(app.windowInSpace(shared, 1), false);
+    assert.equal(shared.minimized, true);
+    assert.equal(app.groups.get('0:0:0')[0], shared);
+    assert.equal(JSON.stringify(app.profiles['0:0']), original);
+    app.undo();
+    assert.equal(app.records.get(w).floating, false);
+    assert.equal(app.windowInSpace(shared, 1), true);
+    assert.equal(app.groups.get('0:0:1').length, 2);
+});
+
+test('Clear tile floats only the removed local window and preserves neighboring slots', () => {
+    const {app, w} = sharingHarness();
+    const other = {...w, minimized: false, get_stable_sequence: () => 44};
+    other.minimize = () => { other.minimized = true; };
+    other.unminimize = () => { other.minimized = false; };
+    app.records.set(other, {space: 0, floating: false, parked: false});
+    app.applyProfiles([{monitor: 0, space: 0, preset: 'split', windows: [null, other],
+        pinned: [], releaseWindows: [w], preserveSlots: true}]);
+    assert.equal(app.records.get(w).floating, true);
+    assert.equal(app.records.get(other).floating, false);
+    assert.equal(app.records.has(w), true);
+    assert.equal(app.groups.get('0:0:0')[1], other);
+    assert.equal(app.groups.get('0:0:0')[0], null);
+    assert.equal(app.profiles['0:0'].slotCount, 2);
+});
+
+test('Apply opens an assigned app and claims its exact unpinned tile', () => {
+    const {app, w, launches} = sharingHarness();
+    app.pendingLayoutApps = new Map(); app.updatePinnedPlaceholders = () => {};
+    app.applyProfiles([{monitor: 0, space: 1, preset: 'master', windows: [null, null, null],
+        apps: [null, null, 'test.desktop'], pinned: [], preserveSlots: true}]);
+    assert.deepEqual(launches, ['test.desktop']);
+    assert.equal(app.pendingLayoutApps.get('test').index, 2);
+    assert.equal(app.profiles['0:1'].pinned.length, 0, 'assignment does not implicitly pin the app');
+    app.eligible = () => true; app.schedule = () => {};
+    assert.equal(app.claimLayoutWindow(w), true);
+    assert.equal(app.groups.get('0:0:1')[2], w);
+    assert.equal(app.groups.get('0:0:1')[0], null);
+    assert.equal(app.profiles['0:1'].pendingApps.length, 0);
+});
+
+test('one pending installed app can be assigned to two Spaces without launching twice', () => {
+    const {app, w, launches} = sharingHarness();
+    app.pendingLayoutApps = new Map(); app.updatePinnedPlaceholders = () => {};
+    app.applyProfiles([0, 1].map(space => ({monitor: 0, space, preset: 'split',
+        windows: [null, null], apps: space === 0 ? ['test.desktop', null] : [null, 'test.desktop'],
+        pinned: [], preserveSlots: true})));
+    assert.deepEqual(launches, ['test.desktop']);
+    app.eligible = () => true; app.schedule = () => {};
+    assert.equal(app.claimLayoutWindow(w), true);
+    assert.equal(app.windowInSpace(w, 0), true);
+    assert.equal(app.windowInSpace(w, 1), true);
+    assert.equal(app.groups.get('0:0:0')[0], w);
+    assert.equal(app.groups.get('0:0:1')[1], w);
+});
+
+test('clearing a launching app in one Space keeps its pending assignment in another', () => {
+    const {app, w, launches} = sharingHarness();
+    app.pendingLayoutApps = new Map(); app.updatePinnedPlaceholders = () => {};
+    app.applyProfiles([0, 1].map(space => ({monitor: 0, space, preset: 'full',
+        windows: [null], apps: ['test.desktop'], pinned: [], preserveSlots: true})));
+    app.applyProfiles([{monitor: 0, space: 1, preset: 'full', windows: [null],
+        apps: [], pinned: [], preserveSlots: true}]);
+    assert.deepEqual(launches, ['test.desktop']);
+    app.eligible = () => true; app.schedule = () => {};
+    assert.equal(app.claimLayoutWindow(w), true);
+    assert.equal(app.groups.get('0:0:0')[0], w);
+    assert.equal(app.groups.get('0:0:1')[0], null);
+    assert.equal(app.windowInSpace(w, 1), false);
+});
+
+test('a New layout can save the app identity selected from an open window', () => {
+    const {app} = harness();
+    app.appId = () => 'WindowBackedApp'; app.savedLayouts = [];
+    const id = app.saveNewLayout('Open window template', 'full', ['WindowBackedApp'], [null]);
+    assert.equal(id, 'saved-layout-id');
+    assert.equal(app.savedLayouts[0].apps[0], 'WindowBackedApp');
+    assert.equal(app.saveNewLayout('Unknown identity', 'full', ['NotAnOpenApp'], [null]), false);
+});
