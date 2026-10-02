@@ -21,6 +21,13 @@ export async function run() {
     const windows = app.windows(0), before = JSON.stringify(app.profiles);
     app.openStudio(); await pause();
     const studio = app.studio;
+    const saveAction = studio.dialog.buttonLayout.get_children().find(actor =>
+        actor.accessible_name === 'Save current draft as a named layout');
+    assert(saveAction?.get_child().get_children().some(actor => actor instanceof St.Icon),
+        'current-space footer exposes Save layout with an icon');
+    saveAction.emit('clicked', 1); await pause();
+    assert(studio.nameRow.visible && JSON.stringify(app.profiles) === before,
+        'footer Save opens naming without applying the draft');
     studio.openNewLayout(); studio.choosePreset('custom'); await pause();
     assert(studio.newLayout.tiles.length === 1 && studio.customControls.visible,
         'Custom starts with a full tile and shows geometry controls');
@@ -145,6 +152,18 @@ export async function run() {
         app.undo(); await pause();
         assert(windows.every(w => w.get_monitor() === 0), 'Undo restores the original monitor');
     }
+    const autoSaved = app.saveLayout('Auto editor test', 'auto', windows, []);
+    app.openStudio(); await pause();
+    app.studio.previewSavedId = autoSaved; app.studio.render();
+    app.studio.editButton.emit('clicked', 1); await pause();
+    assert(app.studio.newLayout.preset === 'auto' && app.studio.customCards.length === 3,
+        'editing a saved Auto layout displays all its tiles');
+    app.studio.removeAppButton.emit('clicked', 1); await pause();
+    assert(app.studio.newLayout.apps[0] === null, 'saved Auto tile assignments can be edited');
+    app.studio.saveNamedLayout(); await pause();
+    assert(app.savedLayouts.find(item => item.id === autoSaved)?.apps[0] === null && !app.studio.creatingNew,
+        'saved Auto layout changes persist without converting the preset');
+    app.studio.dialog.close(); await pause();
     app.saveNewLayout('Preset group test', '2x2', [null, null, null, null], [null, null, null, null]);
     app.openStudio(); await pause();
     app.studio.savedPicker.emit('clicked', 1); await pause();
