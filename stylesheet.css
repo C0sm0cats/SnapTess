@@ -122,6 +122,7 @@
 .snaptess-save-action { spacing: 6px; }
 .snaptess-layout-toolbar { spacing: 10px; }
 .snaptess-mode-controls { spacing: 8px; margin-right: 8px; }
+.snaptess-header .snaptess-chip:insensitive { color: #667980; background-color: #1a232b; }
 .snaptess-slot-content.dense { spacing: 5px; }
 .snaptess-slot-content.dense .snaptess-slot-number { font-size: 10px; }
 .snaptess-slot-content.dense .snaptess-app-name, .snaptess-slot-content.dense .snaptess-reserved-name,

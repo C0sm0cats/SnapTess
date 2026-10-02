@@ -21,6 +21,16 @@ export async function run() {
     const windows = app.windows(0), before = JSON.stringify(app.profiles);
     app.openStudio(); await pause();
     const studio = app.studio;
+    assert(!studio.undoButton.reactive && !studio.redoButton.reactive,
+        'history buttons start disabled');
+    studio.choosePreset('master'); studio.undo();
+    assert(studio.preset === 'auto' && studio.redoButton.reactive, 'current-space Undo enables Redo');
+    studio.redo();
+    assert(studio.preset === 'master', 'Redo restores the current-space layout draft');
+    studio.undo();
+    studio.choosePreset('2x2');
+    assert(!studio.redoButton.reactive, 'a new current-space edit clears Redo');
+    studio.undo();
     assert(studio.modeControls.visible && studio.automaticButton.has_style_class_name('selected') &&
         !studio.presets.get_children().some(actor => actor.label === 'Auto'),
         'Automatic mode is separate from fixed layout choices');
@@ -54,6 +64,13 @@ export async function run() {
     studio.splitCustom('vertical');
     studio.newLayout.selected = 1; studio.splitCustom('horizontal'); await pause();
     assert(studio.newLayout.tiles.length === 3, 'split creates an asymmetric three-tile partition');
+    studio.undo();
+    assert(studio.newLayout.tiles.length === 2 && studio.redoButton.reactive,
+        'custom split Undo enables Redo');
+    studio.redo();
+    assert(studio.newLayout.tiles.length === 3, 'Redo restores custom geometry');
+    studio.undo(); studio.splitCustom('horizontal');
+    assert(!studio.redoButton.reactive, 'a new edit clears the custom redo history');
     studio.newLayout.selected = 0; studio.render(); await pause();
     const width = studio.customEntries.get('width');
     width.set_text('60'); width.clutter_text.emit('activate'); await pause();
@@ -84,6 +101,7 @@ export async function run() {
     assert(JSON.stringify(studio.newLayout.tiles) === beforeDrag, 'Undo restores dragged geometry');
     studio.newLayout.selected = 1;
     studio.assignNewApp('first.desktop'); studio.newLayout.selected = 2; studio.assignNewApp('second.desktop');
+    studio.togglePin();
     studio.newLayout.selected = 1; studio.mergeChoosing = true; studio.requestCustomMerge(2); await pause();
     assert(studio.mergePending && studio.newLayout.tiles.length === 3,
         'merging assigned tiles requires choosing the retained app');
@@ -93,6 +111,10 @@ export async function run() {
     studio.undo(); await pause();
     assert(studio.newLayout.tiles.length === 3 && studio.newLayout.apps[1] === 'first.desktop' &&
         studio.newLayout.apps[2] === 'second.desktop', 'Undo restores assignments and geometry');
+    studio.redo();
+    assert(studio.newLayout.tiles.length === 2 && studio.newLayout.apps[1] === 'second.desktop' &&
+        studio.newLayout.pinned[1] === 'second.desktop', 'Redo restores merged geometry, app and pin');
+    studio.undo();
     // Save a blank draft to prove that creating a template never touches the desktop.
     studio.newLayout.apps = [null, null, null]; studio.newLayout.pinned = [null, null, null];
     studio.nameEntry.set_text('Custom shell test'); studio.saveNamedLayout(); await pause();
