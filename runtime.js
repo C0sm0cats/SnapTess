@@ -18,7 +18,7 @@ import {LayoutSwitcher} from './lib/layout-switcher.js';
 import {WindowBorder} from './lib/window-border.js';
 import {radiusFromPixels, radiusStyle, plausibleWindowRadius, visualFrameRect} from './lib/window-radius.js';
 
-const RUNTIME_REVISION = 57;
+const RUNTIME_REVISION = 58;
 const RESTORE_STABILIZE_MS = 1400;
 const RESTORE_QUIET_MS = 120;
 const MAX_RESTORE_MOVES = 8;
@@ -280,10 +280,16 @@ export default class SnapTess extends Extension {
         }
     }
 
+    isOwnPreferences(w) {
+        if (!['SnapTess', 'SnapTess Preferences'].includes(w?.get_title?.())) return false;
+        return [w.get_gtk_application_id?.(), w.get_wm_class?.()].some(id =>
+            id?.replace(/\.desktop$/i, '').toLowerCase() === 'org.gnome.shell.extensions');
+    }
+
     eligible(w) {
         // GNOME marks windows on secondary displays as spanning workspaces when
         // workspaces are primary-display-only; they are still ordinary windows.
-        return w && w.get_window_type() === Meta.WindowType.NORMAL && !w.is_override_redirect() &&
+        return w && !this.isOwnPreferences(w) && w.get_window_type() === Meta.WindowType.NORMAL && !w.is_override_redirect() &&
             !w.skip_taskbar && (!w.is_on_all_workspaces() ||
                 w.get_monitor() !== Main.layoutManager.primaryIndex);
     }
@@ -2481,6 +2487,7 @@ export default class SnapTess extends Extension {
     }
 
     grabBegin(w, op) {
+        if (!this.eligible(w)) return;
         if (this.beginLinkedResize(w, op)) return;
         if (!this.running || !this.records.has(w) || this.records.get(w).floating ||
             this.matchesAppRule(w, 'excluded-apps') ||
