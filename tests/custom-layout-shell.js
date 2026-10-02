@@ -99,6 +99,13 @@ export async function run() {
     assert(rects[0].height > rects[1].height && rects[1].x === rects[2].x,
         'custom geometry positions real windows in a staggered partition');
     app.openStudio(); await pause();
+    // Dense layouts must still show live previews when the toggle is enabled.
+    app.studio.choosePreset('5x5'); app.studio.showPreviews = true; app.studio.render(); await pause();
+    const descendants = actor => actor.get_children().flatMap(child => [child, ...descendants(child)]);
+    const clones = descendants(app.studio.canvas).filter(actor => actor instanceof Clutter.Clone);
+    assert(clones.length === windows.length && clones.every(clone => clone.width > 0 && clone.height > 0),
+        '5x5 layout displays a scaled preview for each live window');
+    app.studio.undo(); app.studio.showPreviews = false; app.studio.render(); await pause();
     assert(app.studio.draftTiles.get(app.studio.contextKey())?.[0].width === .6,
         'current-space Studio previews preserve custom geometry');
     app.studio.apply(); await pause();
