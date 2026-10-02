@@ -2,8 +2,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
+import * as appearance from '../lib/appearance.js';
 import * as geometry from '../lib/layout.js';
-import {radiusStyle} from '../lib/window-radius.js';
+import {radiusStyle, radiusFromPixels, plausibleWindowRadius} from '../lib/window-radius.js';
 
 // Execute the actual runtime methods with asynchronous client commits and a
 // deterministic clock. GI imports alone are replaced; no duplicate restore code.
@@ -46,7 +47,7 @@ function harness(options = {}) {
         move_frame(user, x, y) { userOps.push(user); requests.push({type: 'move', x, y}); },
     };
     const Runtime = vm.runInNewContext(source, {
-        ...geometry, radiusStyle, Extension: class {}, console, TextDecoder,
+        ...geometry, ...appearance, radiusStyle, radiusFromPixels, plausibleWindowRadius, Extension: class {}, console, TextDecoder,
         Date: class extends Date { static now() { return now; } },
         GLib: {SOURCE_CONTINUE: true, SOURCE_REMOVE: false, file_get_contents(path) {
             if (path === `/proc/${options.launchPid ?? 979491}/environ` && options.launchEnvironment)
@@ -61,7 +62,8 @@ function harness(options = {}) {
             path_get_basename: path => path.split('/').at(-1),
             uuid_string_random: () => 'saved-layout-id'},
         Main: shellMain,
-        Shell: {AppSystem: {get_default: () => ({get_installed: () => options.installedApps ?? [], lookup_app: id =>
+        Gio: {MemoryOutputStream: {new_resizable: () => ({close() {}})}},
+        Shell: {Screenshot: options.screenshot, AppSystem: {get_default: () => ({get_installed: () => options.installedApps ?? [], lookup_app: id =>
             id === 'test.desktop' || id === 'pdf4teachers.desktop'
                 ? {get_name: () => id === 'pdf4teachers.desktop' ? 'PDF4Teachers' : 'Test',
                     get_app_info: () => ({launch: () => { launches.push(id); return true; }})} :
@@ -1465,4 +1467,64 @@ test('moving to another slot commits the checkpoint captured before dragging', (
     assert.equal(h.app.groups.get('workspace')[1], null);
     assert.equal(h.app.groups.get('workspace')[2], h.w);
     assert.equal(tiles, 1);
+});
+
+test('appearance changes update the border without rearranging windows', () => {
+    const {app} = harness();
+    let borders = 0, arrangements = 0;
+    app.updateBorder = () => borders++;
+    app.schedule = () => arrangements++;
+    for (const key of ['active-border', 'border-color', 'border-width', 'border-style', 'border-custom-color']) app.settingsChanged(key);
+    for (const key of ['animations', 'animation-speed', 'animation-duration', 'animation-curve']) app.settingsChanged(key);
+    assert.equal(borders, 5);
+    assert.equal(arrangements, 0);
+    app.settingsChanged('padding-left');
+    assert.equal(arrangements, 1);
+});
+
+test('window radius reads both HiDPI edges from one full window render', async () => {
+    const calls = [], width = 512, height = 800, stride = width * 4;
+    const pixels = new Uint8Array(height * stride);
+    for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) {
+        if (y < 24 && (x < 24 || x >= width - 24)) continue;
+        pixels[y * stride + x * 4 + 3] = 255;
+    }
+    const pixbuf = {get_pixels: () => pixels, get_rowstride: () => stride,
+        get_n_channels: () => 4, get_width: () => width, get_height: () => height, get_has_alpha: () => true};
+    const {app, actor, w} = harness({screenshot: {async composite_to_stream(...args) { calls.push(args); return pixbuf; }}});
+    actor.visible = true;
+    actor.get_scale = () => [1, 1];
+    actor.get_resource_scale = () => 2;
+    let renders = 0;
+    actor.paint_to_content = () => { renders++; return {get_texture: () => ({get_width: () => 1200, get_height: () => 800})}; };
+    app.windowEffectActive = () => false;
+    app.visualWindowRect = () => ({x: 100, y: 50, width: 600, height: 400});
+    app.radiusReadbackReady = true;
+    const radius = await app.measureWindowRadius(w);
+    assert.deepEqual({...radius}, {top: 12, bottom: 0, topRight: 12, bottomRight: 0});
+    assert.equal(calls.length, 2);
+    assert.equal(renders, 1);
+    assert(calls.every(args => args[3] === 512 && args[4] === 800));
+    assert.equal(calls[0][1], 0); assert.equal(calls[1][1], 688);
+});
+
+test('focus refreshes cached corner geometry after the client decoration repaint', () => {
+    const {app, w, record, advance, shellDisplay} = harness();
+    let refreshes = 0;
+    app.running = true;
+    app.hideWindowActions = () => {};
+    app.updateBorder = () => {};
+    app.queueWindowActions = () => {};
+    app.publishPreviewState = () => {};
+    app.invalidateWindowRadius = target => { assert.equal(target, w); refreshes++; };
+    record.windowRadius = {top: 4, topRight: 0, bottom: 0, bottomRight: 0};
+    shellDisplay.focus_window = w;
+    app.focusChanged();
+    advance(249); assert.equal(refreshes, 0);
+    advance(1); assert.equal(refreshes, 1);
+    app.focusChanged();
+    advance(100);
+    app.focusChanged();
+    advance(150); assert.equal(refreshes, 1);
+    advance(100); assert.equal(refreshes, 2);
 });

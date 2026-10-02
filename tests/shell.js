@@ -51,6 +51,16 @@ export async function run() {
         'tray disables arrangement actions while SnapTess is paused');
     app.setRunning(true); await pause();
     assert(app.groups.get(app.key(0)).length===4,'four tiled slots');
+    app.settings.set_boolean('independent-padding',true);
+    for (const [edge,value] of [['top',7],['right',19],['bottom',31],['left',43]]) app.settings.set_int(`padding-${edge}`,value);
+    await pause();
+    const edgeRects=app.slotRects(0,4), workArea=windows[0].get_workspace().get_work_area_for_monitor(0);
+    assert(Math.min(...edgeRects.map(r=>r.x))===workArea.x+43 && Math.min(...edgeRects.map(r=>r.y))===workArea.y+7 &&
+        Math.max(...edgeRects.map(r=>r.x+r.width))===workArea.x+workArea.width-19 &&
+        Math.max(...edgeRects.map(r=>r.y+r.height))===workArea.y+workArea.height-31,
+        'independent margins apply to real Shell layouts');
+    for (const key of ['independent-padding','padding-top','padding-right','padding-bottom','padding-left']) app.settings.reset(key);
+    await pause();
     const initialPreview=JSON.parse(app.settings.get_string('preview-state'));
     assert(initialPreview.running && initialPreview.monitor===0 && initialPreview.space===0 &&
         initialPreview.count===4 && initialPreview.occupied.length===4 && initialPreview.preset==='auto',
@@ -185,6 +195,30 @@ export async function run() {
     assert(Math.abs(app.border.width-(restored.width+2*bw))<=1 &&
         Math.abs(app.border.height-(restored.height+2*bw))<=1,
         'focus border returns to the full frame after an animation');
+    app.settings.set_boolean('border-custom-color',true);
+    app.settings.set_string('border-color','#ff8800');
+    app.settings.set_int('border-width',6);
+    app.settings.set_string('border-style','halo');
+    app.updateBorder(); await Scripting.sleep(100);
+    assert(app.border.strokeColor==='#ff8800' && app.border.strokeWidth===6 && app.border.haloWidth===10,
+        'custom outline color, thickness and halo are applied by Shell');
+    assert(app.border.bottomRadius===20 && app.border.topRightRadius===0,
+        'custom outline preserves independently measured corners');
+    assert(Math.abs(app.border.x-(restored.x-16))<=1,
+        'halo adds an outside outset without shifting the window');
+    if (GLib.getenv('SNAPTESS_APPEARANCE_SCREENSHOT')) {
+        const stream=Gio.File.new_for_path(GLib.getenv('SNAPTESS_APPEARANCE_SCREENSHOT'))
+            .replace(null,false,Gio.FileCreateFlags.NONE,null);
+        const m=Main.layoutManager.monitors[0];
+        await new Shell.Screenshot().screenshot_area(m.x,m.y,m.width,m.height,stream);
+        stream.close(null);
+    }
+    for (const key of ['border-custom-color','border-color','border-width','border-style']) app.settings.reset(key);
+    app.settings.set_string('animation-speed','custom'); app.settings.set_int('animation-duration',320);
+    app.settings.set_string('animation-curve','linear');
+    assert(app.visualDuration()===320 && app.visualDuration(210)===480 && app.visualMode()===Clutter.AnimationMode.LINEAR,
+        'custom animation duration and easing are used in Shell');
+    for (const key of ['animation-speed','animation-duration','animation-curve']) app.settings.reset(key);
     app.setGuideRadius(app.preview,windows[0],14);
     assert(app.preview.get_style().includes('0px 0px 20px 20px'),
         'target ghost mirrors the independently measured top and bottom corners');

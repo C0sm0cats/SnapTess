@@ -84,3 +84,14 @@ test('scaled frame follows the actor buffer pivot and translation', () => {
     }), {x: 310, y: 164, width: 300, height: 200});
     assert.deepEqual(visualFrameRect(frame, null), frame);
 });
+
+test('HiDPI readback samples the actual right edge and returns logical corner radii', () => {
+    const width = 160, height = 320, rowstride = width * 4;
+    const pixels = new Uint8Array(height * rowstride);
+    for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) {
+        if ((x < 24 && y < 24) || (x >= width - 24 && y < 24)) continue;
+        pixels[y * rowstride + x * 4 + 3] = 255;
+    }
+    assert.deepEqual(radiusFromPixels(pixels, rowstride, 4, width, height, true, 'left', 2), {top: 12, bottom: 0});
+    assert.deepEqual(radiusFromPixels(pixels, rowstride, 4, width, height, true, 'right', 2), {top: 12, bottom: 0});
+});

@@ -1,3 +1,4 @@
+import {paddingOptions} from './lib/appearance.js';
 import Adw from 'gi://Adw';
 import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
@@ -34,17 +35,58 @@ export default class SnapTessPreferences extends ExtensionPreferences {
                 tooltip_text: `Reset ${row.title} to default`});
             button.add_css_class('flat');
             button.connect('clicked', () => settings.reset(key));
-            const update = () => { button.visible = !settings.get_value(key).equal(settings.get_default_value(key)); };
+            const update = () => { button.sensitive = !settings.get_value(key).equal(settings.get_default_value(key)); };
             const changed = settings.connect(`changed::${key}`, update);
             window.connect('destroy', () => settings.disconnect(changed));
-            row.add_suffix(button);
+            row.add_prefix(button);
             update();
         };
+        const watch = (key, callback) => {
+            const id = settings.connect(`changed::${key}`, callback);
+            window.connect('destroy', () => settings.disconnect(id));
+            callback();
+        };
+        const addSwitch = (group, key, title, subtitle = '') => {
+            const row = new Adw.SwitchRow({title, subtitle});
+            settings.bind(key, row, 'active', Gio.SettingsBindFlags.DEFAULT);
+            addReset(row, key); group.add(row); return row;
+        };
+        const addSpin = (group, key, title, lower, upper, subtitle = '') => {
+            const row = new Adw.SpinRow({title, subtitle,
+                adjustment: new Gtk.Adjustment({lower, upper, step_increment: 1, page_increment: 4})});
+            settings.bind(key, row, 'value', Gio.SettingsBindFlags.DEFAULT);
+            addReset(row, key); group.add(row); return row;
+        };
+        const addChoice = (group, key, title, choices) => {
+            const row = new Adw.ComboRow({title,
+                model: Gtk.StringList.new(choices.map(([, label]) => label))});
+            watch(key, () => { row.selected = Math.max(0, choices.findIndex(([value]) => value === settings.get_string(key))); });
+            row.connect('notify::selected', () => {
+                if (choices[row.selected]) settings.set_string(key, choices[row.selected][0]);
+            });
+            addReset(row, key); group.add(row); return row;
+        };
+        let commonPaddingRow;
         for (const [key, title] of [['gap', 'Window spacing'], ['padding', 'Screen edge spacing']]) {
             const row = new Adw.SpinRow({title, adjustment: new Gtk.Adjustment({lower: 0, upper: 64, step_increment: 1, page_increment: 4})});
             settings.bind(key, row, 'value', Gio.SettingsBindFlags.DEFAULT); addReset(row, key); appearance.add(row);
+            if (key === 'padding') commonPaddingRow = row;
         }
-        const ratio = new Adw.SpinRow({title: 'Focus column width', subtitle: 'Percentage of the available width', digits: 0,
+        addSwitch(appearance, 'independent-padding', 'Separate screen edges',
+            'Set a different margin on each side');
+        const edgeRows = ['top', 'right', 'bottom', 'left'].map(edge =>
+            addSpin(appearance, `padding-${edge}`, `${edge[0].toUpperCase()}${edge.slice(1)} edge spacing`, 0, 64));
+        watch('independent-padding', () => {
+            const enabled = settings.get_boolean('independent-padding');
+            if (enabled) for (const edge of ['top', 'right', 'bottom', 'left']) {
+                if (settings.get_user_value(`padding-${edge}`) === null)
+                    settings.set_int(`padding-${edge}`, settings.get_int('padding'));
+            }
+            edgeRows.forEach(row => { row.visible = enabled; });
+            // The common margin is retained when switching back.
+            commonPaddingRow.sensitive = !enabled;
+        });
+        const ratio = new Adw.SpinRow({title: 'Focus layout: large tile width', subtitle: 'Percentage of the available width reserved for the left tile', digits: 0,
             adjustment: new Gtk.Adjustment({lower: 25, upper: 75, step_increment: 5, page_increment: 5}),
             value: Math.round(settings.get_double('master-ratio') * 100)});
         ratio.connect('notify::value', () => settings.set_double('master-ratio', ratio.value / 100));
@@ -65,9 +107,10 @@ export default class SnapTessPreferences extends ExtensionPreferences {
         };
         const updatePreview = () => {
             const state = currentPreview();
+            const preset = state.preset === 'auto' || capacity(state.preset) < state.count
+                ? autoLayout(state.count) : state.preset;
+            ratio.visible = !!state.running && state.count > 0 && preset === 'master';
             if (state.running) {
-                const preset = state.preset === 'auto' || capacity(state.preset) < state.count
-                    ? autoLayout(state.count) : state.preset;
                 const name = state.count ? PRESETS.find(([id]) => id === preset)?.[1] ?? preset : 'No tiled windows';
                 previewRow.subtitle = `Workspace ${state.workspace + 1} · Display ${state.monitor + 1} · Space ${state.space + 1} · ${name}`;
             } else previewRow.subtitle = 'Start arranging windows to see the current layout';
@@ -84,7 +127,7 @@ export default class SnapTessPreferences extends ExtensionPreferences {
             const x = Math.round((width - scaledWidth) / 2), y = Math.round((height - scaledHeight) / 2);
             const rects = layout({x, y, width: scaledWidth, height: scaledHeight}, state.count, {
                 preset: state.preset, gap: settings.get_int('gap') * factor,
-                padding: settings.get_int('padding') * factor,
+                padding: paddingOptions(settings, factor),
                 ratio: settings.get_double('master-ratio')});
             rects.forEach((rect, index) => {
                 const occupied = state.occupied?.includes(index);
@@ -99,7 +142,7 @@ export default class SnapTessPreferences extends ExtensionPreferences {
         appearance.add(previewRow);
         const previewChanged = settings.connect('changed', (_s, key) => {
             if (key === 'preview-state') updatePreview();
-            else if (['gap', 'padding', 'master-ratio'].includes(key)) preview.queue_draw();
+            else if ((['gap', 'padding', 'independent-padding', 'master-ratio'].includes(key) || key.startsWith('padding-'))) preview.queue_draw();
         });
         updatePreview();
         const styleManager = Adw.StyleManager.get_default();
@@ -116,6 +159,42 @@ export default class SnapTessPreferences extends ExtensionPreferences {
             addReset(row, key);
             behavior.add(row);
         }
+        const focusGroup = new Adw.PreferencesGroup({title: 'Focus outline',
+            description: 'Customize the outline around the focused tiled window.'});
+        page.add(focusGroup);
+        addSwitch(focusGroup, 'border-custom-color', 'Custom focus color', 'Off: follow the GNOME accent color');
+        const colorRow = new Adw.ActionRow({title: 'Focus color'});
+        const picker = new Gtk.ColorDialogButton({valign: Gtk.Align.CENTER,
+            dialog: new Gtk.ColorDialog({with_alpha: false})});
+        let syncingColor = false;
+        watch('border-color', () => {
+            const rgba = new Gdk.RGBA();
+            if (!rgba.parse(settings.get_string('border-color'))) rgba.parse('#3584e4');
+            syncingColor = true; picker.rgba = rgba; syncingColor = false;
+        });
+        picker.connect('notify::rgba', () => {
+            if (syncingColor) return;
+            const rgba = picker.rgba;
+            const hex = [rgba.red, rgba.green, rgba.blue].map(value =>
+                Math.round(value * 255).toString(16).padStart(2, '0')).join('');
+            settings.set_string('border-color', `#${hex}`);
+        });
+        colorRow.add_suffix(picker); addReset(colorRow, 'border-color'); focusGroup.add(colorRow);
+        watch('border-custom-color', () => { colorRow.sensitive = settings.get_boolean('border-custom-color'); });
+        addSpin(focusGroup, 'border-width', 'Outline thickness', 1, 6, 'Pixels');
+        addChoice(focusGroup, 'border-style', 'Outline style', [['outline', 'Outline'], ['halo', 'Subtle halo']]);
+        watch('active-border', () => { focusGroup.sensitive = settings.get_boolean('active-border'); });
+        const animationGroup = new Adw.PreferencesGroup({title: 'Animations',
+            description: 'Adjust guides, focus effects and space transitions. Window placement stays immediate.'});
+        page.add(animationGroup);
+        addChoice(animationGroup, 'animation-speed', 'Animation speed',
+            [['fast', 'Fast'], ['normal', 'Normal'], ['slow', 'Slow'], ['custom', 'Custom']]);
+        const durationRow = addSpin(animationGroup, 'animation-duration', 'Animation duration', 40, 500,
+            'Base duration in milliseconds; longer transitions scale proportionally');
+        watch('animation-speed', () => { durationRow.visible = settings.get_string('animation-speed') === 'custom'; });
+        addChoice(animationGroup, 'animation-curve', 'Animation curve',
+            [['ease-out', 'Ease out'], ['linear', 'Linear'], ['ease-in-out', 'Ease in and out']]);
+        watch('animations', () => { animationGroup.sensitive = settings.get_boolean('animations'); });
         const archiveGroup = new Adw.PreferencesGroup({title: 'Back up and share',
             description: 'Export named layouts and per-space profiles to a JSON file. Import adds new items without replacing your existing ones.'});
         page.add(archiveGroup);

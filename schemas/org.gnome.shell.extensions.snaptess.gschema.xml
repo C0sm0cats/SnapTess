@@ -58,5 +58,17 @@
 </key>
 <key name="stop" type="as"><default>['&lt;Control&gt;&lt;Alt&gt;q']</default><summary>Stop</summary>
 </key>
+<key name="independent-padding" type="b"><default>false</default><summary>Use independent screen edge spacing</summary></key>
+<key name="padding-top" type="i"><default>12</default><summary>Top screen edge spacing</summary><range min="0" max="64"/></key>
+<key name="padding-right" type="i"><default>12</default><summary>Right screen edge spacing</summary><range min="0" max="64"/></key>
+<key name="padding-bottom" type="i"><default>12</default><summary>Bottom screen edge spacing</summary><range min="0" max="64"/></key>
+<key name="padding-left" type="i"><default>12</default><summary>Left screen edge spacing</summary><range min="0" max="64"/></key>
+<key name="border-custom-color" type="b"><default>false</default><summary>Use a custom focus color</summary></key>
+<key name="border-color" type="s"><default>'#3584e4'</default><summary>Custom focus outline color</summary></key>
+<key name="border-width" type="i"><default>2</default><summary>Focus outline thickness</summary><range min="1" max="6"/></key>
+<key name="border-style" type="s"><default>'outline'</default><summary>Focus outline style</summary><choices><choice value='outline'/><choice value='halo'/></choices></key>
+<key name="animation-speed" type="s"><default>'normal'</default><summary>Visual animation speed</summary><choices><choice value='fast'/><choice value='normal'/><choice value='slow'/><choice value='custom'/></choices></key>
+<key name="animation-duration" type="i"><default>140</default><summary>Custom base animation duration in milliseconds</summary><range min="40" max="500"/></key>
+<key name="animation-curve" type="s"><default>'ease-out'</default><summary>Visual animation easing</summary><choices><choice value='ease-out'/><choice value='linear'/><choice value='ease-in-out'/></choices></key>
 </schema>
 </schemalist>
