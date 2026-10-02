@@ -86,7 +86,7 @@ export default class SnapTessPreferences extends ExtensionPreferences {
             // The common margin is retained when switching back.
             commonPaddingRow.sensitive = !enabled;
         });
-        const ratio = new Adw.SpinRow({title: 'Focus column width', subtitle: 'Percentage of the available width', digits: 0,
+        const ratio = new Adw.SpinRow({title: 'Focus column width', subtitle: 'Width of the large left tile in the Focus layout (%)', digits: 0,
             adjustment: new Gtk.Adjustment({lower: 25, upper: 75, step_increment: 5, page_increment: 5}),
             value: Math.round(settings.get_double('master-ratio') * 100)});
         ratio.connect('notify::value', () => settings.set_double('master-ratio', ratio.value / 100));
@@ -107,9 +107,10 @@ export default class SnapTessPreferences extends ExtensionPreferences {
         };
         const updatePreview = () => {
             const state = currentPreview();
+            const preset = state.preset === 'auto' || capacity(state.preset) < state.count
+                ? autoLayout(state.count) : state.preset;
+            ratio.visible = !!state.running && state.count > 0 && preset === 'master';
             if (state.running) {
-                const preset = state.preset === 'auto' || capacity(state.preset) < state.count
-                    ? autoLayout(state.count) : state.preset;
                 const name = state.count ? PRESETS.find(([id]) => id === preset)?.[1] ?? preset : 'No tiled windows';
                 previewRow.subtitle = `Workspace ${state.workspace + 1} · Display ${state.monitor + 1} · Space ${state.space + 1} · ${name}`;
             } else previewRow.subtitle = 'Start arranging windows to see the current layout';

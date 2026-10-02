@@ -116,7 +116,16 @@ settings.set_string('preview-state', JSON.stringify({running: true, workspace: 1
     preset: 'auto', count: 3, occupied: [0, 2], focused: 0, width: 1920, height: 1080}));
 if (!previewRow.subtitle.includes('Workspace 2 · Display 1 · Space 3 · Focus'))
     throw new Error('Preview did not follow the active space and layout');
+const focusRatio = spins.find(row => row.title === 'Focus column width');
+if (!focusRatio.visible) throw new Error('Focus width should appear for Auto with three tiles');
+for (const [preset, count, visible] of [['auto', 4, false], ['master', 2, true],
+    ['master', 4, false], ['split', 2, false], ['5x3', 15, false]]) {
+    settings.set_string('preview-state', JSON.stringify({running: true, workspace: 0, monitor: 0, space: 0,
+        preset, count, width: 1920, height: 1080}));
+    if (focusRatio.visible !== visible) throw new Error(`Focus width visibility is wrong for ${preset}/${count}`);
+}
 settings.reset('preview-state');
+if (focusRatio.visible) throw new Error('Focus width should be hidden when tiling is paused');
 if (!previewRow.subtitle.includes('Start arranging windows')) throw new Error('Paused preview remained visible');
 for (const [key, title, changed] of [['gap', 'Window spacing', 19], ['padding', 'Screen edge spacing', 21]]) {
     const button = resetButtons.find(item => item.tooltip_text === `Reset ${title} to default`);
