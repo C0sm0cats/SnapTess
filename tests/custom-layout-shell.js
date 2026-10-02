@@ -28,6 +28,15 @@ export async function run() {
     saveAction.emit('clicked', 1); await pause();
     assert(studio.nameRow.visible && JSON.stringify(app.profiles) === before,
         'footer Save opens naming without applying the draft');
+    studio.nameEntry.set_text('Save without apply test'); studio.nameEntry.grab_key_focus();
+    const keyboard = Clutter.get_default_backend().get_default_seat()
+        .create_virtual_device(Clutter.InputDeviceType.KEYBOARD_DEVICE);
+    keyboard.notify_keyval(GLib.get_monotonic_time(), Clutter.KEY_Return, Clutter.KeyState.PRESSED);
+    await Scripting.sleep(60);
+    keyboard.notify_keyval(GLib.get_monotonic_time(), Clutter.KEY_Return, Clutter.KeyState.RELEASED);
+    await pause();
+    assert(app.studio === studio && studio.dialog.dialogLayout.mapped && JSON.stringify(app.profiles) === before,
+        'Enter saves the template without applying or closing Studio');
     studio.openNewLayout(); studio.choosePreset('custom'); await pause();
     assert(studio.newLayout.tiles.length === 1 && studio.customControls.visible,
         'Custom starts with a full tile and shows geometry controls');
