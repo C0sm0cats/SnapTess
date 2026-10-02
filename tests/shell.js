@@ -702,7 +702,7 @@ export async function run() {
     const [, badgeY]=scaleBadge.get_transformed_position();
     const [, badgeHeight]=scaleBadge.get_transformed_size();
     assert(badgeY>=cardY && badgeY+badgeHeight<=cardY+compactCard.height,
-        'scale badge stays fully inside a compact preview card');
+        `scale badge stays fully inside a compact preview card (card=${cardY}:${compactCard.height}, badge=${badgeY}:${badgeHeight}, children=${compactCard.get_child().get_children().map(child => `${child.constructor.name}:${child.height}`).join(',')})`);
     const focusedCard=app.studio.canvas.get_children().find(card=>card.get_child()?.get_children?.().some(child=>
         child.has_style_class_name?.('snaptess-state-badges') && child.get_children().some(badge=>
             badge.has_style_class_name?.('snaptess-active-badge'))));
@@ -829,10 +829,13 @@ export async function run() {
         savedStudio.savedPicker.label.length<35 && !savedStudio.savedChooser.visible,
     'many long names do not widen the Studio toolbar');
     savedStudio.savedPicker.emit('clicked',1); await pause();
-    assert(savedStudio.savedChooser.visible && savedStudio.savedChooserList.get_n_children()===6,
+    const savedRows=()=>savedStudio.savedChooserList.get_children().filter(child=>
+        child.has_style_class_name?.('snaptess-saved-row'));
+    assert(savedStudio.savedChooser.visible && savedRows().length===6 &&
+        savedStudio.savedChooserList.get_first_child().text==='Preset layouts',
         'saved layouts open as a vertical list inside the Studio modal');
-    assert(savedStudio.savedChooserList.get_first_child().accessible_name==='Preview Test pair' &&
-        savedStudio.savedChooserList.get_first_child().get_child().get_children()[1]
+    assert(savedRows()[0].accessible_name==='Preview Test pair' &&
+        savedRows()[0].get_child().get_children()[1]
             .has_style_class_name('snaptess-saved-row-metadata'),
         'Studio sorts saved layouts by tile count and shows the count');
     if (GLib.getenv('SNAPTESS_MENU_SCREENSHOT')) {
@@ -842,14 +845,14 @@ export async function run() {
         await new Shell.Screenshot().screenshot_area(m.x,m.y,m.width,m.height,stream);
         stream.close(null);
     }
-    const targetRow=savedStudio.savedChooserList.get_children()[1];
+    const targetRow=savedRows()[1];
     assert(targetRow.reactive && savedStudio.savedChooser.get_parent()===savedStudio.dialog.contentLayout,
         'saved-layout rows receive input inside the modal dialog');
     targetRow.emit('clicked',1);
     assert(savedStudio.previewSavedId===extraLayouts[0] && !savedStudio.showSavedChooser,
         'selecting a row inside the Studio modal opens its saved-layout preview');
     savedStudio.savedPicker.emit('clicked',1);
-    savedStudio.savedChooserList.get_first_child().emit('clicked',1);
+    savedRows()[0].emit('clicked',1);
     assert(savedStudio.previewSavedId===saved.id,'the original saved layout remains selectable');
     for (const id of extraLayouts) app.deleteSavedLayout(id);
     savedStudio.render();

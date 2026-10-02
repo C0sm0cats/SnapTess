@@ -146,6 +146,13 @@ export async function run() {
         assert(windows.every(w => w.get_monitor() === 0), 'Undo restores the original monitor');
     }
     app.saveNewLayout('Preset group test', '2x2', [null, null, null, null], [null, null, null, null]);
+    app.openStudio(); await pause();
+    app.studio.savedPicker.emit('clicked', 1); await pause();
+    const studioHeadings = app.studio.savedChooserList.get_children()
+        .filter(actor => actor instanceof St.Label).map(actor => actor.text);
+    assert(studioHeadings.includes('Custom layouts') && studioHeadings.includes('Preset layouts'),
+        'Studio separates saved custom and preset layouts');
+    app.studio.dialog.close(); await pause();
     app.openLayoutSwitcher(); await pause();
     const headings = app.layoutSwitcher.list.get_children()
         .filter(actor => actor instanceof St.Label).map(actor => actor.text);
