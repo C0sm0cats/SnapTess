@@ -1482,7 +1482,7 @@ test('appearance changes update the border without rearranging windows', () => {
     assert.equal(arrangements, 1);
 });
 
-test('window radius readback includes the whole HiDPI texture on both sides', async () => {
+test('window radius reads both HiDPI edges from one full window render', async () => {
     const calls = [], width = 512, height = 800, stride = width * 4;
     const pixels = new Uint8Array(height * stride);
     for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) {
@@ -1495,12 +1495,36 @@ test('window radius readback includes the whole HiDPI texture on both sides', as
     actor.visible = true;
     actor.get_scale = () => [1, 1];
     actor.get_resource_scale = () => 2;
-    actor.paint_to_content = () => ({get_texture: () => ({})});
+    let renders = 0;
+    actor.paint_to_content = () => { renders++; return {get_texture: () => ({get_width: () => 1200, get_height: () => 800})}; };
     app.windowEffectActive = () => false;
     app.visualWindowRect = () => ({x: 100, y: 50, width: 600, height: 400});
     app.radiusReadbackReady = true;
     const radius = await app.measureWindowRadius(w);
     assert.deepEqual({...radius}, {top: 12, bottom: 0, topRight: 12, bottomRight: 0});
     assert.equal(calls.length, 2);
-    assert(calls.every(args => args[3] === -1 && args[4] === -1));
+    assert.equal(renders, 1);
+    assert(calls.every(args => args[3] === 512 && args[4] === 800));
+    assert.equal(calls[0][1], 0); assert.equal(calls[1][1], 688);
+});
+
+test('focus refreshes cached corner geometry after the client decoration repaint', () => {
+    const {app, w, record, advance, shellDisplay} = harness();
+    let refreshes = 0;
+    app.running = true;
+    app.hideWindowActions = () => {};
+    app.updateBorder = () => {};
+    app.queueWindowActions = () => {};
+    app.publishPreviewState = () => {};
+    app.invalidateWindowRadius = target => { assert.equal(target, w); refreshes++; };
+    record.windowRadius = {top: 4, topRight: 0, bottom: 0, bottomRight: 0};
+    shellDisplay.focus_window = w;
+    app.focusChanged();
+    advance(249); assert.equal(refreshes, 0);
+    advance(1); assert.equal(refreshes, 1);
+    app.focusChanged();
+    advance(100);
+    app.focusChanged();
+    advance(150); assert.equal(refreshes, 1);
+    advance(100); assert.equal(refreshes, 2);
 });

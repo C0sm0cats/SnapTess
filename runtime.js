@@ -18,7 +18,7 @@ import {LayoutSwitcher} from './lib/layout-switcher.js';
 import {WindowBorder} from './lib/window-border.js';
 import {radiusFromPixels, radiusStyle, plausibleWindowRadius, visualFrameRect} from './lib/window-radius.js';
 
-const RUNTIME_REVISION = 56;
+const RUNTIME_REVISION = 57;
 const RESTORE_STABILIZE_MS = 1400;
 const RESTORE_QUIET_MS = 120;
 const MAX_RESTORE_MOVES = 8;
@@ -1759,31 +1759,35 @@ export default class SnapTess extends Extension {
     async measureWindowRadius(w) {
         const actor = this.windowActor(w), frame = this.visualWindowRect(w);
         if (!actor?.visible || frame.width < 3 || frame.height < 2 || this.windowEffectActive(actor)) return null;
-        const width = Math.min(256, Math.max(3, Math.floor(frame.width / 2)));
-        const height = Math.round(frame.height);
         if (!this.radiusReadbackReady) {
             Gio._promisify(Shell.Screenshot, 'composite_to_stream');
             this.radiusReadbackReady = true;
         }
-        const measureSide = async (side, x) => {
-            const content = actor.paint_to_content(new Mtk.Rectangle({
-                x: Math.round(x), y: Math.round(frame.y), width, height,
-            }));
-            const texture = content?.get_texture?.();
-            if (!texture) return null;
+        // Render once before extracting either side. Separate narrow renders
+        // can inherit different clipping/culling state and disagree at corners.
+        const content = actor.paint_to_content(new Mtk.Rectangle({
+            x: Math.round(frame.x), y: Math.round(frame.y),
+            width: Math.round(frame.width), height: Math.round(frame.height),
+        }));
+        const texture = content?.get_texture?.();
+        if (!texture) return null;
+        const pixelScale = actor.get_resource_scale();
+        const textureWidth = texture.get_width(), textureHeight = texture.get_height();
+        const stripWidth = Math.min(Math.round(256 * pixelScale), Math.floor(textureWidth / 2));
+        if (stripWidth < 3 || textureHeight < 2) return null;
+        const measureSide = async side => {
             const stream = Gio.MemoryOutputStream.new_resizable();
             try {
-                // Returned textures can be clipped or rendered at a different
-                // resource scale; logical capture dimensions are not pixel dimensions.
                 const pixbuf = await Shell.Screenshot.composite_to_stream(
-                    texture, 0, 0, -1, -1, 1, null, 0, 0, 1, stream);
+                    texture, side === 'right' ? textureWidth - stripWidth : 0, 0,
+                    stripWidth, textureHeight, 1, null, 0, 0, 1, stream);
                 return plausibleWindowRadius(radiusFromPixels(pixbuf.get_pixels(), pixbuf.get_rowstride(),
                     pixbuf.get_n_channels(), pixbuf.get_width(), pixbuf.get_height(),
-                    pixbuf.get_has_alpha(), side, actor.get_resource_scale()));
+                    pixbuf.get_has_alpha(), side, pixelScale));
             } finally { stream.close(null); }
         };
-        const left = await measureSide('left', frame.x);
-        const right = await measureSide('right', frame.x + frame.width - width);
+        const left = await measureSide('left');
+        const right = await measureSide('right');
         const currentFrame = this.visualWindowRect(w);
         if (this.windowActor(w) !== actor || this.windowEffectActive(actor) ||
             ['x', 'y', 'width', 'height'].some(key => Math.abs(currentFrame[key] - frame[key]) > 1))
@@ -2072,12 +2076,19 @@ export default class SnapTess extends Extension {
     }
 
     focusChanged() {
+        this.cancel(this.focusRadiusTimer); this.focusRadiusTimer = 0;
         if (this.drag && !global.display.is_grabbed()) this.grabEnd();
         else {
             this.hideWindowActions();
             this.updateBorder();
             const w = global.display.focus_window;
             if (w) this.queueWindowActions(w);
+            // Focus changes can repaint client decorations without changing
+            // geometry. Do not keep a radius sampled from an older client frame.
+            if (this.running && this.records.has(w)) this.focusRadiusTimer = this.later(250, () => {
+                this.focusRadiusTimer = 0;
+                if (this.running && global.display.focus_window === w) this.invalidateWindowRadius(w, true);
+            });
         }
         this.publishPreviewState();
     }
