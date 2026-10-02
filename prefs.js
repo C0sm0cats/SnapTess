@@ -25,6 +25,7 @@ function setAppRule(settings, key, ids, enabled) {
 export default class SnapTessPreferences extends ExtensionPreferences {
     fillPreferencesWindow(window) {
         const settings = this.getSettings();
+        window.set_title('SnapTess Preferences');
         window.set_default_size(660, 720);
         const page = new Adw.PreferencesPage({title: 'SnapTess', icon_name: 'view-grid-symbolic'});
         window.add(page);

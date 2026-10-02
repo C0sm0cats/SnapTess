@@ -19,6 +19,7 @@ const startupAlias = appInfo.get_startup_wm_class?.();
 settings.set_strv('scaled-apps', [legacyId, appId, ...(startupAlias ? [startupAlias] : []), 'custom-test.window']);
 const window = new Adw.PreferencesWindow();
 prefs.fillPreferencesWindow(window);
+if (window.title !== 'SnapTess Preferences') throw new Error('Preferences window identity is missing');
 const entries = [], apps = [], groups = [], rows = [], spins = [], previews = [], resetButtons = [], shortcutLabels = [], recordButtons = [], editButtons = [];
 function visit(widget) {
     if (widget instanceof Adw.EntryRow) entries.push(widget);

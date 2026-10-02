@@ -126,7 +126,7 @@ function harness(options = {}) {
         requests.length = 0; scaleWrites.length = 0;
     }
     return {app, w, actor, record, requests, scaleWrites, userOps, launches, slot, timers, advance, commit, special,
-        shellMain, shellDisplay,
+        shellMain, shellDisplay, notifyWindow: name => signals.get(name)?.(),
         effectsDone, settleInitial, frame: () => frame, grab: value => { grabbed = value; },
         monitor: value => { monitor = value; }, pointer: (x, y) => { pointer = [x, y]; }};
 }
@@ -1527,4 +1527,44 @@ test('focus refreshes cached corner geometry after the client decoration repaint
     app.focusChanged();
     advance(150); assert.equal(refreshes, 1);
     advance(100); assert.equal(refreshes, 2);
+});
+
+test('SnapTess preferences are never tiled or treated as a tile drag or resize', () => {
+    for (const title of ['SnapTess', 'SnapTess Preferences']) {
+        const h = harness();
+        h.w.get_title = () => title;
+        h.w.get_gtk_application_id = () => 'org.gnome.Shell.Extensions';
+        assert.equal(h.app.eligible(h.w), false);
+        assert.equal(h.app.windows(0).length, 0);
+        let linkedResizeAttempts = 0;
+        h.app.beginLinkedResize = () => linkedResizeAttempts++;
+        for (const op of [1, 5]) h.app.grabBegin(h.w, op);
+        assert.equal(linkedResizeAttempts, 0);
+        assert.equal(h.app.drag, null);
+    }
+});
+
+test('preferences exclusion also recognizes WM_CLASS without excluding other extension preferences', () => {
+    const {app, w} = harness();
+    w.get_title = () => 'SnapTess Preferences';
+    w.get_wm_class = () => 'org.gnome.Shell.Extensions';
+    assert.equal(app.eligible(w), false);
+    w.get_title = () => 'Other Extension';
+    assert.equal(app.eligible(w), true);
+    w.get_title = () => 'SnapTess Preferences';
+    w.get_wm_class = () => 'org.example.Editor';
+    assert.equal(app.eligible(w), true);
+});
+
+test('preferences are released when Wayland supplies their identity after creation', () => {
+    const {app, w, notifyWindow} = harness();
+    let retile = 0;
+    app.schedule = () => retile++;
+    app.hideWindowActions = () => {};
+    w.get_title = () => 'SnapTess Preferences';
+    w.get_wm_class = () => 'org.gnome.Shell.Extensions';
+    assert(app.records.has(w));
+    notifyWindow('notify::wm-class');
+    assert.equal(app.records.has(w), false);
+    assert.equal(retile, 1);
 });
