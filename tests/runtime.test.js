@@ -126,7 +126,7 @@ function harness(options = {}) {
         requests.length = 0; scaleWrites.length = 0;
     }
     return {app, w, actor, record, requests, scaleWrites, userOps, launches, slot, timers, advance, commit, special,
-        shellMain, shellDisplay,
+        shellMain, shellDisplay, notifyWindow: name => signals.get(name)?.(),
         effectsDone, settleInitial, frame: () => frame, grab: value => { grabbed = value; },
         monitor: value => { monitor = value; }, pointer: (x, y) => { pointer = [x, y]; }};
 }
@@ -1554,4 +1554,17 @@ test('preferences exclusion also recognizes WM_CLASS without excluding other ext
     w.get_title = () => 'SnapTess Preferences';
     w.get_wm_class = () => 'org.example.Editor';
     assert.equal(app.eligible(w), true);
+});
+
+test('preferences are released when Wayland supplies their identity after creation', () => {
+    const {app, w, notifyWindow} = harness();
+    let retile = 0;
+    app.schedule = () => retile++;
+    app.hideWindowActions = () => {};
+    w.get_title = () => 'SnapTess Preferences';
+    w.get_wm_class = () => 'org.gnome.Shell.Extensions';
+    assert(app.records.has(w));
+    notifyWindow('notify::wm-class');
+    assert.equal(app.records.has(w), false);
+    assert.equal(retile, 1);
 });

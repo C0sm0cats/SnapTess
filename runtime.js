@@ -393,7 +393,7 @@ export default class SnapTess extends Extension {
                 }));
         }
         const watch = (signal, fn) => record.signals.push(w.connect(signal, fn));
-        watch('unmanaged', () => {
+        const untrack = () => {
             this.stopWindowTrace(record);
             this.cancel(record.scaleTimer); record.scaleTimer = 0;
             this.cancel(record.repairResetTimer); record.repairResetTimer = 0;
@@ -414,7 +414,17 @@ export default class SnapTess extends Extension {
             }
             if (this.swapWindow === w) this.exitSwap(false);
             this.schedule(this.settings.get_boolean('compact-close'));
-        });
+        };
+        watch('unmanaged', untrack);
+        // Wayland may publish the title/app identity after window-created.
+        const identityChanged = () => {
+            if (!this.isOwnPreferences(w) || !this.records.has(w)) return;
+            if (record.original) this.restore(w, record.original);
+            untrack();
+            this.updateBorder(); this.hideWindowActions();
+        };
+        for (const property of ['title', 'wm-class', 'gtk-application-id'])
+            watch(`notify::${property}`, identityChanged);
         watch('notify::minimized', () => {
             if (this.busy) return;
             if (record.restoreParked && !w.minimized) record.restoreParked = false;
