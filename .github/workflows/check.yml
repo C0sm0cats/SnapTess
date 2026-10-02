@@ -5,6 +5,9 @@ permissions:
 jobs:
   test-and-package:
     runs-on: ubuntu-26.04
+    env:
+      GTK_A11Y: none
+      SNAPTESS_TEST_PROGRESS: '1'
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
