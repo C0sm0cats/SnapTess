@@ -12,13 +12,14 @@ import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import * as PanelMenu from 'resource:///org/gnome/shell/ui/panelMenu.js';
 import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js';
 import {layout, PRESETS, capacity, fitMinimumSize, frameScalePivot, nearestSlot, directionalSlot, directionalFocusSlot, reconcileSlots,
-    activePinnedSlots, reserveAppSlots, swapNeighbor, advanceLinkedResize, resizedLayout, resizeOffsets} from './lib/layout.js';
+    activePinnedSlots, reserveAppSlots, swapNeighbor, advanceLinkedResize, resizedLayout, resizeOffsets, validCustomTiles} from './lib/layout.js';
+import {validSavedLayout} from './lib/archive.js';
 import {Studio} from './lib/studio.js';
 import {LayoutSwitcher} from './lib/layout-switcher.js';
 import {WindowBorder} from './lib/window-border.js';
 import {radiusFromPixels, radiusStyle, plausibleWindowRadius, visualFrameRect} from './lib/window-radius.js';
 
-const RUNTIME_REVISION = 58;
+const RUNTIME_REVISION = 59;
 const RESTORE_STABILIZE_MS = 1400;
 const RESTORE_QUIET_MS = 120;
 const MAX_RESTORE_MOVES = 8;
@@ -712,43 +713,37 @@ export default class SnapTess extends Extension {
     loadSavedLayouts() {
         try {
             const layouts = JSON.parse(this.settings.get_string('saved-layouts'));
-            this.savedLayouts = Array.isArray(layouts) ? layouts.filter(item =>
-                typeof item?.id === 'string' && typeof item.name === 'string' &&
-                PRESETS.some(([id]) => id === item.preset) &&
-                Number.isInteger(item.slotCount) && item.slotCount > 0 && item.slotCount <= 30 &&
-                (item.preset === 'auto' || item.slotCount <= capacity(item.preset)) &&
-                Array.isArray(item.pinned) && item.pinned.length <= item.slotCount &&
-                item.pinned.every(id => id === null || typeof id === 'string') &&
-                (item.apps === undefined || (Array.isArray(item.apps) && item.apps.length <= item.slotCount &&
-                    item.apps.every(id => id === null || typeof id === 'string')))) : [];
+            this.savedLayouts = Array.isArray(layouts) ? layouts.filter(validSavedLayout) : [];
         } catch { this.savedLayouts = []; }
     }
-    saveLayout(name, preset, windows, pins, replaceId = null) {
+    saveLayout(name, preset, windows, pins, replaceId = null, tiles = undefined) {
         name = name.trim().slice(0, 60);
         const existing = this.savedLayouts.find(layout => layout.name.toLowerCase() === name.toLowerCase());
         if (!name || (replaceId ? existing?.id !== replaceId : Boolean(existing))) return false;
-        const slotCount = Math.max(windows.length, pins.length, capacity(preset), 1);
-        if (slotCount > 30 || (preset !== 'auto' && slotCount > capacity(preset))) return false;
+        const slotCount = Math.max(windows.length, pins.length, capacity(preset, tiles), 1);
+        if (slotCount > 30 || (preset !== 'auto' && slotCount > capacity(preset, tiles))) return false;
         const apps = Array.from({length: slotCount}, (_, i) =>
             (typeof windows[i] === 'string' ? windows[i] : windows[i] && this.appId(windows[i])) || pins[i] || null);
         const pinned = Array.from({length: slotCount}, (_, i) => pins[i] || null);
         const id = existing?.id ?? GLib.uuid_string_random();
-        const saved = {id, name, preset, slotCount, apps, pinned};
+        const saved = {id, name, preset, slotCount, apps, pinned,
+            ...(preset === 'custom' ? {tiles: tiles.map(t => ({...t}))} : {})};
+        if (!validSavedLayout(saved)) return false;
         if (existing) this.savedLayouts[this.savedLayouts.indexOf(existing)] = saved;
         else this.savedLayouts.push(saved);
         this.settings.set_string('saved-layouts', JSON.stringify(this.savedLayouts));
         this.deletedLayouts?.splice(0);
         return id;
     }
-    saveNewLayout(name, preset, apps, pinned, replaceId = null) {
-        const count = capacity(preset);
-        if (preset === 'auto' || !PRESETS.some(([id]) => id === preset) ||
+    saveNewLayout(name, preset, apps, pinned, replaceId = null, tiles = undefined) {
+        const count = capacity(preset, tiles);
+        if (preset === 'auto' || !(PRESETS.some(([id]) => id === preset) || (preset === 'custom' && validCustomTiles(tiles))) ||
             !Array.isArray(apps) || !Array.isArray(pinned) || apps.length !== count ||
             pinned.length !== count || apps.some(id => id !== null &&
                 (typeof id !== 'string' || !id.endsWith('.desktop'))) ||
-            new Set(apps.filter(Boolean)).size !== apps.filter(Boolean).length ||
+            (!replaceId && new Set(apps.filter(Boolean)).size !== apps.filter(Boolean).length) ||
             pinned.some((id, index) => id !== null && id !== apps[index])) return false;
-        return this.saveLayout(name, preset, apps, pinned, replaceId);
+        return this.saveLayout(name, preset, apps, pinned, replaceId, tiles);
     }
     renameSavedLayout(id, name) {
         const saved = this.savedLayouts.find(item => item.id === id);
@@ -809,6 +804,7 @@ export default class SnapTess extends Extension {
         const slots = this.groups.get(this.key(monitor, space));
         const profile = this.profiles[this.profileKey(monitor, space)];
         if (!slots || slots.length !== layout.slotCount || profile?.preset !== layout.preset) return false;
+        if (layout.preset === 'custom' && JSON.stringify(profile.tiles) !== JSON.stringify(layout.tiles)) return false;
         const normalize = id => (id ?? '').replace(/\.desktop$/i, '').toLowerCase();
         for (let i = 0; i < layout.slotCount; i++) {
             if (normalize(profile.pinned?.[i]) !== normalize(layout.pinned?.[i])) return false;
@@ -849,7 +845,7 @@ export default class SnapTess extends Extension {
         const workspace = global.workspace_manager.get_active_workspace();
         const {slots, missing, extras} = this.savedLayoutPlan(layout, monitor, space);
         this.applyProfiles([{monitor, space, preset: layout.preset, windows: slots,
-            pinned: [...layout.pinned], slotCount: layout.slotCount, parkUnused: extras}], {monitor, space});
+            pinned: [...layout.pinned], slotCount: layout.slotCount, tiles: layout.tiles, parkUnused: extras}], {monitor, space});
         const appSystem = Shell.AppSystem.get_default();
         const unavailable = [];
         for (const appId of missing) {
@@ -896,7 +892,8 @@ export default class SnapTess extends Extension {
         return true;
     }
     options(monitor, space = this.activeSpace(monitor)) {
-        return {preset: this.profiles[this.profileKey(monitor, space)]?.preset ?? 'auto',
+        const profile = this.profiles[this.profileKey(monitor, space)];
+        return {preset: profile?.preset ?? 'auto', tiles: profile?.tiles,
             gap: this.settings.get_int('gap'), padding: paddingOptions(this.settings),
             ratio: this.settings.get_double('master-ratio')};
     }
@@ -1021,7 +1018,7 @@ export default class SnapTess extends Extension {
             const slots = this.groups.get(this.key(monitor, space)) ?? [];
             const area = this.area(monitor);
             state = {running: true, monitor, workspace: this.workspaceIndex(), space,
-                preset: this.options(monitor, space).preset, count: slots.length,
+                preset: this.options(monitor, space).preset, tiles: this.options(monitor, space).tiles, count: slots.length,
                 occupied: slots.map((w, index) => w ? index : -1).filter(index => index >= 0),
                 focused: slots.indexOf(global.display.focus_window), width: area.width, height: area.height};
         }
@@ -1614,7 +1611,7 @@ export default class SnapTess extends Extension {
         this.statusItem.label.text = `SnapTess  ·  ${this.running ? 'ON' : 'PAUSED'}`;
         for (const [monitor, {menu, spaces}] of (this.monitorMenus ?? []).entries()) {
             const space = this.activeSpace(monitor);
-            const preset = PRESETS.find(([id]) => id === this.options(monitor, space).preset)?.[1] ?? 'Auto';
+            const preset = PRESETS.find(([id]) => id === this.options(monitor, space).preset)?.[1] ?? (this.options(monitor, space).preset === 'custom' ? 'Custom' : 'Auto');
             menu.label.text = `Display ${monitor + 1}  ·  ${preset}  ·  Space ${space + 1}`;
             spaces.forEach((item, index) => item.setOrnament(index === space
                 ? PopupMenu.Ornament.DOT : PopupMenu.Ornament.NONE));
@@ -2676,7 +2673,8 @@ export default class SnapTess extends Extension {
     }
 
     applyProfiles(changes, focus = changes.at(-1)) {
-        if (!changes.length) return;
+        if (!changes.length || changes.some(c => c.preset === 'custom' &&
+            (!validCustomTiles(c.tiles) || c.windows.length > c.tiles.length))) return false;
         if (!this.running) this.setRunning(true);
         this.checkpoint();
         this.switchSpace(focus.space, focus.monitor);
@@ -2691,7 +2689,7 @@ export default class SnapTess extends Extension {
             for (const [key, group] of this.groups)
                 if (key.startsWith(`${this.workspaceIndex()}:`))
                     this.groups.set(key, group.filter(w => !claimed.has(w)));
-            for (const {monitor, space, preset, slots, pinned = [], slotCount, parkUnused = []} of plans) {
+            for (const {monitor, space, preset, slots, pinned = [], slotCount, tiles, parkUnused = []} of plans) {
                 for (const w of parkUnused) {
                     if (!this.records.has(w)) continue;
                     const r = this.records.get(w);
@@ -2716,6 +2714,7 @@ export default class SnapTess extends Extension {
                 this.profiles[this.profileKey(monitor, space)] = {
                     preset, apps: slots.filter(Boolean).map(w => this.appId(w)), pinned,
                     ...(slotCount ? {slotCount} : {}),
+                    ...(preset === 'custom' ? {tiles: tiles.map(t => ({...t})), slotCount: tiles.length} : {}),
                 };
             }
         } finally { this.busy = false; }

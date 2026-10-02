@@ -125,6 +125,12 @@ for (const [preset, count, visible] of [['auto', 4, false], ['master', 2, true],
         preset, count, width: 1920, height: 1080}));
     if (focusRatio.visible !== visible) throw new Error(`Focus width visibility is wrong for ${preset}/${count}`);
 }
+settings.set_string('preview-state', JSON.stringify({running: true, workspace: 0, monitor: 0, space: 0,
+    preset: 'custom', count: 3, tiles: [{x: 0, y: 0, width: .6, height: 1},
+        {x: .6, y: 0, width: .4, height: .5}, {x: .6, y: .5, width: .4, height: .5}],
+    width: 1920, height: 1080}));
+if (focusRatio.visible || !previewRow.subtitle.includes('Custom'))
+    throw new Error('Custom geometry should not be mistaken for Auto/Focus');
 settings.reset('preview-state');
 if (focusRatio.visible) throw new Error('Focus width should be hidden when tiling is paused');
 if (!previewRow.subtitle.includes('Start arranging windows')) throw new Error('Paused preview remained visible');

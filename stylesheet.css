@@ -164,3 +164,18 @@
 .snaptess-library-row-labels { spacing: 3px; }
 .snaptess-library-title { color: #ecf4f2; font-size: 12px; font-weight: 700; }
 .snaptess-library-meta { color: #93a6ad; font-size: 10px; }
+
+.snaptess-custom-controls { spacing: 7px; margin-bottom: 10px; }
+.snaptess-custom-actions { spacing: 7px; }
+.snaptess-custom-values { spacing: 14px; }
+.snaptess-custom-value { spacing: 5px; }
+.snaptess-custom-title { color: #b5c9c8; font-size: 11px; padding-top: 8px; }
+.snaptess-custom-entry { width: 62px; padding: 5px 7px; font-size: 11px; border-radius: 7px; }
+.snaptess-custom-divider { background-color: #73cfa8; border-radius: 3px; }
+.snaptess-custom-divider:hover { background-color: #b5f7db; }
+.snaptess-slot.merge-target { border-color: #f3bd72; background-color: #3a3328; }
+.snaptess-custom-actions .snaptess-chip:insensitive { color: #667980; background-color: #1a232b; }
+.snaptess-new-slot.empty.selected { border: 2px solid #ff9b91; background-color: #513a3f; }
+.snaptess-custom-entry { background-color: #202b34; color: #edf5f2; border: 1px solid #435761; }
+.snaptess-custom-entry:focus { border-color: #73cfa8; }
+.snaptess-custom-entry.fixed { color: #91a5a9; background-color: #171e26; border-color: #303e45; }

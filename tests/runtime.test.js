@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
 import * as appearance from '../lib/appearance.js';
+import {validSavedLayout} from '../lib/archive.js';
 import * as geometry from '../lib/layout.js';
 import {radiusStyle, radiusFromPixels, plausibleWindowRadius} from '../lib/window-radius.js';
 
@@ -47,7 +48,7 @@ function harness(options = {}) {
         move_frame(user, x, y) { userOps.push(user); requests.push({type: 'move', x, y}); },
     };
     const Runtime = vm.runInNewContext(source, {
-        ...geometry, ...appearance, radiusStyle, radiusFromPixels, plausibleWindowRadius, Extension: class {}, console, TextDecoder,
+        ...geometry, ...appearance, validSavedLayout, radiusStyle, radiusFromPixels, plausibleWindowRadius, Extension: class {}, console, TextDecoder,
         Date: class extends Date { static now() { return now; } },
         GLib: {SOURCE_CONTINUE: true, SOURCE_REMOVE: false, file_get_contents(path) {
             if (path === `/proc/${options.launchPid ?? 979491}/environ` && options.launchEnvironment)
@@ -1567,4 +1568,47 @@ test('preferences are released when Wayland supplies their identity after creati
     notifyWindow('notify::wm-class');
     assert.equal(app.records.has(w), false);
     assert.equal(retile, 1);
+});
+
+test('custom templates preserve geometry on save, reload, replacement and restore', () => {
+    const h = harness(), app = h.app;
+    const tiles = [{x: 0, y: 0, width: .6, height: 1}, {x: .6, y: 0, width: .4, height: 1}];
+    app.savedLayouts = []; app.deletedLayouts = [];
+    let stored;
+    app.settings.set_string = (_key, value) => { stored = value; };
+    assert.equal(app.saveNewLayout('Custom pair', 'custom', ['test.desktop', null],
+        ['test.desktop', null], null, tiles), 'saved-layout-id');
+    assert.deepEqual(JSON.parse(stored)[0].tiles, tiles);
+    tiles[0].width = .5;
+    assert.equal(app.savedLayouts[0].tiles[0].width, .6); // No mutable draft references.
+    app.settings.get_string = () => stored;
+    app.loadSavedLayouts();
+    assert.equal(app.savedLayouts.length, 1);
+    assert.equal(app.saveNewLayout('Invalid', 'custom', ['test.desktop', null], [null, null], null, tiles), false);
+    let restored;
+    app.layoutCandidates = () => [h.w]; app.appId = () => 'test.desktop';
+    app.applyProfiles = changes => { restored = changes[0]; };
+    app.pendingLayoutApps = new Map(); app.updatePinnedPlaceholders = () => {};
+    app.restoreSavedLayout('saved-layout-id', 0, 0);
+    assert.equal(restored.preset, 'custom');
+    assert.equal(restored.tiles.length, 2); assert.equal(restored.slotCount, 2);
+    assert.equal(restored.tiles[0].width, .6);
+});
+
+test('Arrange again resets custom resize offsets while keeping the saved custom preset', () => {
+    const h = harness(), app = h.app;
+    const tiles = [{x: 0, y: 0, width: .65, height: 1}, {x: .65, y: 0, width: .35, height: 1}];
+    app.profileKey = () => '0:0:0'; app.activeSpace = () => 0;
+    const key = app.profileKey(0, 0);
+    app.profiles = {[key]: {preset: 'custom', tiles, slotCount: 2, apps: [], pinned: [],
+        resize: {preset: 'custom', count: 2, offsets: [[0,0,.05,0],[.05,0,-.05,0]]}}};
+    app.history = []; app.groups = new Map(); app.spaces = new Map(); app.settings.set_string = () => {};
+    let placed;
+    app.tile = () => { placed = app.slotRects(0, 2); };
+    app.arrangeAgain();
+    assert.equal(app.profiles[key].resize, undefined);
+    assert.deepEqual(app.profiles[key].tiles, tiles);
+    const base = geometry.layout(app.area(0), 2, app.options(0, 0));
+    assert.deepEqual(placed, base);
+    assert.equal(JSON.parse(app.history[0].profiles)[key].resize.count, 2);
 });
