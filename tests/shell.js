@@ -731,9 +731,9 @@ export async function run() {
     studio.selected=0; studio.updatePinButton();
     assert(studio.undoButton.visible && !studio.modifiedBadge,
         'Studio exposes Undo without the prominent modified badge');
-    assert(studio.context.get_children().some(chip=>chip.get_child?.()?.get_children?.()
-        .some(child=>child.has_style_class_name?.('snaptess-dirty-dot'))),
-    'modified contexts use a discreet dot');
+    assert(studio.dirtyContexts.has(studio.contextKey()) &&
+        studio.context.get_children().some(chip=>chip.label==='Space 1'),
+    'modified contexts stay tracked while space buttons keep plain labels');
     studio.undo();
     assert(!studio.pins[0] && studio.undoStack.length===beforePinUndo &&
         [...studio.dirtyContexts].every(key=>beforePinDirty.has(key)) &&
