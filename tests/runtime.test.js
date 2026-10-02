@@ -835,6 +835,23 @@ test('a blank fixed-preset layout saves app IDs and pins without changing the cu
         ['other.desktop', null, null, null]), false);
 });
 
+test('editing a saved Auto layout preserves its slot count and saves changed apps and pins', () => {
+    const h = harness(), app = h.app;
+    app.savedLayouts = [{id: 'auto-edit', name: 'Auto saved', preset: 'auto', slotCount: 3,
+        apps: ['test.desktop', 'test.desktop', null], pinned: [null, null, null]}];
+    app.deletedLayouts = [];
+    let stored;
+    app.settings.set_string = (_key, value) => { stored = JSON.parse(value); };
+    const before = h.frame();
+    assert.equal(app.saveNewLayout('Auto saved', 'auto',
+        ['other.desktop', 'legacy-app-id', null], ['other.desktop', null, null], 'auto-edit'), 'auto-edit');
+    assert.equal(stored[0].preset, 'auto');
+    assert.equal(stored[0].slotCount, 3);
+    assert.deepEqual(Array.from(stored[0].apps), ['other.desktop', 'legacy-app-id', null]);
+    assert.deepEqual(Array.from(stored[0].pinned), ['other.desktop', null, null]);
+    assert.deepEqual(h.frame(), before);
+});
+
 test('replacing a saved layout requires its ID and preserves its position', () => {
     const h = harness(), app = h.app;
     app.savedLayouts = [

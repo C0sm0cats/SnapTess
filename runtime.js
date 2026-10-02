@@ -736,11 +736,15 @@ export default class SnapTess extends Extension {
         return id;
     }
     saveNewLayout(name, preset, apps, pinned, replaceId = null, tiles = undefined) {
-        const count = capacity(preset, tiles);
-        if (preset === 'auto' || !(PRESETS.some(([id]) => id === preset) || (preset === 'custom' && validCustomTiles(tiles))) ||
+        const count = preset === 'auto' && Array.isArray(apps) ? apps.length : capacity(preset, tiles);
+        const editingExisting = this.savedLayouts.some(item => item.id === replaceId);
+        const editingAuto = preset === 'auto' && this.savedLayouts.some(item => item.id === replaceId && item.preset === 'auto');
+        if ((preset === 'auto' && !editingAuto) || count < 1 || count > 30 ||
+            !(PRESETS.some(([id]) => id === preset) || (preset === 'custom' && validCustomTiles(tiles))) ||
             !Array.isArray(apps) || !Array.isArray(pinned) || apps.length !== count ||
             pinned.length !== count || apps.some(id => id !== null &&
-                (typeof id !== 'string' || !id.endsWith('.desktop'))) ||
+                (typeof id !== 'string' || !id.length || id.length > 256 ||
+                    (!editingExisting && !id.endsWith('.desktop')))) ||
             (!replaceId && new Set(apps.filter(Boolean)).size !== apps.filter(Boolean).length) ||
             pinned.some((id, index) => id !== null && id !== apps[index])) return false;
         return this.saveLayout(name, preset, apps, pinned, replaceId, tiles);
