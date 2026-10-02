@@ -73,6 +73,12 @@ All shortcuts can be changed or disabled in Preferences. Super is usually the Wi
 
 **Swap mode:** Ctrl+Alt+S starts a mode in which plain arrow keys exchange window positions. Enter (or Ctrl+Alt+S again) keeps the changes; Escape cancels them. Use directional focus to choose where to type and swap mode to rearrange windows.
 
+## Appearance preferences
+
+- **Make room:** keep one common screen margin or enable separate top, right, bottom and left margins. Window spacing controls the gaps between tiles independently. The live preview reflects these settings.
+- **Focus outline:** follow the GNOME accent or choose a custom color, set thickness from 1 to 6 pixels, and choose a plain outline or subtle halo. Each corner continues to follow the window shape.
+- **Animations:** choose Fast, Normal, Slow or a custom base duration (40–500 ms), with ease out, linear or ease in and out motion. These settings affect guides, focus effects, Studio and space transitions; native window placement stays immediate. Disable animations with “Animate placement guides”.
+
 ## How spaces and profiles work
 
 Spaces are **session-local window groups**, not replacement GNOME workspaces. Each native workspace has its own three groups per display. Windows opened in a group belong to that group. Manually opening a parked window from the dock brings it into the current group. Windows you minimized yourself remain minimized when switching groups.

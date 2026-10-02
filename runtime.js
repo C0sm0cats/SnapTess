@@ -1,3 +1,4 @@
+import {paddingOptions, animationDuration, borderOptions} from './lib/appearance.js';
 import Clutter from 'gi://Clutter';
 import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
@@ -17,7 +18,7 @@ import {LayoutSwitcher} from './lib/layout-switcher.js';
 import {WindowBorder} from './lib/window-border.js';
 import {radiusFromPixels, radiusStyle, plausibleWindowRadius, visualFrameRect} from './lib/window-radius.js';
 
-const RUNTIME_REVISION = 54;
+const RUNTIME_REVISION = 55;
 const RESTORE_STABILIZE_MS = 1400;
 const RESTORE_QUIET_MS = 120;
 const MAX_RESTORE_MOVES = 8;
@@ -229,6 +230,8 @@ export default class SnapTess extends Extension {
 
     settingsChanged(key) {
         if (key === 'preview-state') return;
+        if (key === 'active-border' || key.startsWith('border-')) { this.updateBorder(); return; }
+        if (key === 'animations' || key.startsWith('animation-')) return;
         if (key === 'profiles') {
             const value = this.settings.get_string('profiles');
             this.loadProfiles();
@@ -238,6 +241,14 @@ export default class SnapTess extends Extension {
         }
         if (key === 'saved-layouts') { this.loadSavedLayouts(); return; }
         this.schedule(true);
+    }
+
+    visualDuration(base = VISUAL.quick) { return animationDuration(this.settings, base); }
+
+    visualMode() {
+        return ({linear: Clutter.AnimationMode.LINEAR,
+            'ease-in-out': Clutter.AnimationMode.EASE_IN_OUT_QUAD})[this.settings.get_string('animation-curve')]
+            ?? Clutter.AnimationMode.EASE_OUT_QUAD;
     }
 
     later(ms, callback) {
@@ -870,7 +881,7 @@ export default class SnapTess extends Extension {
     }
     options(monitor, space = this.activeSpace(monitor)) {
         return {preset: this.profiles[this.profileKey(monitor, space)]?.preset ?? 'auto',
-            gap: this.settings.get_int('gap'), padding: this.settings.get_int('padding'),
+            gap: this.settings.get_int('gap'), padding: paddingOptions(this.settings),
             ratio: this.settings.get_double('master-ratio')};
     }
     slotRects(monitor, count, space = this.activeSpace(monitor)) {
@@ -1662,7 +1673,7 @@ export default class SnapTess extends Extension {
             this.swapGuideTimer = 0;
             for (const actor of [this.swapFromGuide, this.swapToGuide, this.swapArrow]) {
                 if (this.settings.get_boolean('animations'))
-                    actor.ease({opacity: 0, duration: VISUAL.quick, onComplete: () => { actor.hide(); actor.opacity = 255; }});
+                    actor.ease({opacity: 0, duration: this.visualDuration(VISUAL.quick), mode: this.visualMode(), onComplete: () => { actor.hide(); actor.opacity = 255; }});
                 else actor.hide();
             }
         });
@@ -1672,7 +1683,7 @@ export default class SnapTess extends Extension {
         actor.set_position(rect.x, rect.y); actor.set_size(rect.width, rect.height); actor.show();
         if (appearing && this.settings.get_boolean('animations')) {
             actor.opacity = 0;
-            actor.ease({opacity: 255, duration: VISUAL.quick, mode: Clutter.AnimationMode.EASE_OUT_QUAD});
+            actor.ease({opacity: 255, duration: this.visualDuration(VISUAL.quick), mode: this.visualMode()});
         } else if (appearing) actor.opacity = 255;
     }
     invalidateWindowRadius(w, retry = false) {
@@ -1828,7 +1839,7 @@ export default class SnapTess extends Extension {
         this.motionGuides.add(guide);
         if (record) record.motionGuide = guide;
         guide.ease({x: to.x, y: to.y, width: to.width, height: to.height, opacity: 0,
-            duration: VISUAL.move, mode: Clutter.AnimationMode.EASE_OUT_QUAD, onComplete: () => {
+            duration: this.visualDuration(VISUAL.move), mode: this.visualMode(), onComplete: () => {
                 this.motionGuides.delete(guide);
                 if (record?.motionGuide === guide) record.motionGuide = null;
                 guide.destroy();
@@ -1863,7 +1874,7 @@ export default class SnapTess extends Extension {
                 return;
             }
         }
-        const borderColor = this.accentColor();
+        const outline = borderOptions(this.settings, this.accentColor());
         const swapping = this.swapMode && this.swapWindow === w;
         const scale = this.windowActor(w)?.get_scale()?.[0] ?? 1;
         const newFocus = this.borderFocusWindow !== w;
@@ -1872,17 +1883,17 @@ export default class SnapTess extends Extension {
             this.border.remove_all_transitions();
             if (newFocus) this.border.opacity = this.settings.get_boolean('animations') ? 0 : swapping ? 255 : 205;
         }
-        this.border.setOutline(borderColor, record.windowRadius, scale);
-        this.border.setFrame(this.visualWindowRect(w), this.borderMonitorScale(w), swapping);
+        this.border.setOutline(outline.color, record.windowRadius, scale);
+        this.border.setFrame(this.visualWindowRect(w), this.borderMonitorScale(w), swapping, outline);
         this.borderFocusWindow = w;
         this.borderSwapActive = swapping;
         if ((newFocus || modeChanged) && this.settings.get_boolean('animations'))
-            this.border.ease({opacity: swapping ? 255 : newFocus ? 255 : 205, duration: VISUAL.quick,
-                mode: Clutter.AnimationMode.EASE_OUT_QUAD,
+            this.border.ease({opacity: swapping ? 255 : newFocus ? 255 : 205, duration: this.visualDuration(VISUAL.quick),
+                mode: this.visualMode(),
                 onComplete: () => {
                     if (newFocus && this.borderFocusWindow === w && !this.borderSwapActive)
-                        this.border.ease({opacity: 205, duration: VISUAL.quick,
-                            mode: Clutter.AnimationMode.EASE_OUT_QUAD});
+                        this.border.ease({opacity: 205, duration: this.visualDuration(VISUAL.quick),
+                            mode: this.visualMode()});
                 }});
         else this.border.opacity = swapping ? 255 : 205;
         this.stackWindowOverlays(w);
@@ -1916,8 +1927,8 @@ export default class SnapTess extends Extension {
         if (!this.windowActions.visible || !this.settings.get_boolean('animations')) {
             this.windowActions.hide(); this.showWindowActionHandle(); return;
         }
-        this.windowActions.ease({opacity: 0, translation_x: -8, duration: 120,
-            mode: Clutter.AnimationMode.EASE_OUT_QUAD, onComplete: () => {
+        this.windowActions.ease({opacity: 0, translation_x: -8, duration: this.visualDuration(120),
+            mode: this.visualMode(), onComplete: () => {
                 this.windowActions.hide(); this.windowActions.opacity = 255; this.windowActions.translation_x = 0;
                 this.showWindowActionHandle(true);
             }});
@@ -1983,7 +1994,7 @@ export default class SnapTess extends Extension {
         this.windowActionHandle.show();
         if (animate && this.settings.get_boolean('animations')) {
             this.windowActionHandle.opacity = 0;
-            this.windowActionHandle.ease({opacity: 255, duration: 120, mode: Clutter.AnimationMode.EASE_OUT_QUAD});
+            this.windowActionHandle.ease({opacity: 255, duration: this.visualDuration(120), mode: this.visualMode()});
         } else this.windowActionHandle.opacity = 255;
     }
     showWindowActionTooltip(button) {
@@ -2036,8 +2047,8 @@ export default class SnapTess extends Extension {
         if (appearing && this.settings.get_boolean('animations')) {
             this.windowActions.opacity = 0;
             this.windowActions.translation_x = -8;
-            this.windowActions.ease({opacity: 255, translation_x: 0, duration: 140,
-                mode: Clutter.AnimationMode.EASE_OUT_QUAD});
+            this.windowActions.ease({opacity: 255, translation_x: 0, duration: this.visualDuration(140),
+                mode: this.visualMode()});
         }
         this.scheduleWindowActionsHide();
     }
@@ -2235,23 +2246,23 @@ export default class SnapTess extends Extension {
         if (!transition) return;
         const {layer, backdrop, osd, clones, direction, shift} = transition;
         const animated = this.settings.get_boolean('animations');
-        const duration = animated ? VISUAL.space : 0;
+        const duration = animated ? this.visualDuration(VISUAL.space) : 0;
         if (animated) {
             backdrop.opacity = 0;
-            backdrop.ease({opacity: 150, duration: 90, mode: Clutter.AnimationMode.EASE_OUT_QUAD});
+            backdrop.ease({opacity: 150, duration: this.visualDuration(90), mode: this.visualMode()});
             osd.opacity = 0;
-            osd.ease({opacity: 255, duration: VISUAL.quick,
-                mode: Clutter.AnimationMode.EASE_OUT_QUAD});
+            osd.ease({opacity: 255, duration: this.visualDuration(VISUAL.quick),
+                mode: this.visualMode()});
         } else { backdrop.opacity = 0; for (const {clone} of clones) clone.opacity = 0; }
         if (animated) for (const {clone, rect, entering} of clones) {
             clone.ease({x: entering ? rect.x : rect.x - direction * shift, opacity: entering ? 255 : 0,
-                duration, mode: Clutter.AnimationMode.EASE_OUT_QUAD});
+                duration, mode: this.visualMode()});
         }
-        if (animated) this.later(VISUAL.space, () => {
+        if (animated) this.later(duration, () => {
             if (!this.spaceTransitions.has(layer)) return;
-            backdrop.ease({opacity: 0, duration: 110, mode: Clutter.AnimationMode.EASE_OUT_QUAD});
-            for (const {clone} of clones) clone.ease({opacity: 0, duration: 110,
-                mode: Clutter.AnimationMode.EASE_OUT_QUAD});
+            backdrop.ease({opacity: 0, duration: this.visualDuration(110), mode: this.visualMode()});
+            for (const {clone} of clones) clone.ease({opacity: 0, duration: this.visualDuration(110),
+                mode: this.visualMode()});
         });
         this.later(VISUAL.osd, () => {
             if (!this.spaceTransitions.has(layer)) return;
@@ -2260,8 +2271,8 @@ export default class SnapTess extends Extension {
                 this.spaceDots.delete(layer._snaptessDot);
                 layer.destroy(); this.updatePinnedPlaceholders();
             };
-            if (animated) osd.ease({opacity: 0, duration: 100,
-                mode: Clutter.AnimationMode.EASE_OUT_QUAD, onComplete: finish});
+            if (animated) osd.ease({opacity: 0, duration: this.visualDuration(100),
+                mode: this.visualMode(), onComplete: finish});
             else finish();
         });
     }

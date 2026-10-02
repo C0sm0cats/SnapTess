@@ -35,8 +35,54 @@ function visit(widget) {
 }
 visit(window);
 if (entries.length !== 1) throw new Error(`Only application search should be an entry row, got ${entries.length}`);
-if (previews.length !== 1 || resetButtons.length !== 7 || shortcutLabels.length !== 15 || recordButtons.length !== 15 || editButtons.length !== 15)
+if (previews.length !== 1 || resetButtons.length !== 19 || shortcutLabels.length !== 15 || recordButtons.length !== 15 || editButtons.length !== 15)
     throw new Error('Live layout preview or native shortcut controls are missing');
+const edgeToggle = rows.find(row => row.title === 'Separate screen edges');
+const commonMargin = spins.find(row => row.title === 'Screen edge spacing');
+settings.set_int('padding', 23);
+edgeToggle.active = true;
+for (const edge of ['top', 'right', 'bottom', 'left']) {
+    const row = spins.find(row => row.title === `${edge[0].toUpperCase()}${edge.slice(1)} edge spacing`);
+    if (!row.visible || row.value !== 23) throw new Error('Independent margins did not inherit the common value');
+    row.value = 17;
+    if (settings.get_int(`padding-${edge}`) !== 17) throw new Error('Edge margin did not persist');
+}
+if (commonMargin.sensitive) throw new Error('Common margin should be disabled with separate edges');
+edgeToggle.active = false;
+edgeToggle.active = true;
+if (settings.get_int('padding-top') !== 17) throw new Error('Toggling separate edges lost custom margins');
+settings.reset('independent-padding'); settings.reset('padding');
+for (const edge of ['top', 'right', 'bottom', 'left']) settings.reset(`padding-${edge}`);
+const colorRow = rows.find(row => row.title === 'Focus color');
+settings.set_boolean('border-custom-color', true);
+if (!colorRow.sensitive) throw new Error('Custom color picker should be enabled');
+settings.set_string('border-color', '#ff8800');
+let picker;
+function findPicker(widget) {
+    if (widget instanceof Gtk.ColorDialogButton) picker = widget;
+    for (let child = widget.get_first_child(); child; child = child.get_next_sibling()) findPicker(child);
+}
+findPicker(colorRow);
+if (!picker || Math.abs(picker.rgba.green - 136 / 255) > 0.01) throw new Error('Color picker did not follow settings');
+const green = new Gdk.RGBA(); green.parse('#00ff00'); picker.rgba = green;
+if (settings.get_string('border-color') !== '#00ff00') throw new Error('Color picker did not save RGB');
+for (const key of ['border-custom-color', 'border-color']) settings.reset(key);
+const thickness = spins.find(row => row.title === 'Outline thickness');
+thickness.value = 6;
+if (settings.get_int('border-width') !== 6) throw new Error('Outline thickness did not persist');
+settings.reset('border-width');
+const outlineStyle = rows.find(row => row.title === 'Outline style'); outlineStyle.selected = 1;
+if (settings.get_string('border-style') !== 'halo') throw new Error('Halo selection did not persist');
+settings.reset('border-style');
+const speed = rows.find(row => row.title === 'Animation speed');
+const duration = spins.find(row => row.title === 'Animation duration');
+speed.selected = 3; duration.value = 320;
+if (!duration.visible || settings.get_string('animation-speed') !== 'custom' || settings.get_int('animation-duration') !== 320)
+    throw new Error('Custom animation duration did not persist');
+const curve = rows.find(row => row.title === 'Animation curve'); curve.selected = 2;
+if (settings.get_string('animation-curve') !== 'ease-in-out') throw new Error('Animation curve did not persist');
+for (const key of ['animation-speed', 'animation-duration', 'animation-curve']) settings.reset(key);
+if (duration.visible) throw new Error('Custom duration should be hidden in Normal mode');
 function shortcutEditor(title) {
     const row = rows.find(item => item.title === title);
     const button = editButtons.find(item => item.tooltip_text === `Edit ${title.toLowerCase()}`);

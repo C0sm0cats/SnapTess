@@ -19,6 +19,9 @@ export async function run() {
     assert(app, 'runtime loaded');
     for (let i = 0; i < 15; i++) await Scripting.createTestWindow({width: 320, height: 240});
     await Scripting.waitTestWindows(); await Scripting.sleep(400);
+    app.settings.set_boolean('independent-padding', true);
+    for (const [edge, value] of [['top', 7], ['right', 19], ['bottom', 31], ['left', 43]])
+        app.settings.set_int(`padding-${edge}`, value);
     app.setRunning(true); await Scripting.sleep(500);
     const device = Clutter.get_default_backend().get_default_seat()
         .create_virtual_device(Clutter.InputDeviceType.POINTER_DEVICE);
@@ -85,6 +88,12 @@ export async function run() {
             const saved = app.slotRects(0, slots.length);
             assert(saved.every((r, i) => keys.every(key => r[key] === last[i][key])), 'release preserves displayed geometry');
             assert(slots.every(window => !app.records.get(window).floating), 'every window stays tiled');
+            const area = w.get_workspace().get_work_area_for_monitor(0);
+            assert(Math.min(...saved.map(r => r.x)) === area.x + 43 &&
+                Math.min(...saved.map(r => r.y)) === area.y + 7 &&
+                Math.max(...saved.map(r => r.x + r.width)) === area.x + area.width - 19 &&
+                Math.max(...saved.map(r => r.y + r.height)) === area.y + area.height - 31,
+                'native linked resizing preserves independent outer margins');
         }
         assert(!Main.overview.visible, 'desktop remains visible during native resizing');
         assert(!failure, failure);

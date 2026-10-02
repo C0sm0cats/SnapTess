@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
+import * as appearance from '../lib/appearance.js';
 import * as geometry from '../lib/layout.js';
 import {radiusStyle} from '../lib/window-radius.js';
 
@@ -46,7 +47,7 @@ function harness(options = {}) {
         move_frame(user, x, y) { userOps.push(user); requests.push({type: 'move', x, y}); },
     };
     const Runtime = vm.runInNewContext(source, {
-        ...geometry, radiusStyle, Extension: class {}, console, TextDecoder,
+        ...geometry, ...appearance, radiusStyle, Extension: class {}, console, TextDecoder,
         Date: class extends Date { static now() { return now; } },
         GLib: {SOURCE_CONTINUE: true, SOURCE_REMOVE: false, file_get_contents(path) {
             if (path === `/proc/${options.launchPid ?? 979491}/environ` && options.launchEnvironment)
@@ -1465,4 +1466,17 @@ test('moving to another slot commits the checkpoint captured before dragging', (
     assert.equal(h.app.groups.get('workspace')[1], null);
     assert.equal(h.app.groups.get('workspace')[2], h.w);
     assert.equal(tiles, 1);
+});
+
+test('appearance changes update the border without rearranging windows', () => {
+    const {app} = harness();
+    let borders = 0, arrangements = 0;
+    app.updateBorder = () => borders++;
+    app.schedule = () => arrangements++;
+    for (const key of ['active-border', 'border-color', 'border-width', 'border-style', 'border-custom-color']) app.settingsChanged(key);
+    for (const key of ['animations', 'animation-speed', 'animation-duration', 'animation-curve']) app.settingsChanged(key);
+    assert.equal(borders, 5);
+    assert.equal(arrangements, 0);
+    app.settingsChanged('padding-left');
+    assert.equal(arrangements, 1);
 });
