@@ -91,11 +91,13 @@ Layouts and application order are saved by native workspace index, monitor conne
 
 1. Open **Layout Studio → New layout → Custom**. Start with one tile covering the available space.
 2. Select a tile and use **Split vertically** (left/right) or **Split horizontally** (top/bottom). Drag the green divider handles, or edit **X, Y, Width and Height** in percent; press Enter or leave the field to commit. Shared edges adjust neighboring tiles, keeping complete coverage without overlaps. Outer edges remain fixed. Tiles have a minimum width and height of 3%, with up to 30 tiles.
-3. Select the first tile, click **Merge tiles**, then click an orange neighbor to combine them into one rectangle. Only neighbors whose union forms a rectangle can be merged. If both tiles have an app assigned, choose which app to keep. **Undo** restores geometry, assignments and pins.
+3. Select the first tile, click **Merge tiles**, then click an orange neighbor to combine them into one rectangle. Only neighbors whose union forms a rectangle can be merged. If both tiles have an app assigned, choose which app to keep. **Undo** and **Redo** navigate geometry, assignment and pin changes. A new edit after Undo clears Redo.
 4. Choose an installed app for each tile, leave tiles empty or pin assignments, then **Save layout…**. Saving does not move windows or launch apps. Select **Edit layout** in a saved template's preview to change it later.
 5. Use **Restore in this space** or the quick layout switcher to apply the template. Custom geometry is included in JSON export/import and scales to the destination display, with your normal margins and gaps.
 
 Custom layouts retain directional focus, swap and linked resizing. **Arrange again** resets temporary divider changes to the custom template's saved proportions. If more windows need placement than the custom layout has tiles, the existing Auto fallback arranges them; the custom definition is retained. To change the base geometry permanently, edit and restore the named layout.
+
+Studio separates **Adaptive layout**, which adapts to the number of windows, from the fixed **Layout** choices. Selecting a fixed layout turns off adaptive mode; select Adaptive layout again to resume adaptive placement.
 
 Studio dims presets with too few tiles for the current draft. Selecting one explains the required capacity without changing the draft. A new layout needs enough tiles to keep every assigned app in its chosen position.
 

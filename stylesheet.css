@@ -105,8 +105,6 @@
 .snaptess-chip.unavailable { background-color: #1a232b; border-color: #303e45; color: #82939a; }
 .snaptess-chip.unavailable:hover, .snaptess-chip.unavailable:focus { background-color: #29343b; border-color: #f3bd72; color: #f3bd72; }
 .popup-menu-item.unavailable { color: #82939a; }
-.snaptess-context-label { spacing: 6px; }
-.snaptess-dirty-dot { width: 6px; height: 6px; border-radius: 3px; background-color: #f3bd72; }
 .snaptess-canvas { background-color: #10161d; border-radius: 17px; border: 1px solid #2d3b44; }
 .snaptess-slot { background-color: #26343e; border: 1px solid #435761; border-radius: 12px; padding: 4px; }
 .snaptess-slot:hover, .snaptess-slot:focus { background-color: #314d4b; border-color: #8ce8c3; }
@@ -122,6 +120,9 @@
 .snaptess-slot-content.compact { spacing: 2px; }
 .snaptess-preview-heading { spacing: 5px; }
 .snaptess-save-action { spacing: 6px; }
+.snaptess-layout-toolbar { spacing: 10px; }
+.snaptess-mode-controls { spacing: 8px; margin-right: 8px; }
+.snaptess-header .snaptess-chip:insensitive { color: #667980; background-color: #1a232b; }
 .snaptess-slot-content.dense { spacing: 5px; }
 .snaptess-slot-content.dense .snaptess-slot-number { font-size: 10px; }
 .snaptess-slot-content.dense .snaptess-app-name, .snaptess-slot-content.dense .snaptess-reserved-name,
