@@ -120,10 +120,11 @@ settings.reset('preview-state');
 if (!previewRow.subtitle.includes('Start arranging windows')) throw new Error('Paused preview remained visible');
 for (const [key, title, changed] of [['gap', 'Window spacing', 19], ['padding', 'Screen edge spacing', 21]]) {
     const button = resetButtons.find(item => item.tooltip_text === `Reset ${title} to default`);
+    if (!button.visible) throw new Error('Reset buttons must reserve their position before editing');
     settings.set_int(key, changed);
-    if (!button.visible) throw new Error(`${title} reset did not appear`);
+    if (!button.sensitive) throw new Error(`${title} reset did not appear`);
     button.emit('clicked');
-    if (settings.get_int(key) !== settings.get_default_value(key).get_int32() || button.visible)
+    if (settings.get_int(key) !== settings.get_default_value(key).get_int32() || button.sensitive)
         throw new Error(`${title} did not reset independently`);
 }
 for (const [key, title] of [['active-border', 'Highlight the focused window'],
@@ -131,9 +132,9 @@ for (const [key, title] of [['active-border', 'Highlight the focused window'],
     ['compact-close', 'Close gaps when closing']]) {
     const button = resetButtons.find(item => item.tooltip_text === `Reset ${title} to default`);
     settings.set_boolean(key, !settings.get_default_value(key).get_boolean());
-    if (!button.visible) throw new Error(`${title} reset did not appear`);
+    if (!button.sensitive) throw new Error(`${title} reset did not appear`);
     button.emit('clicked');
-    if (settings.get_boolean(key) !== settings.get_default_value(key).get_boolean() || button.visible)
+    if (settings.get_boolean(key) !== settings.get_default_value(key).get_boolean() || button.sensitive)
         throw new Error(`${title} did not reset independently`);
 }
 const ratio = spins.find(row => row.title === 'Focus column width');
@@ -146,9 +147,9 @@ if (Math.abs(settings.get_double('master-ratio') - 0.65) > 0.001)
 settings.set_double('master-ratio', 0.55);
 if (ratio.value !== 55) throw new Error('Focus ratio did not follow an external settings change');
 const ratioReset = resetButtons.find(button => button.tooltip_text === 'Reset Focus column width to default');
-if (!ratioReset.visible) throw new Error('Focus ratio reset did not appear');
+if (!ratioReset.sensitive) throw new Error('Focus ratio reset did not appear');
 ratioReset.emit('clicked');
-if (Math.abs(settings.get_double('master-ratio') - settings.get_default_value('master-ratio').get_double()) > 0.001 || ratioReset.visible)
+if (Math.abs(settings.get_double('master-ratio') - settings.get_default_value('master-ratio').get_double()) > 0.001 || ratioReset.sensitive)
     throw new Error('Focus ratio did not reset to its default');
 settings.set_double('master-ratio', originalRatio);
 const toggle = shortcutEditor('Toggle tiling');

@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import vm from 'node:vm';
 import * as appearance from '../lib/appearance.js';
 import * as geometry from '../lib/layout.js';
-import {radiusStyle} from '../lib/window-radius.js';
+import {radiusStyle, radiusFromPixels, plausibleWindowRadius} from '../lib/window-radius.js';
 
 // Execute the actual runtime methods with asynchronous client commits and a
 // deterministic clock. GI imports alone are replaced; no duplicate restore code.
@@ -47,7 +47,7 @@ function harness(options = {}) {
         move_frame(user, x, y) { userOps.push(user); requests.push({type: 'move', x, y}); },
     };
     const Runtime = vm.runInNewContext(source, {
-        ...geometry, ...appearance, radiusStyle, Extension: class {}, console, TextDecoder,
+        ...geometry, ...appearance, radiusStyle, radiusFromPixels, plausibleWindowRadius, Extension: class {}, console, TextDecoder,
         Date: class extends Date { static now() { return now; } },
         GLib: {SOURCE_CONTINUE: true, SOURCE_REMOVE: false, file_get_contents(path) {
             if (path === `/proc/${options.launchPid ?? 979491}/environ` && options.launchEnvironment)
@@ -62,7 +62,8 @@ function harness(options = {}) {
             path_get_basename: path => path.split('/').at(-1),
             uuid_string_random: () => 'saved-layout-id'},
         Main: shellMain,
-        Shell: {AppSystem: {get_default: () => ({get_installed: () => options.installedApps ?? [], lookup_app: id =>
+        Gio: {MemoryOutputStream: {new_resizable: () => ({close() {}})}},
+        Shell: {Screenshot: options.screenshot, AppSystem: {get_default: () => ({get_installed: () => options.installedApps ?? [], lookup_app: id =>
             id === 'test.desktop' || id === 'pdf4teachers.desktop'
                 ? {get_name: () => id === 'pdf4teachers.desktop' ? 'PDF4Teachers' : 'Test',
                     get_app_info: () => ({launch: () => { launches.push(id); return true; }})} :
@@ -1479,4 +1480,27 @@ test('appearance changes update the border without rearranging windows', () => {
     assert.equal(arrangements, 0);
     app.settingsChanged('padding-left');
     assert.equal(arrangements, 1);
+});
+
+test('window radius readback includes the whole HiDPI texture on both sides', async () => {
+    const calls = [], width = 512, height = 800, stride = width * 4;
+    const pixels = new Uint8Array(height * stride);
+    for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) {
+        if (y < 24 && (x < 24 || x >= width - 24)) continue;
+        pixels[y * stride + x * 4 + 3] = 255;
+    }
+    const pixbuf = {get_pixels: () => pixels, get_rowstride: () => stride,
+        get_n_channels: () => 4, get_width: () => width, get_height: () => height, get_has_alpha: () => true};
+    const {app, actor, w} = harness({screenshot: {async composite_to_stream(...args) { calls.push(args); return pixbuf; }}});
+    actor.visible = true;
+    actor.get_scale = () => [1, 1];
+    actor.get_resource_scale = () => 2;
+    actor.paint_to_content = () => ({get_texture: () => ({})});
+    app.windowEffectActive = () => false;
+    app.visualWindowRect = () => ({x: 100, y: 50, width: 600, height: 400});
+    app.radiusReadbackReady = true;
+    const radius = await app.measureWindowRadius(w);
+    assert.deepEqual({...radius}, {top: 12, bottom: 0, topRight: 12, bottomRight: 0});
+    assert.equal(calls.length, 2);
+    assert(calls.every(args => args[3] === -1 && args[4] === -1));
 });

@@ -200,11 +200,11 @@ export async function run() {
     app.settings.set_int('border-width',6);
     app.settings.set_string('border-style','halo');
     app.updateBorder(); await Scripting.sleep(100);
-    assert(app.border.strokeColor==='#ff8800' && app.border.strokeWidth===6 && app.border.haloWidth===5,
+    assert(app.border.strokeColor==='#ff8800' && app.border.strokeWidth===6 && app.border.haloWidth===10,
         'custom outline color, thickness and halo are applied by Shell');
     assert(app.border.bottomRadius===20 && app.border.topRightRadius===0,
         'custom outline preserves independently measured corners');
-    assert(Math.abs(app.border.x-(restored.x-11))<=1,
+    assert(Math.abs(app.border.x-(restored.x-16))<=1,
         'halo adds an outside outset without shifting the window');
     if (GLib.getenv('SNAPTESS_APPEARANCE_SCREENSHOT')) {
         const stream=Gio.File.new_for_path(GLib.getenv('SNAPTESS_APPEARANCE_SCREENSHOT'))

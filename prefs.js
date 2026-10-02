@@ -35,10 +35,10 @@ export default class SnapTessPreferences extends ExtensionPreferences {
                 tooltip_text: `Reset ${row.title} to default`});
             button.add_css_class('flat');
             button.connect('clicked', () => settings.reset(key));
-            const update = () => { button.visible = !settings.get_value(key).equal(settings.get_default_value(key)); };
+            const update = () => { button.sensitive = !settings.get_value(key).equal(settings.get_default_value(key)); };
             const changed = settings.connect(`changed::${key}`, update);
             window.connect('destroy', () => settings.disconnect(changed));
-            row.add_suffix(button);
+            row.add_prefix(button);
             update();
         };
         const watch = (key, callback) => {

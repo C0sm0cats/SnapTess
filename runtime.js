@@ -18,7 +18,7 @@ import {LayoutSwitcher} from './lib/layout-switcher.js';
 import {WindowBorder} from './lib/window-border.js';
 import {radiusFromPixels, radiusStyle, plausibleWindowRadius, visualFrameRect} from './lib/window-radius.js';
 
-const RUNTIME_REVISION = 55;
+const RUNTIME_REVISION = 56;
 const RESTORE_STABILIZE_MS = 1400;
 const RESTORE_QUIET_MS = 120;
 const MAX_RESTORE_MOVES = 8;
@@ -1773,11 +1773,13 @@ export default class SnapTess extends Extension {
             if (!texture) return null;
             const stream = Gio.MemoryOutputStream.new_resizable();
             try {
+                // Returned textures can be clipped or rendered at a different
+                // resource scale; logical capture dimensions are not pixel dimensions.
                 const pixbuf = await Shell.Screenshot.composite_to_stream(
-                    texture, 0, 0, width, height, 1, null, 0, 0, 1, stream);
+                    texture, 0, 0, -1, -1, 1, null, 0, 0, 1, stream);
                 return plausibleWindowRadius(radiusFromPixels(pixbuf.get_pixels(), pixbuf.get_rowstride(),
                     pixbuf.get_n_channels(), pixbuf.get_width(), pixbuf.get_height(),
-                    pixbuf.get_has_alpha(), side));
+                    pixbuf.get_has_alpha(), side, actor.get_resource_scale()));
             } finally { stream.close(null); }
         };
         const left = await measureSide('left', frame.x);
