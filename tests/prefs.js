@@ -116,7 +116,7 @@ settings.set_string('preview-state', JSON.stringify({running: true, workspace: 1
     preset: 'auto', count: 3, occupied: [0, 2], focused: 0, width: 1920, height: 1080}));
 if (!previewRow.subtitle.includes('Workspace 2 · Display 1 · Space 3 · Focus'))
     throw new Error('Preview did not follow the active space and layout');
-const focusRatio = spins.find(row => row.title === 'Focus column width');
+const focusRatio = spins.find(row => row.title === 'Focus layout: large tile width');
 if (!focusRatio.visible) throw new Error('Focus width should appear for Auto with three tiles');
 for (const [preset, count, visible] of [['auto', 4, false], ['master', 2, true],
     ['master', 4, false], ['split', 2, false], ['5x3', 15, false]]) {
@@ -146,7 +146,7 @@ for (const [key, title] of [['active-border', 'Highlight the focused window'],
     if (settings.get_boolean(key) !== settings.get_default_value(key).get_boolean() || button.sensitive)
         throw new Error(`${title} did not reset independently`);
 }
-const ratio = spins.find(row => row.title === 'Focus column width');
+const ratio = spins.find(row => row.title === 'Focus layout: large tile width');
 if (!ratio || ratio.value !== Math.round(settings.get_double('master-ratio') * 100))
     throw new Error('Focus ratio is not presented as a percentage');
 const originalRatio = settings.get_double('master-ratio');
@@ -155,7 +155,7 @@ if (Math.abs(settings.get_double('master-ratio') - 0.65) > 0.001)
     throw new Error('Focus ratio percentage was not saved as a fraction');
 settings.set_double('master-ratio', 0.55);
 if (ratio.value !== 55) throw new Error('Focus ratio did not follow an external settings change');
-const ratioReset = resetButtons.find(button => button.tooltip_text === 'Reset Focus column width to default');
+const ratioReset = resetButtons.find(button => button.tooltip_text === 'Reset Focus layout: large tile width to default');
 if (!ratioReset.sensitive) throw new Error('Focus ratio reset did not appear');
 ratioReset.emit('clicked');
 if (Math.abs(settings.get_double('master-ratio') - settings.get_default_value('master-ratio').get_double()) > 0.001 || ratioReset.sensitive)

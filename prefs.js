@@ -86,7 +86,7 @@ export default class SnapTessPreferences extends ExtensionPreferences {
             // The common margin is retained when switching back.
             commonPaddingRow.sensitive = !enabled;
         });
-        const ratio = new Adw.SpinRow({title: 'Focus column width', subtitle: 'Width of the large left tile in the Focus layout (%)', digits: 0,
+        const ratio = new Adw.SpinRow({title: 'Focus layout: large tile width', subtitle: 'Percentage of the available width reserved for the left tile', digits: 0,
             adjustment: new Gtk.Adjustment({lower: 25, upper: 75, step_increment: 5, page_increment: 5}),
             value: Math.round(settings.get_double('master-ratio') * 100)});
         ratio.connect('notify::value', () => settings.set_double('master-ratio', ratio.value / 100));
