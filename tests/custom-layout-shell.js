@@ -21,6 +21,16 @@ export async function run() {
     const windows = app.windows(0), before = JSON.stringify(app.profiles);
     app.openStudio(); await pause();
     const studio = app.studio;
+    assert(studio.modeControls.visible && studio.automaticButton.has_style_class_name('selected') &&
+        !studio.presets.get_children().some(actor => actor.label === 'Auto'),
+        'Automatic mode is separate from fixed layout choices');
+    if (GLib.getenv('SNAPTESS_MODE_SCREENSHOT')) {
+        const stream = Gio.File.new_for_path(GLib.getenv('SNAPTESS_MODE_SCREENSHOT'))
+            .replace(null, false, Gio.FileCreateFlags.NONE, null);
+        const m = Main.layoutManager.monitors[0];
+        await new Shell.Screenshot().screenshot_area(m.x, m.y, m.width, m.height, stream);
+        stream.close(null);
+    }
     const saveAction = studio.dialog.buttonLayout.get_children().find(actor =>
         actor.accessible_name === 'Save current draft as a named layout');
     assert(saveAction?.get_child().get_children().some(actor => actor instanceof St.Icon),

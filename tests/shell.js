@@ -647,8 +647,8 @@ export async function run() {
     assert(app.studio?.canvas.get_children().length===4,'studio renders slots');
     const initialPreset=app.studio.preset, initialUndo=app.studio.undoStack.length;
     const initialCardWidth=app.studio.canvas.get_first_child().width;
-    assert(app.studio.presets.get_children()[1].reactive &&
-        app.studio.presets.get_children()[1].has_style_class_name('unavailable') &&
+    assert(app.studio.presets.get_children().find(button=>button.label==='Full').reactive &&
+        app.studio.presets.get_children().find(button=>button.label==='Full').has_style_class_name('unavailable') &&
         app.studio.presetStatus.text.includes('4 tiles needed'),
         'Studio marks incompatible presets and explains the minimum capacity');
     app.studio.choosePreset('full');

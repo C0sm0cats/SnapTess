@@ -97,6 +97,8 @@ Layouts and application order are saved by native workspace index, monitor conne
 
 Custom layouts retain directional focus, swap and linked resizing. **Arrange again** resets temporary divider changes to the custom template's saved proportions. If more windows need placement than the custom layout has tiles, the existing Auto fallback arranges them; the custom definition is retained. To change the base geometry permanently, edit and restore the named layout.
 
+Studio separates **Mode → Automatic**, which adapts to the number of windows, from the fixed **Layout** choices. Selecting a fixed layout turns off Automatic mode; select Automatic again to resume adaptive placement.
+
 Studio dims presets with too few tiles for the current draft. Selecting one explains the required capacity without changing the draft. A new layout needs enough tiles to keep every assigned app in its chosen position.
 
 The **quick layout switcher** keeps **Arrange open windows** visible above the saved layouts. Select a saved layout to apply it after reviewing its effects. Escape cancels. Arrange open windows and built-in presets rearrange existing windows without launching apps; the automatic option also brings back windows that a saved layout hid. Other compatible presets are collapsed until opened, and the list indicates how many smaller presets are hidden.
