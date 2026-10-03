@@ -27,7 +27,9 @@ export default class SnapTessPreferences extends ExtensionPreferences {
         const settings = this.getSettings();
         window.set_title('SnapTess Preferences');
         window.set_default_size(660, 720);
-        const page = new Adw.PreferencesPage({title: 'SnapTess', icon_name: 'view-grid-symbolic'});
+        const [, packageBytes] = this.dir.get_child('package.json').load_contents(null);
+        const releaseVersion = JSON.parse(new TextDecoder().decode(packageBytes)).version;
+        const page = new Adw.PreferencesPage({title: `SnapTess v${releaseVersion}`, icon_name: 'view-grid-symbolic'});
         window.add(page);
         const appearance = new Adw.PreferencesGroup({title: 'Make room', description: 'Fine-tune the space around your windows.'});
         page.add(appearance);
