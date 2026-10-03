@@ -19,7 +19,7 @@ import {LayoutSwitcher} from './lib/layout-switcher.js';
 import {WindowBorder} from './lib/window-border.js';
 import {radiusFromPixels, radiusStyle, plausibleWindowRadius, visualFrameRect} from './lib/window-radius.js';
 
-const RUNTIME_REVISION = 73;
+const RUNTIME_REVISION = 81;
 const RESTORE_STABILIZE_MS = 1400;
 const RESTORE_QUIET_MS = 120;
 const MAX_RESTORE_MOVES = 8;
@@ -58,7 +58,7 @@ export default class SnapTess extends Extension {
         this.loadProfiles();
         this.loadSavedLayouts();
         this.deletedLayouts = [];
-        this.pendingLayoutApps = new Map();
+        this.restorePendingLaunches();
         this.pinnedPlaceholders = new Map();
         this.indicator = new PanelMenu.Button(0.0, 'SnapTess');
         this.icon = new Gio.FileIcon({file: this.dir.get_child('icons/snaptess-symbolic.svg')});
@@ -217,7 +217,10 @@ export default class SnapTess extends Extension {
         this.connect(Main.overview, 'showing', () => { this.hideGuides(); this.clearPinnedPlaceholders(); });
         this.connect(Main.overview, 'hidden', () => { this.schedule(false); this.updateBorder(); });
         this.connect(this.settings, 'changed', (_s, key) => this.settingsChanged(key));
-        for (const actor of global.get_window_actors()) this.track(actor.meta_window);
+        for (const actor of global.get_window_actors()) {
+            this.track(actor.meta_window);
+            if (this.records.has(actor.meta_window)) this.claimLayoutWindow(actor.meta_window);
+        }
         this.updatePanelStatus();
         this.refreshAccentStyles();
         this.writeRuntimeStatus();
@@ -902,6 +905,13 @@ export default class SnapTess extends Extension {
         this.launchLayoutApps(missing, monitor, space, workspace);
         return true;
     }
+    restorePendingLaunches() {
+        // Shell's global survives extension reloads, but belongs only to this
+        // Shell process. Keep workspace identities without persisting launches
+        // across login sessions or including them in exported profiles.
+        this.pendingLayoutApps = global._snaptessPendingLayoutApps ?? new Map();
+        global._snaptessPendingLayoutApps = this.pendingLayoutApps;
+    }
     launchLayoutApps(missing, monitor, space, workspace, assignments = []) {
         const appSystem = Shell.AppSystem.get_default();
         const unavailable = [];
@@ -921,6 +931,8 @@ export default class SnapTess extends Extension {
             const info = app?.get_app_info?.();
             if (!info) { unavailable.push(appId); continue; }
             const pending = {monitor, space, workspace, index: assignments.indexOf(appId)};
+            // Keep the requested destination until the window arrives or a
+            // later Studio Apply clears, replaces or resets its assignment.
             this.pendingLayoutApps.set(key, pending);
             try {
                 if (!info.launch([], null)) {
@@ -930,12 +942,6 @@ export default class SnapTess extends Extension {
                 this.pendingLayoutApps.delete(key); unavailable.push(appId);
                 console.warn(`[SnapTess] Could not launch ${appId}: ${error}`);
             }
-            this.later(12000, () => {
-                if (this.pendingLayoutApps.get(key) !== pending) return;
-                this.pendingLayoutApps.delete(key);
-                this.updatePinnedPlaceholders();
-                Main.notify('SnapTess', `${appId} did not open a window. Its tile remains reserved.`);
-            });
         }
         this.updatePinnedPlaceholders();
         if (unavailable.length) Main.notify('SnapTess', `Could not open: ${unavailable.join(', ')}. Their tiles remain reserved.`);
@@ -949,21 +955,26 @@ export default class SnapTess extends Extension {
         const r = this.records.get(w);
         r.space = pending.space; r.floating = false; r.restoreParked = false;
         if (w.get_monitor() !== pending.monitor) w.move_to_monitor(pending.monitor);
-        r.parked = this.activeSpace(pending.monitor) !== pending.space;
+        r.parked = this.running && this.activeSpace(pending.monitor) !== pending.space;
         if (r.parked) w.minimize();
         const targets = pending.targets ?? [pending];
         if (targets.length > 1) {
             r.spaces = new Set(targets.map(target => target.space));
             r.space = r.spaces.has(this.activeSpace(pending.monitor)) ? this.activeSpace(pending.monitor) : pending.space;
-            r.parked = !r.spaces.has(this.activeSpace(pending.monitor));
+            r.parked = this.running && !r.spaces.has(this.activeSpace(pending.monitor));
             if (!r.parked && w.minimized) w.unminimize();
         }
         for (const target of targets) {
             if (!(target.index >= 0)) continue;
-            const slots = this.groups.get(this.key(target.monitor, target.space));
+            const groupKey = this.key(target.monitor, target.space);
+            let slots = this.groups.get(groupKey);
             const profile = this.profiles[this.profileKey(target.monitor, target.space)];
             const normalize = id => id?.toLowerCase().replace(/\.desktop$/i, '');
-            if (slots && normalize(profile?.apps?.[target.index]) === key) {
+            if (normalize(profile?.apps?.[target.index]) === key) {
+                if (!slots) {
+                    slots = Array(Math.max(profile.apps.length, target.index + 1)).fill(null);
+                    this.groups.set(groupKey, slots);
+                }
                 slots[target.index] = w;
                 profile.pendingApps = profile.pendingApps?.filter(id => normalize(id) !== key);
             }
@@ -1286,24 +1297,7 @@ export default class SnapTess extends Extension {
                         entry.window.unminimize();
                         entry.window.activate(global.get_current_time());
                     } else if (entry.state === 'CLOSED' && !this.pendingLayoutApps.has(normalize(entry.id))) {
-                        const info = app?.get_app_info?.();
-                        if (!info) return;
-                        const pending = {monitor: entry.monitor, space: entry.space, workspace};
-                        this.pendingLayoutApps.set(normalize(entry.id), pending);
-                        try {
-                            if (!info.launch([], null)) throw new Error('launch returned false');
-                        } catch (error) {
-                            this.pendingLayoutApps.delete(normalize(entry.id));
-                            Main.notify('SnapTess', `Could not open ${name}`);
-                            console.warn(`[SnapTess] Could not launch ${entry.id}: ${error}`);
-                        }
-                        this.updatePinnedPlaceholders();
-                        this.later(12000, () => {
-                            if (this.pendingLayoutApps.get(normalize(entry.id)) !== pending) return;
-                            this.pendingLayoutApps.delete(normalize(entry.id));
-                            this.updatePinnedPlaceholders();
-                            Main.notify('SnapTess', `${name} did not open a window. Its tile remains reserved.`);
-                        });
+                        this.launchLayoutApps([entry.id], entry.monitor, entry.space, workspace);
                     }
                 });
                 // Keep the card above the desktop background and below real windows.
@@ -2797,7 +2791,9 @@ export default class SnapTess extends Extension {
             if (pending.workspace !== workspace) continue;
             const targets = (pending.targets ?? [{monitor: pending.monitor, space: pending.space, index: pending.index}]).filter(target => {
                 const plan = plans.find(item => item.monitor === target.monitor && item.space === target.space);
-                return !plan || (!plan.reset && (!(target.index >= 0) || normalize(plan.apps?.[target.index]) === id));
+                return !plan || (!plan.reset && (target.index >= 0
+                    ? normalize(plan.apps?.[target.index]) === id
+                    : [...(plan.apps ?? []), ...(plan.pinned ?? [])].some(appId => normalize(appId) === id)));
             });
             if (!targets.length) this.pendingLayoutApps.delete(id);
             else { pending.targets = targets; Object.assign(pending, targets[0]); }
@@ -2882,7 +2878,6 @@ export default class SnapTess extends Extension {
     disable() {
         // getSettings() can fail before enable() initializes any runtime resources.
         if (!this.settings) return;
-        this.pendingLayoutApps.clear();
         this.layoutSwitcher?.dialog.destroy(); this.layoutSwitcher = null;
         this.studio?.dialog.destroy(); this.studio = null;
         this.setRunning(false, true);
