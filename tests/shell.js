@@ -19,6 +19,7 @@ async function waitRuntime(loader) {
     return loader.runtime;
 }
 export async function run() {
+    console.log('SNAPTESS_TEST_STARTED: shell.js');
     if (GLib.getenv('SNAPTESS_TWO_MONITORS'))
         assert(Main.layoutManager.monitors.length>=2,'two-monitor test environment did not start');
     await Scripting.sleep(1200);

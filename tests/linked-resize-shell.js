@@ -10,6 +10,7 @@ export const METRICS = {};
 const assert = (condition, message) => { if (!condition) throw new Error(`Linked resize: ${message}`); };
 const keys = ['x', 'y', 'width', 'height'];
 export async function run() {
+    console.log('SNAPTESS_TEST_STARTED: linked-resize-shell.js');
     await Scripting.sleep(1200);
     new Gio.Settings({schema_id: 'org.gnome.desktop.interface'}).set_boolean('enable-hot-corners', false);
     Main.overview.hide();

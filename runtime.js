@@ -19,7 +19,7 @@ import {LayoutSwitcher} from './lib/layout-switcher.js';
 import {WindowBorder} from './lib/window-border.js';
 import {radiusFromPixels, radiusStyle, plausibleWindowRadius, visualFrameRect} from './lib/window-radius.js';
 
-const RUNTIME_REVISION = 81;
+const RUNTIME_REVISION = 82;
 const RESTORE_STABILIZE_MS = 1400;
 const RESTORE_QUIET_MS = 120;
 const MAX_RESTORE_MOVES = 8;
@@ -412,6 +412,7 @@ export default class SnapTess extends Extension {
             if (record.motionGuide) { this.motionGuides.delete(record.motionGuide); record.motionGuide.destroy(); }
             for (const id of record.signals) w.disconnect(id);
             this.records.delete(w);
+            this.studio?.refreshWindowCatalog();
             if (this.drag?.window === w) this.drag = null;
             if (this.resizeGrab?.window === w) {
                 this.cancelLinkedResizeFrame();
@@ -497,6 +498,7 @@ export default class SnapTess extends Extension {
         });
         if (actor?.visible && !w.minimized)
             this.queueWindowRadius(w, Math.min(1200, 240 + (this.records.size - 1) * 80));
+        this.studio?.refreshWindowCatalog();
     }
 
     specialWindowChanged(w, record) {

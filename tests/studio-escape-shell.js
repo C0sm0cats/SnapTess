@@ -6,6 +6,7 @@ export const METRICS = {};
 const assert = (condition, message) => { if (!condition) throw new Error(`Studio Escape: ${message}`); };
 const pause = () => Scripting.sleep(300);
 export async function run() {
+    console.log('SNAPTESS_TEST_STARTED: studio-escape-shell.js');
     await Scripting.sleep(1000); Main.overview.hide();
     const entry = Main.extensionManager.lookup('snaptess@c0sm0cats.github.io');
     for (let n = 0; n < 30 && !entry?.stateObj?.runtime; n++) await Scripting.sleep(100);
