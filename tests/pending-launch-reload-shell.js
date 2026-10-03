@@ -3,6 +3,7 @@ import * as Scripting from 'resource:///org/gnome/shell/ui/scripting.js';
 export const METRICS = {};
 const assert = (ok, message) => { if (!ok) throw new Error(`Pending reload: ${message}`); };
 export async function run() {
+    console.log('SNAPTESS_TEST_STARTED: pending-launch-reload-shell.js');
     await Scripting.sleep(1000); Main.overview.hide();
     const uuid = 'snaptess@c0sm0cats.github.io';
     const entry = Main.extensionManager.lookup(uuid);

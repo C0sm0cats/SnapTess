@@ -8,6 +8,7 @@ const assert = (condition, message) => { if (!condition) throw new Error(`Shared
 const pause = () => Scripting.sleep(400);
 const geometry = w => { const r = w.get_frame_rect(); return [r.x, r.y, r.width, r.height].join(','); };
 export async function run() {
+    console.log('SNAPTESS_TEST_STARTED: shared-spaces-shell.js');
     await Scripting.sleep(1000); Main.overview.hide();
     const entry = Main.extensionManager.lookup('snaptess@c0sm0cats.github.io');
     for (let n = 0; n < 30 && !entry?.stateObj?.runtime; n++) await Scripting.sleep(100);

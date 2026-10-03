@@ -10,6 +10,7 @@ export const METRICS = {};
 const assert = (condition, message) => { if (!condition) throw new Error(`Custom layout: ${message}`); };
 const pause = () => Scripting.sleep(300);
 export async function run() {
+    console.log('SNAPTESS_TEST_STARTED: custom-layout-shell.js');
     await Scripting.sleep(1000); Main.overview.hide();
     new Gio.Settings({schema_id: 'org.gnome.desktop.interface'}).set_boolean('enable-hot-corners', false);
     const entry = Main.extensionManager.lookup('snaptess@c0sm0cats.github.io');
