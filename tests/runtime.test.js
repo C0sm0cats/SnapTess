@@ -735,6 +735,72 @@ test('applying multiple Studio contexts creates one undo checkpoint and preserve
     assert.equal(Object.keys(app.profiles).length, 0);
 });
 
+test('global redo restores all Studio contexts and a new manual checkpoint clears redo', () => {
+    const {app, w} = harness();
+    app.running = true; app.history = []; app.redoHistory = [];
+    app.groups = new Map([['a', [w]]]); app.spaces = new Map(); app.profiles = {a: {preset: 'full'}};
+    app.snapshot = () => ({}); app.restore = () => {}; app.updateMenuSensitivity = () => {}; app.publishPreviewState = () => {};
+    app.checkpoint();
+    app.profiles = {a: {preset: 'custom', tiles: [{x: 0, y: 0, width: 1, height: 1}], resize: [0.6]},
+        b: {preset: 'master', pinned: ['test.desktop']}};
+    app.records.get(w).spaces = new Set([0, 1]);
+    app.records.get(w).floating = true;
+    app.groups = new Map([['a', [null]], ['b', [w]]]);
+    app.undo();
+    assert.equal(app.profiles.a.preset, 'full');
+    assert.equal(app.redoHistory.length, 1);
+    app.redo();
+    assert.equal(app.profiles.a.preset, 'custom');
+    assert.equal(app.profiles.a.resize[0], 0.6);
+    assert.equal(app.profiles.b.pinned[0], 'test.desktop');
+    assert.equal(app.groups.get('b')[0], w);
+    assert.equal(app.records.get(w).spaces.has(1), true);
+    assert.equal(app.records.get(w).floating, true);
+    app.undo(); app.redo(); app.undo();
+    app.checkpoint();
+    assert.equal(app.redoHistory.length, 0);
+    const before = JSON.stringify(app.profiles);
+    app.redo(); assert.equal(JSON.stringify(app.profiles), before);
+});
+
+test('global history is bounded and skips windows closed between undo and redo', () => {
+    const {app, w} = harness();
+    app.running = true; app.history = []; app.redoHistory = [];
+    app.groups = new Map([['a', [w]]]); app.spaces = new Map(); app.profiles = {};
+    app.snapshot = () => ({}); app.restore = () => {}; app.updateMenuSensitivity = () => {}; app.publishPreviewState = () => {};
+    for (let i = 0; i < 12; i++) { app.checkpoint(); app.profiles = {step: i}; }
+    assert.equal(app.history.length, 10);
+    for (let i = 0; i < 10; i++) app.undo();
+    assert.equal(app.redoHistory.length, 10);
+    assert.equal(app.profiles.step, 1);
+    app.records.delete(w);
+    for (let i = 0; i < 10; i++) app.redo();
+    assert.equal(app.profiles.step, 11);
+    assert.equal(app.groups.get('a')[0], null);
+    assert.equal(app.history.length, 10);
+    app.undo();
+    const redo = app.redoHistory.length;
+    app.running = false; app.redo();
+    assert.equal(app.redoHistory.length, redo, 'paused redo does not consume history');
+});
+
+test('undo cancels a pending destination and redo reuses its arriving window without relaunching', () => {
+    const {app, w, launches} = sharingHarness();
+    app.history = []; app.redoHistory = [];
+    app.pendingLayoutApps = new Map(); app.snapshot = () => ({}); app.restore = () => {};
+    app.updatePinnedPlaceholders = () => {}; app.updateMenuSensitivity = () => {};
+    app.applyProfiles([{monitor: 0, space: 1, preset: 'master', windows: [null, null, null],
+        apps: [null, null, 'test.desktop'], pinned: [], preserveSlots: true}]);
+    assert.equal(app.pendingLayoutApps.size, 1);
+    app.undo(); assert.equal(app.pendingLayoutApps.size, 0);
+    app.eligible = () => true; app.schedule = () => {};
+    app.redo();
+    assert.equal(app.groups.get('0:0:1')[2], w);
+    assert.equal(app.windowInSpace(w, 1), true);
+    assert.equal(app.pendingLayoutApps.size, 0);
+    assert.equal(launches.length, 1);
+});
+
 test('a saved app slot returns after close without undoing a live manual swap', () => {
     const h = harness(), app = h.app;
     const window = id => ({id, get_maximize_flags: () => 0});
