@@ -56,6 +56,8 @@
 </key>
 <key name="space-3" type="as"><default>['&lt;Control&gt;&lt;Alt&gt;3']</default><summary>Space 3</summary>
 </key>
+<key name="redo" type="as"><default>['&lt;Control&gt;&lt;Alt&gt;y']</default><summary>Redo</summary>
+</key>
 <key name="stop" type="as"><default>['&lt;Control&gt;&lt;Alt&gt;q']</default><summary>Stop</summary>
 </key>
 <key name="independent-padding" type="b"><default>false</default><summary>Use independent screen edge spacing</summary></key>

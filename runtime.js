@@ -19,7 +19,7 @@ import {LayoutSwitcher} from './lib/layout-switcher.js';
 import {WindowBorder} from './lib/window-border.js';
 import {radiusFromPixels, radiusStyle, plausibleWindowRadius, visualFrameRect} from './lib/window-radius.js';
 
-const RUNTIME_REVISION = 82;
+const RUNTIME_REVISION = 83;
 const RESTORE_STABILIZE_MS = 1400;
 const RESTORE_QUIET_MS = 120;
 const MAX_RESTORE_MOVES = 8;
@@ -44,6 +44,7 @@ export default class SnapTess extends Extension {
         this.connections = [];
         this.sources = new Set();
         this.history = [];
+        this.redoHistory = [];
         this.pendingCompact = false;
         this.deferredRetile = new Set();
         this.busy = false;
@@ -82,6 +83,7 @@ export default class SnapTess extends Extension {
         this.swapItem = this.indicator.menu.addAction('Swap focused window', () => this.toggleSwap());
         this.swapItem.accessible_name = 'Swap focused window. Arrows move, Enter accepts, Escape cancels.';
         this.undoItem = this.indicator.menu.addAction('Undo last arrangement', () => this.undo());
+        this.redoItem = this.indicator.menu.addAction('Redo last arrangement', () => this.redo());
         this.indicator.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
         this.arrangeItem = this.indicator.menu.addAction('Arrange again', () => this.arrangeAgain());
         this.layoutSwitcherItem = this.indicator.menu.addAction('Change layout…', () => this.openLayoutSwitcher());
@@ -182,7 +184,7 @@ export default class SnapTess extends Extension {
             floating: () => this.toggleFloating(),
             'focus-left': () => this.focusDirection('left'), 'focus-right': () => this.focusDirection('right'),
             'focus-up': () => this.focusDirection('up'), 'focus-down': () => this.focusDirection('down'),
-            swap: () => this.toggleSwap(), undo: () => this.undo(), stop: () => this.setRunning(false),
+            swap: () => this.toggleSwap(), undo: () => this.undo(), redo: () => this.redo(), stop: () => this.setRunning(false),
             'space-1': () => this.switchSpace(0), 'space-2': () => this.switchSpace(1), 'space-3': () => this.switchSpace(2),
         };
         for (const [name, callback] of Object.entries(this.bindings))
@@ -1026,12 +1028,17 @@ export default class SnapTess extends Extension {
                 spaces: r.spaces ? new Set(r.spaces) : null,
                 parked: r.parked, restoreParked: r.restoreParked}])),
             spaces: new Map([...this.spaces].map(([w, m]) => [w, new Map(m)])),
+            pending: new Map([...(this.pendingLayoutApps ?? [])].map(([id, pending]) => [id,
+                {...pending, targets: pending.targets?.map(target => ({...target}))}])),
             profiles: JSON.stringify(this.profiles)};
     }
     pushCheckpoint(state) {
         if (!state) return;
         this.history.push(state);
         if (this.history.length > 10) this.history.shift();
+        this.redoHistory = [];
+        this.undoItem?.setSensitive(this.running);
+        this.redoItem?.setSensitive(false);
     }
     checkpoint() { this.pushCheckpoint(this.captureCheckpoint()); }
     arrangeAgain() {
@@ -1054,19 +1061,35 @@ export default class SnapTess extends Extension {
         if (state.maximized) w.set_maximize_flags(state.maximized);
         if (state.minimized) w.minimize(); else w.unminimize();
     }
-    undo() {
-        const state = this.history.pop();
-        if (!state) return;
+    undo() { this.travelHistory(this.history, this.redoHistory ??= []); }
+    redo() { this.travelHistory(this.redoHistory, this.history); }
+    travelHistory(from, to) {
+        if (!this.running || this.drag || this.resizeGrab || this.swapMode || !from?.length) return;
+        const current = this.captureCheckpoint(), state = from.pop();
+        to.push(current);
+        if (to.length > 10) to.shift();
         this.busy = true;
         try {
-            this.groups = state.groups; this.spaces = state.spaces;
-            for (const [w, record] of state.records) if (this.records.has(w)) Object.assign(this.records.get(w), record);
+            this.groups = new Map([...state.groups].map(([key, slots]) => [key,
+                slots.map(w => w && this.records.has(w) ? w : null)]));
+            this.spaces = new Map([...state.spaces].map(([w, spaces]) => [w, new Map(spaces)]));
+            for (const [w, record] of state.records) if (this.records.has(w))
+                Object.assign(this.records.get(w), record, {spaces: record.spaces ? new Set(record.spaces) : null});
             this.profiles = JSON.parse(state.profiles);
             this.settings.set_string('profiles', state.profiles);
+            this.pendingLayoutApps ??= new Map();
+            this.pendingLayoutApps.clear();
+            for (const [id, pending] of state.pending ?? []) this.pendingLayoutApps.set(id,
+                {...pending, targets: pending.targets?.map(target => ({...target}))});
+            global._snaptessPendingLayoutApps = this.pendingLayoutApps;
             for (const [w, rect] of state.windows) if (this.records.has(w)) this.restore(w, rect);
+            // An app may have finished opening between Undo and Redo. Reuse its
+            // existing window for a restored pending destination without launching again.
+            for (const w of this.records.keys()) if (this.pendingLayoutApps.size) this.claimLayoutWindow(w);
         } finally { this.busy = false; }
         this.updateBorder();
         this.updatePinnedPlaceholders();
+        this.updateMenuSensitivity();
         this.publishPreviewState();
     }
 
@@ -1109,7 +1132,7 @@ export default class SnapTess extends Extension {
                     r.original = null; r.space = 0; r.spaces = null;
                 }
             } finally { this.busy = false; }
-            this.groups.clear(); this.spaces.clear(); this.history = [];
+            this.groups.clear(); this.spaces.clear(); this.history = []; this.redoHistory = [];
             this.deferredRetile.clear();
         }
         this.updatePanelStatus();
@@ -1697,6 +1720,7 @@ export default class SnapTess extends Extension {
         const slots = usable && !record.floating ? this.groups.get(this.key(w.get_monitor())) ?? [] : [];
         this.swapItem?.setSensitive(slots.filter(Boolean).length > 1);
         this.undoItem?.setSensitive(this.running && this.history.length > 0);
+        this.redoItem?.setSensitive(this.running && (this.redoHistory?.length ?? 0) > 0);
         for (const {menu} of this.monitorMenus ?? []) menu.setSensitive(this.running);
         this.stopItem?.setSensitive(this.running);
     }
@@ -2229,6 +2253,7 @@ export default class SnapTess extends Extension {
         this.swapKey = key;
         this.swapOriginal = [...slots];
         this.swapHistory = [...this.history];
+        this.swapRedoHistory = [...(this.redoHistory ?? [])];
         this.swapChanged = false;
         this.hideWindowActions();
         this.swapActor = new St.Widget({reactive: true, can_focus: true, width: 1, height: 1});
@@ -2258,6 +2283,7 @@ export default class SnapTess extends Extension {
             const original = (this.swapOriginal ?? []).map(w => w && this.records.has(w) ? w : null);
             this.groups.set(this.swapKey, original);
             this.history = this.swapHistory ?? this.history;
+            this.redoHistory = this.swapRedoHistory ?? this.redoHistory;
             this.tile(false);
         }
         this.hideSwapGuides();
@@ -2271,8 +2297,10 @@ export default class SnapTess extends Extension {
         this.swapKey = null;
         this.swapOriginal = null;
         this.swapHistory = null;
+        this.swapRedoHistory = null;
         this.swapChanged = false;
         this.updateBorder();
+        this.updateMenuSensitivity();
         if (this.running && global.display.focus_window === w) this.queueWindowActions(w);
     }
     swapDirection(direction) {

@@ -51,7 +51,7 @@ export async function run() {
     const originals=windows.map(w=>app.snapshot(w));
     app.updateMenuSensitivity();
     assert(!app.arrangeItem.sensitive && !app.floatItem.sensitive && !app.swapItem.sensitive &&
-        !app.undoItem.sensitive && !app.spaceMenu.sensitive && !app.stopItem.sensitive,
+        !app.undoItem.sensitive && !app.redoItem.sensitive && !app.spaceMenu.sensitive && !app.stopItem.sensitive,
         'tray disables arrangement actions while SnapTess is paused');
     app.setRunning(true); await pause();
     assert(app.groups.get(app.key(0)).length===4,'four tiled slots');
@@ -589,6 +589,10 @@ export async function run() {
         'the open palette follows subsequent floating-window movement');
     app.undo(); await pause();
     assert(!app.records.get(windows[0]).floating,'undo restores floating membership');
+    assert(app.redoItem.sensitive, 'Undo enables global Redo in the panel menu');
+    app.redo(); await pause();
+    assert(app.records.get(windows[0]).floating && !app.redoItem.sensitive, 'Redo restores native floating membership');
+    app.undo(); await pause();
     const slotBefore=app.groups.get(app.key(0)).indexOf(windows[0]);
     const direction=slotBefore%2===0?'right':'left';
     const reverse=direction==='right'?'left':'right';
@@ -632,6 +636,7 @@ export async function run() {
         'cancel restores the normal focus outline');
     assert(app.groups.get(app.key(0)).indexOf(windows[0])===slotBefore,'cancel restores original slot');
     assert(app.history.length===historyBeforeSwap,'cancel removes swap undo checkpoint');
+    assert(app.redoHistory.length > 0, 'canceling a swap preserves existing Redo history');
     app.toggleSwap();
     app.swapDirection(direction); await pause();
     const committedSlot=app.groups.get(app.key(0)).indexOf(windows[0]);

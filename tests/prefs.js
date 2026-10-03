@@ -36,7 +36,7 @@ function visit(widget) {
 }
 visit(window);
 if (entries.length !== 1) throw new Error(`Only application search should be an entry row, got ${entries.length}`);
-if (previews.length !== 1 || resetButtons.length !== 19 || shortcutLabels.length !== 15 || recordButtons.length !== 15 || editButtons.length !== 15)
+if (previews.length !== 1 || resetButtons.length !== 19 || shortcutLabels.length !== 16 || recordButtons.length !== 16 || editButtons.length !== 16)
     throw new Error('Live layout preview or native shortcut controls are missing');
 const edgeToggle = rows.find(row => row.title === 'Separate screen edges');
 const commonMargin = spins.find(row => row.title === 'Screen edge spacing');
@@ -93,6 +93,11 @@ function shortcutEditor(title) {
     if (!(entry instanceof Gtk.Entry) || !(apply instanceof Gtk.Button)) throw new Error(`${title} editor is missing`);
     return {entry, apply};
 }
+const redoEditor = shortcutEditor('Redo');
+if (redoEditor.entry.text !== '<Control><Alt>y') throw new Error('Redo default shortcut is missing');
+redoEditor.entry.text = '<Control><Super>y'; redoEditor.apply.emit('clicked');
+if (settings.get_strv('redo')[0] !== '<Control><Super>y') throw new Error('Redo could not be customized');
+settings.reset('redo');
 for (const [key, title, direction] of [['focus-left', 'Focus window to the left', 'Left'],
     ['focus-right', 'Focus window to the right', 'Right'], ['focus-up', 'Focus window above', 'Up'],
     ['focus-down', 'Focus window below', 'Down']]) {

@@ -32,6 +32,8 @@ jobs:
         run: ./scripts/test-shell.sh tests/studio-escape-shell.js
       - name: Live window catalog, independent drafts and saved-layout search
         run: ./scripts/test-shell.sh tests/studio-library-shell.js
+      - name: Global Undo and Redo shortcuts and menu
+        run: ./scripts/test-shell.sh tests/global-redo-shell.js
       - name: Pending launches and shared indicators after reload
         run: ./scripts/test-shell.sh tests/pending-launch-reload-shell.js
       - name: Shared windows across Spaces and displays
