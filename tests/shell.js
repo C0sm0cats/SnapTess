@@ -650,10 +650,10 @@ export async function run() {
     assert(app.studio?.canvas.get_children().length===4,'studio renders slots');
     const initialPreset=app.studio.preset, initialUndo=app.studio.undoStack.length;
     const initialCardWidth=app.studio.canvas.get_first_child().width;
-    assert(app.studio.presets.get_children().find(button=>button.label==='Full').reactive &&
-        app.studio.presets.get_children().find(button=>button.label==='Full').has_style_class_name('unavailable') &&
+    assert(!app.studio.presets.visible && app.studio.presets.get_n_children()===0 &&
+        app.studio.currentLayoutLabel.visible && app.studio.currentLayoutLabel.text==='Current layout: 2 × 2' &&
         app.studio.presetStatus.text.includes('4 tiles needed'),
-        'Studio marks incompatible presets and explains the minimum capacity');
+        'Current space shows its actual grid instead of ineffective preset controls');
     app.studio.choosePreset('full');
     assert(app.studio.preset===initialPreset && app.studio.undoStack.length===initialUndo,
         'an unavailable layout cannot create a misleading draft');
@@ -690,7 +690,12 @@ export async function run() {
     app.studio.preset=initialPreset; app.studio.render();
     const studioWidth=app.studio.width;
     app.studio.width=700; app.studio.render();
-    assert(app.studio.presetMenu,'compact Studio renders the layout menu');
+    assert(!app.studio.presetMenu && app.studio.currentLayoutLabel.text==='Current layout: 2 × 2',
+        'compact Current space also uses a read-only layout summary');
+    app.studio.openNewLayout();
+    assert(app.studio.presetMenu && !app.studio.currentLayoutLabel.visible,
+        'compact New layout retains its preset menu');
+    app.studio.creatingNew=false;
     app.studio.width=studioWidth; app.studio.render();
     const unassigned=app.studio.draft.pop();
     app.studio.selected=app.studio.draft.length; app.studio.assignWindow(unassigned);
@@ -912,13 +917,9 @@ export async function run() {
         'closing the quick switcher leaves the arrangement unchanged');
     app.openLayoutSwitcher(); await pause();
     const applyingQuick=app.layoutSwitcher;
-    applyingQuick.presetToggle.emit('clicked',1);
-    assert(applyingQuick.presetList.visible && !applyingQuick.rows.some(row=>
-        row.accessible_name.startsWith('Full.')) &&
-        applyingQuick.hiddenPresetNote?.text.includes('presets hidden') &&
-        applyingQuick.rows.filter(row=>row.get_parent()===applyingQuick.presetList)
-            .every(row=>row.reactive),
-        'quick switcher lists only compatible presets and explains hidden options');
+    assert(!applyingQuick.presetToggle && !applyingQuick.presetList &&
+        applyingQuick.rows.some(row=>row.accessible_name.startsWith('Test pair.')),
+        'quick switcher retains saved layouts without ineffective classic-preset choices');
     if (GLib.getenv('SNAPTESS_PRESET_QUICK_SCREENSHOT')) {
         const stream=Gio.File.new_for_path(GLib.getenv('SNAPTESS_PRESET_QUICK_SCREENSHOT'))
             .replace(null,false,Gio.FileCreateFlags.NONE,null);
@@ -970,17 +971,9 @@ export async function run() {
     'Undo restores the previous space profile and surplus windows');
     app.openLayoutSwitcher(); await pause();
     const presetQuick=app.layoutSwitcher;
-    presetQuick.presetToggle.emit('clicked',1);
-    const gridRow=presetQuick.rows.find(row=>row.accessible_name.startsWith('2 × 2.'));
-    assert(gridRow?.reactive,'a compatible fixed preset is available in the quick switcher');
-    gridRow.emit('clicked',1); await pause();
-    assert(app.options(0,0).preset==='2x2' &&
-        app.groups.get(app.key(0)).filter(Boolean).length===4 &&
-        windows.every(w=>!w.minimized),
-        'quick fixed preset reflows the existing windows without opening apps');
-    app.undo(); await pause();
-    assert(JSON.stringify(app.profiles[app.profileKey(0,0)])===beforeRestore,
-        'quick preset selection is undoable');
+    assert(!presetQuick.rows.some(row=>row.accessible_name.startsWith('2 × 2.')),
+        'quick switcher no longer offers fixed classic presets');
+    presetQuick.dialog.close(); await pause();
     app.deleteSavedLayout(saved.id);
     assert(!app.savedLayouts.some(item=>item.id===saved.id),'saved templates can be deleted independently');
     app.openStudio(); await pause();

@@ -1811,6 +1811,63 @@ test('Apply opens an assigned app and claims its exact unpinned tile', () => {
     assert.equal(app.profiles['0:1'].pendingApps.length, 0);
 });
 
+test('a launch appearing after a minute retains its exact Space and tile without a timeout notification', () => {
+    const {app, w, advance, timers, shellMain, launches} = sharingHarness();
+    timers.clear();
+    const notifications = [];
+    shellMain.notify = (...args) => notifications.push(args);
+    app.pendingLayoutApps = new Map(); app.updatePinnedPlaceholders = () => {};
+    app.applyProfiles([{monitor: 0, space: 1, preset: 'master', windows: [null, null, null],
+        apps: [null, null, 'test.desktop'], pinned: [], preserveSlots: true}]);
+    advance(60000);
+    assert.equal(app.pendingLayoutApps.get('test').index, 2);
+    assert.equal(notifications.length, 0);
+    app.eligible = () => true; app.schedule = () => {};
+    assert.equal(app.claimLayoutWindow(w), true);
+    assert.equal(app.groups.get('0:0:1')[2], w);
+    assert.equal(app.windowInSpace(w, 1), true);
+    assert.equal(app.pendingLayoutApps.size, 0);
+    assert.deepEqual(launches, ['test.desktop']);
+});
+
+test('a pinned-card launch remains pending until its window appears or its tile is cleared', () => {
+    const {app, w, advance, timers} = sharingHarness();
+    timers.clear();
+    app.pendingLayoutApps = new Map(); app.updatePinnedPlaceholders = () => {};
+    app.launchLayoutApps(['test.desktop'], 0, 1, w.get_workspace());
+    advance(60000);
+    assert.equal(app.pendingLayoutApps.has('test'), true);
+    app.applyProfiles([{monitor: 0, space: 1, preset: 'full', windows: [null],
+        apps: [], pinned: ['test.desktop'], preserveSlots: true}]);
+    assert.equal(app.pendingLayoutApps.has('test'), true, 'keeping the pin keeps the launch request');
+    app.applyProfiles([{monitor: 0, space: 1, preset: 'full', windows: [null],
+        apps: [], pinned: [], preserveSlots: true}]);
+    assert.equal(app.pendingLayoutApps.size, 0, 'clearing the tile cancels the launch request');
+    assert.equal(app.claimLayoutWindow(w), false);
+});
+
+test('pending destinations survive a runtime reload and claim a window opened while disabled', () => {
+    const {app, w, advance, timers} = sharingHarness();
+    timers.clear(); app.restorePendingLaunches(); app.updatePinnedPlaceholders = () => {};
+    app.applyProfiles([0, 1].map(space => ({monitor: 0, space, preset: 'master',
+        windows: [null, null, null], apps: space === 0 ? ['test.desktop', null, null] : [null, null, 'test.desktop'],
+        pinned: [], preserveSlots: true})));
+    const pending = app.pendingLayoutApps;
+    advance(60000);
+    app.pendingLayoutApps = new Map(); app.restorePendingLaunches();
+    assert.equal(app.pendingLayoutApps, pending, 'the same session owns the pending request');
+    app.groups.clear(); // Fresh runtime groups have not been tiled yet.
+    app.eligible = () => true; app.schedule = () => {}; app.running = false;
+    assert.equal(app.claimLayoutWindow(w), true);
+    assert.equal(app.groups.get('0:0:0')[0], w);
+    assert.equal(app.groups.get('0:0:1')[2], w);
+    assert.equal(app.windowInSpace(w, 0), true);
+    assert.equal(app.windowInSpace(w, 1), true);
+    assert.equal(app.profiles['0:1'].pendingApps.length, 0);
+    assert.equal(w.minimized, false, 'reloading a paused extension does not hide the arriving window');
+    assert.equal(pending.size, 0);
+});
+
 test('one pending installed app can be assigned to two Spaces without launching twice', () => {
     const {app, w, launches} = sharingHarness();
     app.pendingLayoutApps = new Map(); app.updatePinnedPlaceholders = () => {};

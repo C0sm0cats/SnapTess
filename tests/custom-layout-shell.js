@@ -23,8 +23,13 @@ export async function run() {
     const studio = app.studio;
     assert(!studio.undoButton.reactive && !studio.redoButton.reactive,
         'history buttons start disabled');
+    assert(studio.undoButton.label === 'Undo · 0' && studio.redoButton.label === 'Redo · 0' &&
+        studio.historyControls.get_parent() === studio.contextRow,
+        'history controls share the Display/Space row and show available action counts');
     studio.choosePreset('master'); studio.undo();
     assert(studio.preset === 'auto' && studio.redoButton.reactive, 'current-space Undo enables Redo');
+    assert(studio.undoButton.label === 'Undo · 0' && studio.redoButton.label === 'Redo · 1',
+        'Undo updates both history counters');
     studio.redo();
     assert(studio.preset === 'master', 'Redo restores the current-space layout draft');
     studio.undo();
@@ -32,9 +37,10 @@ export async function run() {
     assert(!studio.redoButton.reactive, 'a new current-space edit clears Redo');
     studio.undo();
     assert(!studio.automaticButton && !studio.fixedSizeButton &&
-        studio.presets.get_children().some(actor => actor.has_style_class_name?.('selected')) &&
+        !studio.presets.visible && studio.presets.get_n_children() === 0 &&
+        studio.currentLayoutLabel.visible && studio.currentLayoutLabel.text === 'Current layout: Focus' &&
         studio.presetStatus.text.includes('Grows and shrinks'),
-        'Current space highlights its active preset without an automatic-mode control');
+        'Current space describes its calculated layout without offering ineffective preset choices');
     if (GLib.getenv('SNAPTESS_MODE_SCREENSHOT')) {
         const stream = Gio.File.new_for_path(GLib.getenv('SNAPTESS_MODE_SCREENSHOT'))
             .replace(null, false, Gio.FileCreateFlags.NONE, null);
@@ -58,13 +64,28 @@ export async function run() {
     await pause();
     assert(app.studio === studio && studio.dialog.dialogLayout.mapped && JSON.stringify(app.profiles) === before,
         'Enter saves the template without applying or closing Studio');
-    studio.openNewLayout(); studio.choosePreset('3x3'); await pause();
+    studio.editSavedLayout();
+    studio.choosePreset('focus');
+    studio.openNewLayout();
+    assert(studio.newLayout.preset === '2x2' && studio.newLayout.apps.every(id => id === null) &&
+        !studio.editingSavedId && !studio.newUndoStack.length && !studio.newRedoStack.length &&
+        studio.nameEntry.get_text() === '',
+        'New layout starts empty instead of reusing a saved-layout edit and its history');
+    assert(studio.savedHeader.get_children().slice(0, 3).map(actor => actor.label).join('|') ===
+        `Current space|${studio.savedPicker.label}|New layout`,
+        'Studio orders Current space, Saved layouts, then New layout');
+    studio.choosePreset('3x3');
+    studio.currentViewButton.emit('clicked', 1); studio.openNewLayout(); await pause();
+    assert(studio.newLayout.preset === '3x3', 'returning to New layout preserves its own creation draft');
+    assert(studio.presets.visible && !studio.currentLayoutLabel.visible &&
+        studio.presets.get_children().some(actor => actor.has_style_class_name?.('selected')),
+        'New layout retains editable preset choices and hides the current-layout summary');
     assert(studio.customCards.length === 9 && studio.canvas.get_n_children() === 9,
         'New layout renders every empty tile in a 3x3 preset');
     const profilesBeforeCatalog = JSON.stringify(app.profiles);
     studio.canvas.get_first_child().emit('clicked', 1);
     const catalog = studio.appCatalogSections;
-    assert(!catalog.windows.body.visible && !catalog.installed.body.visible && catalog.windows.rows.length === windows.length,
+    assert(!catalog.windows.body.visible && !catalog.installed.body.visible && catalog.windows.rows.length === 0 && catalog.installed.rows.length === 0,
         'New layout offers separate collapsed Open windows and Installed apps sections');
     if (GLib.getenv('SNAPTESS_APP_SECTIONS_SCREENSHOT')) {
         await pause();
@@ -75,6 +96,8 @@ export async function run() {
         stream.close(null);
     }
     catalog.windows.header.emit('clicked', 1);
+    assert(catalog.windows.rows.length === windows.length && catalog.installed.rows.length === 0,
+        'only the expanded app section constructs its rows and icons');
     catalog.windows.search.set_text(windows[0].get_title() ?? '');
     assert(catalog.installed.search.get_text() === '', 'Open windows search is independent from Installed apps');
     catalog.windows.rows[0].row.emit('clicked', 1);
@@ -243,7 +266,7 @@ export async function run() {
     app.openLayoutSwitcher(); await pause();
     const headings = app.layoutSwitcher.list.get_children()
         .filter(actor => actor instanceof St.Label).map(actor => actor.text);
-    assert(headings.includes('CUSTOM LAYOUTS') && headings.includes('PRESET LAYOUTS'),
+    assert(headings.includes('SAVED CUSTOM LAYOUTS') && headings.includes('SAVED PRESET LAYOUTS'),
         'quick layout switcher separates saved custom and preset layouts');
     app.layoutSwitcher.dialog.close(); await pause();
     app.applyProfiles([{monitor: 0, space: 0, preset: '4x4', windows, pinned: [], slotCount: 16}]); await pause();
