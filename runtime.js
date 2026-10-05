@@ -2242,14 +2242,27 @@ export default class SnapTess extends Extension {
         const w = global.display.focus_window, record = this.records.get(w);
         if (!record || !this.running) return;
         this.checkpoint(); record.floating = !record.floating;
-        if (record.floating && record.original) {
+        if (record.floating) {
             this.busy = true;
-            try { this.restore(w, {...record.original, minimized: false}); } finally { this.busy = false; }
+            try { this.placeFloating(w, record.original); } finally { this.busy = false; }
         }
         this.tile(true);
         this.validateTransformsAfterGrab();
         this.hideWindowActions();
         if (global.display.focus_window === w) this.showWindowActionHandle();
+    }
+
+    // Its size from before tiling, centred on its current display: at most 90 %
+    // of the work area and never maximized, so it never covers every tile.
+    placeFloating(w, original) {
+        if (w.fullscreen) return;
+        this.resetWindowScale(w, true);
+        if (w.get_maximize_flags()) w.unmaximize();
+        const frame = w.get_frame_rect(), area = this.area(w.get_monitor());
+        const width = Math.min(original?.width ?? frame.width, Math.round(area.width * 0.9));
+        const height = Math.min(original?.height ?? frame.height, Math.round(area.height * 0.9));
+        this.requestWindowGeometry(w, 'floating-centered', {width, height,
+            x: area.x + Math.round((area.width - width) / 2), y: area.y + Math.round((area.height - height) / 2)});
     }
 
     toggleSwap() {
