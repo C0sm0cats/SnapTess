@@ -603,12 +603,13 @@ export async function run() {
     assert(app.border.visible && app.border.strokeWidth>normalSwapBorderWidth &&
         app.border.bandWidth>0 && app.borderSwapActive,
         'swap mode emphasizes the focused window immediately');
-    assert(app.swapHints.get(direction).visible && !app.swapHints.get(reverse).visible,
+    const hinted=direction=>app.swapHints.get(direction).some(hint=>hint.visible);
+    assert(hinted(direction) && !hinted(reverse),
         'swap hints mark reachable neighbors on the active window only');
-    assert(app.swapHints.get(slotBefore<2?'down':'up').visible,
+    assert(hinted(slotBefore<2?'down':'up'),
         'swap hints also mark the vertical neighbor');
     const swapFrame=app.visualWindowRect(windows[0]);
-    const swapHint=app.swapHints.get(direction);
+    const swapHint=app.swapHints.get(direction)[0];
     assert(Math.abs(swapHint.x+13-(direction==='right' ? swapFrame.x+swapFrame.width : swapFrame.x))<=1,
         'swap hint straddles the focused window edge');
     if (GLib.getenv('SNAPTESS_SWAP_SCREENSHOT')) {
@@ -621,7 +622,7 @@ export async function run() {
     }
     app.swapDirection(direction); await pause();
     assert(app.groups.get(app.key(0)).indexOf(windows[0])!==slotBefore,'keyboard swap changes slot');
-    assert(app.swapHints.get(reverse).visible,'swap hints follow the active window into its new slot');
+    assert(hinted(reverse),'swap hints follow the active window into its new slot');
     const swapHistoryLength=app.history.length;
     assert(swapHistoryLength===historyBeforeSwap+1,'swap session creates one undo checkpoint');
     app.swapDirection(reverse); await pause();

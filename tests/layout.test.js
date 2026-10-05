@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {layout, autoLayout, capacity, fitMinimumSize, frameScalePivot, nearestSlot, directionalSlot, directionalFocusSlot, reconcileSlots,
-    activePinnedSlots, reserveAppSlots, swapNeighbor, PRESETS, sortedSavedLayouts,
+    activePinnedSlots, reserveAppSlots, edgeNeighbors, swapNeighbor, PRESETS, sortedSavedLayouts,
     resizeDivider, advanceLinkedResize, resizedLayout, resizeOffsets} from '../lib/layout.js';
 
 function assertPartition(rects, base, gap = 12) {
@@ -295,6 +295,22 @@ test('directional swap follows geometric neighbors', () => {
     assert.equal(swapNeighbor(withHole,0,'right'),1);
     assert.equal(swapNeighbor(withHole,2,'left'),1);
     assert.equal(swapNeighbor([{x:0,y:0,width:100,height:100},{x:110,y:110,width:100,height:100}],0,'right'),-1);
+});
+test('swap targets only windows across a shared edge and marks every neighbor', () => {
+    // Focus: large tile on the left, two stacked tiles on the right.
+    const focus=[{x:0,y:0,width:600,height:800},{x:612,y:0,width:388,height:394},{x:612,y:406,width:388,height:394}];
+    assert.deepEqual(edgeNeighbors(focus,0,'right').map(n=>n.index),[1,2]);
+    assert.equal(swapNeighbor(focus,0,'right'),1);
+    assert.equal(swapNeighbor(focus,0,'right',i=>i!==1),2);
+    assert.equal(swapNeighbor(focus,2,'left'),0);
+    // A tile beyond the adjacent one is never a target, even when the adjacent one is unavailable.
+    const row=[{x:0,y:0,width:100,height:100},{x:112,y:0,width:100,height:100},{x:224,y:0,width:100,height:100}];
+    assert.equal(swapNeighbor(row,0,'right',i=>i!==1),-1);
+    assert.deepEqual(edgeNeighbors(row,0,'right',i=>i!==1),[]);
+    // The longest shared stretch wins over a centred sliver.
+    const uneven=[{x:0,y:0,width:100,height:300},{x:112,y:0,width:100,height:250},{x:112,y:262,width:100,height:38}];
+    assert.equal(swapNeighbor(uneven,0,'right'),1);
+    assert.deepEqual(edgeNeighbors(uneven,0,'right').map(n=>n.index),[1,2]);
 });
 test('directional focus crosses holes, prefers aligned windows and never wraps', () => {
     const rects = [{x:-500,y:0,width:100,height:100}, null,
