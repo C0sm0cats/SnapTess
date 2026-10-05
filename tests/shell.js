@@ -574,6 +574,14 @@ export async function run() {
     windows[0].activate(global.get_current_time()); await pause();
     app.toggleFloating(); await pause();
     assert(app.records.get(windows[0]).floating,'floating enabled');
+    {
+        const frame=windows[0].get_frame_rect(), area=app.area(windows[0].get_monitor());
+        assert(!windows[0].get_maximize_flags() && frame.width<=Math.round(area.width*0.9)+1 &&
+            frame.height<=Math.round(area.height*0.9)+1 &&
+            Math.abs(frame.x+frame.width/2-(area.x+area.width/2))<=2 &&
+            Math.abs(frame.y+frame.height/2-(area.y+area.height/2))<=2,
+            'a window made floating is centred on its display, within 90 % of the work area');
+    }
     assert(app.windowActionHandle.visible,'floating leaves its action handle available without a focus change');
     windows[0].move_frame(true,90,75); await pause();
     let floatFrame=windows[0].get_frame_rect();

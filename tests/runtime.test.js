@@ -1972,3 +1972,16 @@ test('a New layout can save the app identity selected from an open window', () =
     assert.equal(app.savedLayouts[0].apps[0], 'WindowBackedApp');
     assert.equal(app.saveNewLayout('Unknown identity', 'full', ['NotAnOpenApp'], [null]), false);
 });
+
+test('a window made floating keeps its size, centred on its display, never maximized', () => {
+    const h = harness(), app = h.app;
+    let unmaximized = 0;
+    h.w.unmaximize = () => { unmaximized++; h.w.flags = 0; };
+    app.resetWindowScale = () => {};
+    app.placeFloating(h.w, {x: 1500, y: 900, width: 500, height: 300, monitor: 1, maximized: 0});
+    assert.deepEqual(h.requests.at(-1), {type: 'resize', x: 150, y: 150, width: 500, height: 300});
+    h.w.flags = 3;
+    app.placeFloating(h.w, {x: 0, y: 0, width: 800, height: 600, monitor: 0, maximized: 3});
+    assert.equal(unmaximized, 1);
+    assert.deepEqual(h.requests.at(-1), {type: 'resize', x: 40, y: 30, width: 720, height: 540});
+});
