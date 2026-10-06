@@ -246,7 +246,8 @@ export default class SnapTess extends Extension {
 
     visualMode() {
         return ({linear: Clutter.AnimationMode.LINEAR,
-            'ease-in-out': Clutter.AnimationMode.EASE_IN_OUT_QUAD})[this.settings.get_string('animation-curve')]
+            'ease-in-out': Clutter.AnimationMode.EASE_IN_OUT_QUAD,
+            spring: Clutter.AnimationMode.EASE_OUT_BACK})[this.settings.get_string('animation-curve')]
             ?? Clutter.AnimationMode.EASE_OUT_QUAD;
     }
 

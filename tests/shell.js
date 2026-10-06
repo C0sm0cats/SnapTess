@@ -222,6 +222,8 @@ export async function run() {
     app.settings.set_string('animation-curve','linear');
     assert(app.visualDuration()===320 && app.visualDuration(210)===480 && app.visualMode()===Clutter.AnimationMode.LINEAR,
         'custom animation duration and easing are used in Shell');
+    app.settings.set_string('animation-curve','spring');
+    assert(app.visualMode()===Clutter.AnimationMode.EASE_OUT_BACK, 'spring easing overshoots in Shell');
     for (const key of ['animation-speed','animation-duration','animation-curve']) app.settings.reset(key);
     app.setGuideRadius(app.preview,windows[0],14);
     assert(app.preview.get_style().includes('0px 0px 20px 20px'),
