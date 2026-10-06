@@ -71,6 +71,6 @@
 <key name="border-style" type="s"><default>'outline'</default><summary>Focus outline style</summary><choices><choice value='outline'/><choice value='halo'/></choices></key>
 <key name="animation-speed" type="s"><default>'normal'</default><summary>Visual animation speed</summary><choices><choice value='fast'/><choice value='normal'/><choice value='slow'/><choice value='custom'/></choices></key>
 <key name="animation-duration" type="i"><default>140</default><summary>Custom base animation duration in milliseconds</summary><range min="40" max="500"/></key>
-<key name="animation-curve" type="s"><default>'ease-out'</default><summary>Visual animation easing</summary><choices><choice value='ease-out'/><choice value='linear'/><choice value='ease-in-out'/></choices></key>
+<key name="animation-curve" type="s"><default>'ease-out'</default><summary>Visual animation easing</summary><choices><choice value='ease-out'/><choice value='linear'/><choice value='ease-in-out'/><choice value='spring'/></choices></key>
 </schema>
 </schemalist>

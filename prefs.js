@@ -196,7 +196,7 @@ export default class SnapTessPreferences extends ExtensionPreferences {
             'Base duration in milliseconds; longer transitions scale proportionally');
         watch('animation-speed', () => { durationRow.visible = settings.get_string('animation-speed') === 'custom'; });
         addChoice(animationGroup, 'animation-curve', 'Animation curve',
-            [['ease-out', 'Ease out'], ['linear', 'Linear'], ['ease-in-out', 'Ease in and out']]);
+            [['ease-out', 'Ease out'], ['linear', 'Linear'], ['ease-in-out', 'Ease in and out'], ['spring', 'Spring']]);
         watch('animations', () => { animationGroup.sensitive = settings.get_boolean('animations'); });
         const archiveGroup = new Adw.PreferencesGroup({title: 'Back up and share',
             description: 'Export named layouts and per-space profiles to a JSON file. Import adds new items without replacing your existing ones.'});
