@@ -1604,13 +1604,236 @@ test('focus refreshes cached corner geometry after the client decoration repaint
     record.windowRadius = {top: 4, topRight: 0, bottom: 0, bottomRight: 0};
     shellDisplay.focus_window = w;
     app.focusChanged();
-    advance(249); assert.equal(refreshes, 0);
+    advance(15); assert.equal(refreshes, 0);
     advance(1); assert.equal(refreshes, 1);
     app.focusChanged();
-    advance(100);
+    advance(8);
     app.focusChanged();
-    advance(150); assert.equal(refreshes, 1);
-    advance(100); assert.equal(refreshes, 2);
+    advance(15); assert.equal(refreshes, 1);
+    advance(1); assert.equal(refreshes, 2);
+});
+
+function focusBorderHarness({visible = true, animations = true} = {}) {
+    const h = harness(), {app, w, record, actor, shellDisplay} = h;
+    app.cancel(record.radiusTimer); record.radiusTimer = 0;
+    record.windowRadius = {top: 4, topRight: 0, bottom: 0, bottomRight: 0};
+    record.radiusDirty = false;
+    const outlines = [], frames = [], fades = [], opacityWrites = [];
+    const previousWindow = {};
+    let opacity = 205, hides = 0;
+    app.border = {
+        visible,
+        get opacity() { return opacity; },
+        set opacity(value) { opacityWrites.push(value); opacity = value; },
+        hide() { hides++; this.visible = false; },
+        setOutline(_color, radius) { outlines.push(radius); },
+        setFrame(rect) { frames.push(rect); this.visible = true; },
+        ease(options) { fades.push(options); this.opacity = options.opacity; },
+        remove_all_transitions() {},
+    };
+    app.borderFocusWindow = visible ? previousWindow : null;
+    app.borderSwapActive = false;
+    app.swapMode = false;
+    actor.get_scale = () => [1, 1];
+    app.settings.get_boolean = key => key === 'active-border' || (key === 'animations' && animations);
+    app.updateSwapHints = () => {};
+    app.hideWindowActions = () => {};
+    app.queueWindowActions = () => {};
+    app.publishPreviewState = () => {};
+    app.accentColor = () => '#3584e4';
+    app.visualWindowRect = () => h.frame();
+    app.borderMonitorScale = () => 1;
+    app.stackWindowOverlays = () => {};
+    app.visualMode = () => 0;
+    app.visualDuration = () => 140;
+    app.windows = () => [w];
+    app.updateBorder = Object.getPrototypeOf(app).updateBorder;
+    shellDisplay.focus_window = w;
+    return {...h, outlines, frames, fades, opacityWrites, previousWindow, hides: () => hides};
+}
+
+test('focus transfers the border with final corners without hiding it or resetting its opacity', async () => {
+    for (const animations of [true, false]) {
+        const h = focusBorderHarness({animations}), {app, w, record, advance} = h;
+        let resolve, captures = 0;
+        app.measureWindowRadius = () => { captures++; return new Promise(done => { resolve = done; }); };
+        app.focusChanged(); advance(15); app.updateBorder();
+        assert.equal(captures, 0);
+        assert.equal(app.borderFocusWindow, h.previousWindow);
+        assert.equal(app.border.visible, true);
+        assert.equal(h.outlines.length, 0);
+        advance(1);
+        assert.equal(captures, 1, 'readback starts at the next compositor frame without an arbitrary timeout');
+        advance(1500); app.updateBorder();
+        assert.equal(h.hides(), 0, 'keep the previous border during even a slow capture');
+        assert.equal(h.frames.length, 0);
+        assert.deepEqual(h.opacityWrites, []);
+        const radius = {top: 12, topRight: 12, bottom: 0, bottomRight: 0};
+        resolve(radius); await new Promise(setImmediate);
+        assert.deepEqual(h.outlines, [radius], 'never draw provisional corners on the target');
+        assert.equal(h.frames.length, 1);
+        assert.equal(record.windowRadius, radius);
+        assert.equal(app.borderFocusWindow, w);
+        assert.equal(app.focusRadiusWindow, null);
+        assert.equal(h.hides(), 0);
+        assert.deepEqual(h.opacityWrites, [205], 'no transparent frame or brightness pulse');
+        assert.deepEqual(h.fades, []);
+        assert.equal(captures, 1);
+    }
+});
+
+test('first border appearance fades directly to its final opacity with final corners', async () => {
+    const h = focusBorderHarness({visible: false}), {app, advance} = h;
+    const radius = {top: 12, topRight: 12, bottom: 0, bottomRight: 0};
+    app.measureWindowRadius = async () => radius;
+    app.focusChanged(); advance(15);
+    assert.equal(app.border.visible, false);
+    assert.equal(h.outlines.length, 0);
+    advance(1); await new Promise(setImmediate);
+    assert.deepEqual(h.outlines, [radius]);
+    assert.equal(app.border.visible, true);
+    assert.deepEqual(h.opacityWrites, [0, 205]);
+    assert.equal(h.fades.length, 1);
+    assert.equal(h.fades[0].opacity, 205);
+    assert.equal(h.fades[0].onComplete, undefined, 'no second phase that dims the border');
+});
+
+test('repeated clicks on the active window retain its border throughout the fresh readback', async () => {
+    const h = focusBorderHarness(), {app, w, advance} = h;
+    app.borderFocusWindow = w;
+    let captures = 0;
+    const radius = {...h.record.windowRadius};
+    app.measureWindowRadius = async () => { captures++; return radius; };
+    app.focusChanged(); advance(8); app.focusChanged(); advance(15);
+    assert.equal(captures, 0);
+    assert.equal(app.borderFocusWindow, w);
+    assert.equal(h.hides(), 0);
+    assert.deepEqual(h.opacityWrites, []);
+    advance(1); await new Promise(setImmediate);
+    assert.equal(captures, 1);
+    assert.equal(h.hides(), 0);
+    assert.deepEqual(h.opacityWrites, [205]);
+    assert.deepEqual(h.fades, []);
+});
+
+test('failed focus readbacks keep the old border until the bounded retries finish', async () => {
+    const h = focusBorderHarness(), {app, advance} = h;
+    let captures = 0;
+    app.measureWindowRadius = async () => { captures++; return null; };
+    app.focusChanged();
+    for (const delay of [16, 500]) {
+        advance(delay); await new Promise(setImmediate);
+        assert.equal(h.outlines.length, 0);
+        assert.equal(app.borderFocusWindow, h.previousWindow);
+        assert.equal(h.hides(), 0);
+    }
+    advance(500); await new Promise(setImmediate);
+    assert.equal(captures, 3);
+    assert.deepEqual(h.outlines, [null]);
+    assert.equal(app.focusRadiusWindow, null);
+    assert.equal(h.hides(), 0);
+    assert.deepEqual(h.opacityWrites, [205]);
+});
+
+test('rapid navigation immediately outlines every window using its measured active corners', async () => {
+    const h = focusBorderHarness(), {app, w, record, shellDisplay, advance} = h;
+    const windows = [w, {...w}, {...w}];
+    const radii = windows.map((_, i) => ({top: 10 + i, topRight: 10 + i, bottom: i, bottomRight: i}));
+    for (const other of windows.slice(1)) app.records.set(other, {...record});
+    app.windows = () => windows;
+    app.visualWindowRect = target => ({...h.frame(), x: windows.indexOf(target) * 700});
+    let captures = 0;
+    app.measureWindowRadius = async target => { captures++; return radii[windows.indexOf(target)]; };
+    // Learn actual active corners once for each window.
+    for (const target of windows) {
+        shellDisplay.focus_window = target; app.focusChanged(); advance(16);
+        await new Promise(setImmediate);
+        assert.equal(app.records.get(target).activeWindowRadius, radii[windows.indexOf(target)]);
+    }
+    h.outlines.length = 0; h.frames.length = 0; h.opacityWrites.length = 0;
+    for (const target of [windows[0], windows[1], windows[2], windows[1], windows[0]]) {
+        shellDisplay.focus_window = target; app.focusChanged();
+        assert.equal(app.borderFocusWindow, target, 'each activation is reflected synchronously');
+        assert.equal(h.outlines.at(-1), radii[windows.indexOf(target)]);
+        assert.equal(app.focusRadiusLater, 0);
+        advance(20);
+    }
+    advance(1000); await new Promise(setImmediate);
+    assert.equal(h.frames.length, 5);
+    assert.equal(captures, 3, 'fast navigation needs no additional readbacks');
+    assert.equal(h.hides(), 0);
+    assert(h.opacityWrites.every(opacity => opacity === 205));
+    assert.equal(h.fades.length, 0);
+});
+
+test('the first rapid pass measures each window on its next frame without waiting 250 ms', async () => {
+    const h = focusBorderHarness(), {app, w, record, shellDisplay, advance} = h;
+    const windows = [w, {...w}, {...w}];
+    const radius = {top: 12, topRight: 12, bottom: 0, bottomRight: 0};
+    for (const target of windows.slice(1)) app.records.set(target, {...record});
+    app.windows = () => windows;
+    let captures = 0;
+    app.measureWindowRadius = async () => { captures++; return radius; };
+    for (const target of windows) {
+        shellDisplay.focus_window = target; app.focusChanged();
+        advance(16); await new Promise(setImmediate);
+        assert.equal(app.borderFocusWindow, target);
+        assert.equal(app.records.get(target).activeWindowRadius, radius);
+        advance(34); // Navigate again after only 50 ms on this window.
+    }
+    assert.equal(captures, windows.length);
+    assert.equal(h.frames.length, windows.length);
+    assert.equal(h.hides(), 0);
+    assert(h.opacityWrites.every(opacity => opacity === 205));
+});
+
+test('geometry invalidation discards active corners before the next focus transfer', async () => {
+    const h = focusBorderHarness(), {app, record, w, advance} = h;
+    const oldRadius = {...record.windowRadius};
+    record.activeWindowRadius = oldRadius;
+    app.invalidateWindowRadius(w, true);
+    assert.equal(record.activeWindowRadius, null);
+    let resolve;
+    app.measureWindowRadius = () => new Promise(done => { resolve = done; });
+    h.outlines.length = 0;
+    app.focusChanged(); advance(15);
+    assert.equal(h.outlines.length, 0);
+    advance(1);
+    const fresh = {top: 16, topRight: 16, bottom: 0, bottomRight: 0};
+    resolve(fresh); await new Promise(setImmediate);
+    assert.deepEqual(h.outlines, [fresh]);
+    assert.equal(record.activeWindowRadius, fresh);
+});
+
+test('an inactive readback cannot replace the active corner cache used on fast focus', async () => {
+    const h = focusBorderHarness(), {app, record, w, shellDisplay, advance} = h;
+    const active = {...record.windowRadius}, inactive = {top: 0, topRight: 0, bottom: 0, bottomRight: 0};
+    record.activeWindowRadius = active;
+    record.radiusDirty = true;
+    shellDisplay.focus_window = null;
+    app.measureWindowRadius = async () => inactive;
+    app.queueWindowRadius(w); advance(0); await new Promise(setImmediate);
+    assert.equal(record.windowRadius, inactive);
+    assert.equal(record.activeWindowRadius, active);
+    h.outlines.length = 0;
+    shellDisplay.focus_window = w; app.focusChanged();
+    assert.equal(app.borderFocusWindow, w);
+    assert.deepEqual(h.outlines, [active]);
+    assert.equal(app.focusRadiusLater, 0);
+});
+
+test('a readback spanning multiple focus changes cannot seed the active corner cache', async () => {
+    const h = focusBorderHarness(), {app, record, w, shellDisplay, advance} = h;
+    let resolve;
+    app.measureWindowRadius = () => new Promise(done => { resolve = done; });
+    app.focusChanged(); advance(16);
+    shellDisplay.focus_window = null; app.focusChanged();
+    shellDisplay.focus_window = w; app.focusChanged();
+    resolve({top: 5, topRight: 5, bottom: 0, bottomRight: 0});
+    await new Promise(setImmediate);
+    assert.equal(record.activeWindowRadius, null);
+    assert.equal(app.borderFocusWindow, null);
+    assert.equal(app.focusRadiusWindow, w);
 });
 
 test('SnapTess preferences are never tiled or treated as a tile drag or resize', () => {

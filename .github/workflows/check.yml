@@ -40,6 +40,8 @@ jobs:
         run: SNAPTESS_TWO_MONITORS=1 ./scripts/test-shell.sh tests/shared-spaces-shell.js
       - name: Linked resizing with native windows and delayed clients
         run: ./scripts/test-shell.sh tests/linked-resize-shell.js
+      - name: Focus borders during rapid navigation, including the first pass
+        run: ./scripts/test-shell.sh tests/focus-border-shell.js
       - name: GNOME Shell 50 two-monitor integration test
         run: SNAPTESS_TWO_MONITORS=1 ./scripts/test-shell.sh
       - uses: actions/upload-artifact@v4

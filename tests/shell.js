@@ -139,6 +139,7 @@ export async function run() {
     assert(borderRecord.windowRadius && !borderRecord.radiusDirty && borderRecord.windowRadius.top>=0,
         'a cleared window radius is measured again instead of caching the fallback');
     assert(app.border.visible, 'focus border appears after the radius has been measured');
+    borderRecord.activeWindowRadius=null;
     borderRecord.windowRadius=null;
     borderRecord.radiusDirty=true;
     borderRecord.radiusAttempts=0;
@@ -148,6 +149,7 @@ export async function run() {
     await Scripting.sleep(300);
     assert(borderRecord.windowRadius && app.border.visible,
         'the first measurement reveals the border without a provisional radius');
+    borderRecord.activeWindowRadius=null;
     borderRecord.windowRadius=null;
     borderRecord.radiusDirty=true;
     borderRecord.radiusAttempts=3;
@@ -177,6 +179,7 @@ export async function run() {
         'rapid geometry notifications cannot hide the fallback indefinitely');
     app.measureWindowRadius=measureRadius;
     borderRecord.radiusAttempts=0;
+    borderRecord.activeWindowRadius=null;
     borderRecord.windowRadius={top:0,bottom:20,topRight:0,bottomRight:0};
     borderRecord.radiusDirty=false;
     app.updateBorder();

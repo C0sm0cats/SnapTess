@@ -19,7 +19,7 @@ import {LayoutSwitcher} from './lib/layout-switcher.js';
 import {WindowBorder} from './lib/window-border.js';
 import {radiusFromPixels, radiusStyle, plausibleWindowRadius, visualFrameRect} from './lib/window-radius.js';
 
-const RUNTIME_REVISION = 83;
+const RUNTIME_REVISION = 84;
 const RESTORE_STABILIZE_MS = 1400;
 const RESTORE_QUIET_MS = 120;
 const MAX_RESTORE_MOVES = 8;
@@ -49,6 +49,8 @@ export default class SnapTess extends Extension {
         this.deferredRetile = new Set();
         this.busy = false;
         this.radiusReadbackReady = false;
+        this.focusRadiusGeneration = 0;
+        this.focusRadiusLater = 0;
         this.drag = null;
         this.resizeGrab = null;
         this.resizeLater = 0;
@@ -371,7 +373,7 @@ export default class SnapTess extends Extension {
             backingRect: null, scaleMinimum: null, scaleNegotiated: false, placementMoves: 0, placing: false, restoreStarted: false, restoreMoves: 0,
             sizeRepairs: 0, sizeRejectUntil: 0, mismatchSize: null, mismatchSince: 0, repairResetTimer: 0,
             lastTileChangeAt: 0, rapidLayoutRecovery: false, nativeFitSizes: [],
-            windowRadius: null, radiusDirty: true, radiusAttempts: 0, radiusPending: false,
+            windowRadius: null, activeWindowRadius: null, radiusDirty: true, radiusAttempts: 0, radiusPending: false,
             radiusTimer: 0, radiusTimerDelay: 0,
             radiusFallbackTimer: 0, radiusFallbackReady: false,
             radiusMonitor: w.get_monitor(), radiusGeneration: 0, radiusActorSignal: 0,
@@ -1832,9 +1834,10 @@ export default class SnapTess extends Extension {
             actor.ease({opacity: 255, duration: this.visualDuration(VISUAL.quick), mode: this.visualMode()});
         } else if (appearing) actor.opacity = 255;
     }
-    invalidateWindowRadius(w, retry = false) {
+    invalidateWindowRadius(w, retry = false, {focusOnly = false} = {}) {
         const record = this.records.get(w);
         if (!record) return;
+        if (!focusOnly) record.activeWindowRadius = null;
         const hadRadius = Boolean(record.windowRadius);
         this.cancel(record.radiusTimer); record.radiusTimer = 0;
         record.radiusGeneration++;
@@ -1867,11 +1870,18 @@ export default class SnapTess extends Extension {
             if (this.records.get(w) !== record || generation !== record.radiusGeneration) return;
             record.radiusPending = true;
             record.radiusAttempts++;
+            const focusGeneration = this.focusRadiusGeneration;
+            const activeSample = global.display.focus_window === w && !this.focusRadiusLater;
             this.measureWindowRadius(w).then(radius => {
                 if (this.records.get(w) !== record || generation !== record.radiusGeneration) return;
                 record.radiusPending = false;
                 if (radius) {
                     record.windowRadius = radius;
+                    // Cache the active decoration separately: inactive client
+                    // repaints must never replace the shape used on activation.
+                    if (activeSample && global.display.focus_window === w &&
+                        focusGeneration === this.focusRadiusGeneration)
+                        record.activeWindowRadius = radius;
                     record.radiusDirty = false;
                     this.cancel(record.radiusFallbackTimer); record.radiusFallbackTimer = 0;
                     record.radiusFallbackReady = false;
@@ -2011,7 +2021,13 @@ export default class SnapTess extends Extension {
             !this.windows(w.get_monitor()).includes(w)) {
             this.border.hide(); this.borderFocusWindow = null; return;
         }
-        if (record.radiusDirty) this.queueWindowRadius(w, record.windowRadius ? 120 : 0);
+        // Keep the previous outline intact while the newly focused client's
+        // decorations settle. Transfer it only once the final corners are ready.
+        if (this.focusRadiusWindow === w && this.focusRadiusLater) return;
+        if (this.focusRadiusWindow === w && !record.radiusDirty) this.focusRadiusWindow = null;
+        const focusRefresh = this.focusRadiusWindow === w;
+        if (record.radiusDirty) this.queueWindowRadius(w, !focusRefresh && record.windowRadius ? 120 : 0);
+        if (focusRefresh) return;
         if (!record.windowRadius) {
             if (record.radiusAttempts < 3 && !record.radiusFallbackReady && !record.radiusFallbackTimer) {
                 record.radiusFallbackTimer = this.later(1400, () => {
@@ -2031,22 +2047,20 @@ export default class SnapTess extends Extension {
         const scale = this.windowActor(w)?.get_scale()?.[0] ?? 1;
         const newFocus = this.borderFocusWindow !== w;
         const modeChanged = this.borderSwapActive !== swapping;
+        const fadeIn = newFocus && !this.border.visible;
         if (newFocus || modeChanged) {
             this.border.remove_all_transitions();
-            if (newFocus) this.border.opacity = this.settings.get_boolean('animations') ? 0 : swapping ? 255 : 205;
+            if (fadeIn) this.border.opacity = this.settings.get_boolean('animations') ? 0 : swapping ? 255 : 205;
         }
-        this.border.setOutline(outline.color, record.windowRadius, scale);
+        const radius = global.display.focus_window === w
+            ? record.activeWindowRadius ?? record.windowRadius : record.windowRadius;
+        this.border.setOutline(outline.color, radius, scale);
         this.border.setFrame(this.visualWindowRect(w), this.borderMonitorScale(w), swapping, outline);
         this.borderFocusWindow = w;
         this.borderSwapActive = swapping;
-        if ((newFocus || modeChanged) && this.settings.get_boolean('animations'))
-            this.border.ease({opacity: swapping ? 255 : newFocus ? 255 : 205, duration: this.visualDuration(VISUAL.quick),
-                mode: this.visualMode(),
-                onComplete: () => {
-                    if (newFocus && this.borderFocusWindow === w && !this.borderSwapActive)
-                        this.border.ease({opacity: 205, duration: this.visualDuration(VISUAL.quick),
-                            mode: this.visualMode()});
-                }});
+        if ((fadeIn || modeChanged) && this.settings.get_boolean('animations'))
+            this.border.ease({opacity: swapping ? 255 : 205, duration: this.visualDuration(VISUAL.quick),
+                mode: this.visualMode()});
         else this.border.opacity = swapping ? 255 : 205;
         this.stackWindowOverlays(w);
     }
@@ -2222,19 +2236,31 @@ export default class SnapTess extends Extension {
     }
 
     focusChanged() {
-        this.cancel(this.focusRadiusTimer); this.focusRadiusTimer = 0;
+        if (this.focusRadiusLater) global.compositor.get_laters().remove(this.focusRadiusLater);
+        this.focusRadiusLater = 0;
+        this.focusRadiusWindow = null;
+        this.focusRadiusGeneration = (this.focusRadiusGeneration ?? 0) + 1;
         if (this.drag && !global.display.is_grabbed()) this.grabEnd();
         else {
+            const w = global.display.focus_window;
+            const record = this.records.get(w);
+            // A previously measured active decoration can be shown immediately,
+            // even when keyboard focus moves faster than the settle interval.
+            // Geometry, monitor and theme changes invalidate this cache.
+            if (this.running && record && !record.activeWindowRadius) {
+                this.focusRadiusWindow = w;
+                // Read the newly focused frame after this frame's layout work,
+                // rather than debouncing every first activation for 250 ms.
+                this.focusRadiusLater = global.compositor.get_laters().add(Meta.LaterType.BEFORE_REDRAW, () => {
+                    this.focusRadiusLater = 0;
+                    if (this.running && global.display.focus_window === w)
+                        this.invalidateWindowRadius(w, true, {focusOnly: true});
+                    return GLib.SOURCE_REMOVE;
+                });
+            }
             this.hideWindowActions();
             this.updateBorder();
-            const w = global.display.focus_window;
             if (w) this.queueWindowActions(w);
-            // Focus changes can repaint client decorations without changing
-            // geometry. Do not keep a radius sampled from an older client frame.
-            if (this.running && this.records.has(w)) this.focusRadiusTimer = this.later(250, () => {
-                this.focusRadiusTimer = 0;
-                if (this.running && global.display.focus_window === w) this.invalidateWindowRadius(w, true);
-            });
         }
         this.publishPreviewState();
     }
@@ -2934,6 +2960,8 @@ export default class SnapTess extends Extension {
     disable() {
         // getSettings() can fail before enable() initializes any runtime resources.
         if (!this.settings) return;
+        if (this.focusRadiusLater) global.compositor.get_laters().remove(this.focusRadiusLater);
+        this.focusRadiusLater = 0;
         this.layoutSwitcher?.dialog.destroy(); this.layoutSwitcher = null;
         this.studio?.dialog.destroy(); this.studio = null;
         this.setRunning(false, true);
