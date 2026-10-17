@@ -1805,6 +1805,61 @@ test('geometry invalidation discards active corners before the next focus transf
     assert.equal(record.activeWindowRadius, fresh);
 });
 
+test('corner sampling waits for pending native fit checks without consuming attempts', async () => {
+    const h = focusBorderHarness(), {app, w, record, advance} = h;
+    const radius = {top: 5, topRight: 5, bottom: 0, bottomRight: 0};
+    let checks = 0, captures = 0;
+    app.correctWindowScale = target => {
+        assert.equal(target, w);
+        if (++checks === 1) app.scheduleWindowScale(w, 60);
+    };
+    app.measureWindowRadius = async () => {
+        assert.equal(record.scaleTimer, 0);
+        captures++;
+        return radius;
+    };
+    app.scheduleWindowScale(w, 60);
+    app.focusChanged(); advance(16);
+    assert.equal(record.radiusDirty, true);
+    assert.equal(record.radiusPending, false);
+    assert.equal(record.radiusAttempts, 0);
+    assert.equal(record.radiusTimer, 0);
+    assert.equal(record.activeWindowRadius, null);
+    advance(44);
+    assert.equal(checks, 1);
+    assert.equal(captures, 0);
+    advance(60); await new Promise(setImmediate);
+    assert.equal(checks, 2);
+    assert.equal(captures, 1);
+    assert.equal(record.activeWindowRadius, radius);
+    assert.deepEqual(h.outlines, [radius]);
+    assert.equal(h.hides(), 0);
+});
+
+test('a window losing focus during native fitting cannot seed the active corner cache', async () => {
+    const h = focusBorderHarness(), {app, w, record, shellDisplay, advance} = h;
+    const radius = {top: 5, topRight: 5, bottom: 0, bottomRight: 0};
+    app.correctWindowScale = () => {};
+    app.measureWindowRadius = async () => radius;
+    app.scheduleWindowScale(w, 60);
+    app.focusChanged(); advance(16);
+    shellDisplay.focus_window = null; app.focusChanged();
+    advance(44); await new Promise(setImmediate);
+    assert.equal(record.windowRadius, radius);
+    assert.equal(record.activeWindowRadius, null);
+    assert.equal(h.outlines.length, 0);
+});
+
+test('removing a window while its corner readback waits for fitting cancels the work', () => {
+    const h = focusBorderHarness(), {app, w, advance} = h;
+    app.correctWindowScale = () => assert.fail('a removed window must not be fitted');
+    app.measureWindowRadius = () => assert.fail('a removed window must not be captured');
+    app.scheduleWindowScale(w, 60);
+    app.focusChanged(); advance(16);
+    app.records.delete(w); advance(100);
+    assert.equal(h.outlines.length, 0);
+});
+
 test('an inactive readback cannot replace the active corner cache used on fast focus', async () => {
     const h = focusBorderHarness(), {app, record, w, shellDisplay, advance} = h;
     const active = {...record.windowRadius}, inactive = {top: 0, topRight: 0, bottom: 0, bottomRight: 0};

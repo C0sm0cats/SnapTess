@@ -22,6 +22,9 @@ export async function run() {
     await Scripting.waitTestWindows();
     app.settings.set_boolean('active-border', true);
     app.settings.set_boolean('animations', true);
+    // Exercise a focus change overlapping the initial native resize, which
+    // must not promote transient client corners into the active cache.
+    [...app.records.keys()][1].activate(global.get_current_time());
     app.setRunning(true);
     await Scripting.sleep(1000);
     const windows = [...app.records.keys()];
@@ -63,6 +66,7 @@ export async function run() {
         for (const [index, w] of windows.entries()) {
             w.activate(global.get_current_time());
             await Scripting.sleep(350);
+            assert(global.display.focus_window === w, 'settled readback belongs to the focused window');
             const radius = await app.measureWindowRadius(w);
             assert(radius, 'settled corners remain measurable');
             const scale = app.windowActor(w).get_scale()[0];

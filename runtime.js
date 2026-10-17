@@ -19,7 +19,7 @@ import {LayoutSwitcher} from './lib/layout-switcher.js';
 import {WindowBorder} from './lib/window-border.js';
 import {radiusFromPixels, radiusStyle, plausibleWindowRadius, visualFrameRect} from './lib/window-radius.js';
 
-const RUNTIME_REVISION = 84;
+const RUNTIME_REVISION = 85;
 const RESTORE_STABILIZE_MS = 1400;
 const RESTORE_QUIET_MS = 120;
 const MAX_RESTORE_MOVES = 8;
@@ -1586,6 +1586,10 @@ export default class SnapTess extends Extension {
             if (!this.records.has(w)) return;
             record.scaleTimer = 0;
             this.correctWindowScale(w);
+            // Resume corner sampling after the pending native fit check, not
+            // while its client buffer may still represent the previous size.
+            if (this.records.get(w) === record && !record.scaleTimer && record.radiusDirty)
+                this.queueWindowRadius(w);
         });
     }
     validateTransformsAfterGrab() {
@@ -1868,6 +1872,9 @@ export default class SnapTess extends Extension {
         record.radiusTimer = this.later(delay, () => {
             record.radiusTimer = 0;
             if (this.records.get(w) !== record || generation !== record.radiusGeneration) return;
+            // scheduleWindowScale resumes this dirty measurement once the
+            // outstanding placement check completes, without polling or retry.
+            if (record.scaleTimer) return;
             record.radiusPending = true;
             record.radiusAttempts++;
             const focusGeneration = this.focusRadiusGeneration;
