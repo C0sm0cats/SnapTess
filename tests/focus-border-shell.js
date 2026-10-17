@@ -60,15 +60,19 @@ export async function run() {
         assert(samples.size === windows.length, 'every native window has painted its outline');
         // Check early corners against a later readback after client decoration
         // repaints have had ample time to settle, without changing the outline.
-        for (const w of windows) {
+        for (const [index, w] of windows.entries()) {
             w.activate(global.get_current_time());
             await Scripting.sleep(350);
             const radius = await app.measureWindowRadius(w);
             assert(radius, 'settled corners remain measurable');
             const scale = app.windowActor(w).get_scale()[0];
             const first = samples.get(w);
+            console.log(`SNAPTESS_FOCUS_CORNERS: ${JSON.stringify({index, first, settled: radius,
+                scale, active: app.records.get(w).activeWindowRadius,
+                focused: global.display.focus_window === w})}`);
             assert(Object.keys(first).every(key => first[key] === radius[key] * scale),
-                'the first displayed corners match the settled client frame');
+                `the first displayed corners match the settled client frame: ${JSON.stringify({index,
+                    first, settled: radius, scale})}`);
         }
         console.log(`SNAPTESS_FOCUS_BORDER_PASSED activations=35 intervalMs=50 frames=${frames} misses=${misses}`);
     } finally {
