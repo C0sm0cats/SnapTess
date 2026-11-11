@@ -4,11 +4,11 @@
 
 **Your windows, beautifully arranged.**
 
-Automatic window tiling for **GNOME Shell 50 · Wayland**.
+Automatic window tiling for **GNOME Shell 50–51 · Wayland**.
 
 [![Checks](https://github.com/C0sm0cats/SnapTess/actions/workflows/check.yml/badge.svg)](https://github.com/C0sm0cats/SnapTess/actions/workflows/check.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-8ce8c3)](LICENSE)
-[![GNOME 50](https://img.shields.io/badge/GNOME-50-3584e4)](metadata.json)
+[![GNOME 50–51](https://img.shields.io/badge/GNOME-50%E2%80%9351-3584e4)](metadata.json)
 
 **One shortcut to arrange. One shortcut to give your desktop back.**
 
@@ -33,7 +33,7 @@ SnapTess is a standalone GNOME Shell extension. It starts paused: enabling it do
 
 ## Install
 
-Requires GNOME Shell **50** on Wayland and the `gnome-extensions` command. No build tools or source checkout are needed.
+Requires GNOME Shell **50 or 51** on Wayland and the `gnome-extensions` command. No build tools or source checkout are needed.
 
 Download `snaptess@c0sm0cats.github.io.shell-extension.zip` from the [latest release](https://github.com/C0sm0cats/SnapTess/releases/latest). In the folder containing the downloaded ZIP, run:
 
