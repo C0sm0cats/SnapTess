@@ -24,7 +24,7 @@ export async function run() {
     for (const [edge, value] of [['top', 7], ['right', 19], ['bottom', 31], ['left', 43]])
         app.settings.set_int(`padding-${edge}`, value);
     app.setRunning(true); await Scripting.sleep(500);
-    const device = Clutter.get_default_backend().get_default_seat()
+    const device = global.stage.context.get_backend().get_default_seat()
         .create_virtual_device(Clutter.InputDeviceType.POINTER_DEVICE);
     const move = (x, y) => device.notify_absolute_motion(GLib.get_monotonic_time(), x, y);
     let frames = 0, failure = null, worstUpdate = 0, settling = null, stoppedPid = 0;
@@ -63,7 +63,7 @@ export async function run() {
             move(x, y); await Scripting.sleep(30);
             device.notify_button(GLib.get_monotonic_time(), 1, Clutter.ButtonState.PRESSED);
             await Scripting.sleep(24);
-            assert(w.begin_grab_op(op, Clutter.get_default_backend().get_pointer_sprite(global.stage), global.get_current_time(), null), `native resize grab begins for tile ${index} (grabbed=${global.display.is_grabbed()})`);
+            assert(w.begin_grab_op(op, global.stage.context.get_backend().get_pointer_sprite(global.stage), global.get_current_time(), null), `native resize grab begins for tile ${index} (grabbed=${global.display.is_grabbed()})`);
             await Scripting.sleep(40);
             assert(app.resizeGrab, `SnapTess handles the native grab: running=${app.running} busy=${app.busy} drag=${!!app.drag} floating=${app.records.get(w)?.floating} grabbed=${global.display.is_grabbed()} op=${op}`);
             const travel = [...Array.from({length: 18}, (_, n) => n + 1),

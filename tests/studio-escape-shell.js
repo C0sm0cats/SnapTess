@@ -11,7 +11,7 @@ export async function run() {
     const entry = Main.extensionManager.lookup('snaptess@c0sm0cats.github.io');
     for (let n = 0; n < 30 && !entry?.stateObj?.runtime; n++) await Scripting.sleep(100);
     const app = entry?.stateObj?.runtime; assert(app, 'runtime loaded');
-    const keyboard = Clutter.get_default_backend().get_default_seat()
+    const keyboard = global.stage.context.get_backend().get_default_seat()
         .create_virtual_device(Clutter.InputDeviceType.KEYBOARD_DEVICE);
     const escape = async () => {
         keyboard.notify_keyval(GLib.get_monotonic_time(), Clutter.KEY_Escape, Clutter.KeyState.PRESSED);
