@@ -16,7 +16,7 @@ export async function run() {
     await Scripting.waitTestWindows(); await pause();
     app.setRunning(true); await pause();
     const w = [...app.records.keys()][0]; w.activate(global.get_current_time()); await pause();
-    const keyboard = Clutter.get_default_backend().get_default_seat()
+    const keyboard = global.stage.context.get_backend().get_default_seat()
         .create_virtual_device(Clutter.InputDeviceType.KEYBOARD_DEVICE);
     const chord = async key => {
         for (const symbol of [Clutter.KEY_Control_L, Clutter.KEY_Alt_L, key])

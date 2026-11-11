@@ -57,7 +57,7 @@ export async function run() {
     assert(studio.nameRow.visible && JSON.stringify(app.profiles) === before,
         'footer Save opens naming without applying the draft');
     studio.nameEntry.set_text('Save without apply test'); studio.nameEntry.grab_key_focus();
-    const keyboard = Clutter.get_default_backend().get_default_seat()
+    const keyboard = global.stage.context.get_backend().get_default_seat()
         .create_virtual_device(Clutter.InputDeviceType.KEYBOARD_DEVICE);
     keyboard.notify_keyval(GLib.get_monotonic_time(), Clutter.KEY_Return, Clutter.KeyState.PRESSED);
     await Scripting.sleep(60);
@@ -129,7 +129,7 @@ export async function run() {
         studio.newLayout.tiles[2].x === .6, 'numeric width edits update every adjacent tile');
     assert(studio.customHandles.length === 2, 'custom canvas provides shared-divider drag handles');
     const beforeDrag = JSON.stringify(studio.newLayout.tiles);
-    const device = Clutter.get_default_backend().get_default_seat()
+    const device = global.stage.context.get_backend().get_default_seat()
         .create_virtual_device(Clutter.InputDeviceType.POINTER_DEVICE);
     const handle = studio.customHandles.find(h => h.index === 0 && h.edge === 'E').handle;
     const [handleX, handleY] = handle.get_transformed_position();
@@ -220,7 +220,7 @@ export async function run() {
     }
     device.notify_button(GLib.get_monotonic_time(), 1, Clutter.ButtonState.PRESSED); await Scripting.sleep(30);
     assert(w.begin_grab_op(Meta.GrabOp.RESIZING_E,
-        Clutter.get_default_backend().get_pointer_sprite(global.stage), global.get_current_time(), null),
+        global.stage.context.get_backend().get_pointer_sprite(global.stage), global.get_current_time(), null),
         'native custom window resize begins');
     await Scripting.sleep(50);
     assert(app.resizeGrab?.rects.length === 3, 'custom windows enter existing linked resize');
