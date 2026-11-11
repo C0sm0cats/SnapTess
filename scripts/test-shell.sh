@@ -3,7 +3,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 bash scripts/build.sh
 # A private bus and temporary XDG directories isolate this from your desktop.
-echo 'Running GNOME Shell 50 integration and GTK preferences tests'
+echo 'Running GNOME Shell integration and GTK preferences tests'
 # Match the deterministic background used by local headless validation.
 export SHELL_BACKGROUND_IMAGE="${SHELL_BACKGROUND_IMAGE:-$PWD/docs/snaptess-overview-blurred.png}"
 perf_helper=''
