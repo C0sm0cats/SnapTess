@@ -1379,6 +1379,64 @@ test('scale-to-fit includes X11 titlebar extents in the minimum frame size', () 
     assert.ok(Math.abs(h.record.visualScale * 393 - target.height) < 1);
 });
 
+test('a scale-to-fit client refusing a narrow backing size learns its minimum and fills the tile', () => {
+    const h = harness();
+    h.app.settings.get_strv = key => key === 'scaled-apps' ? ['test.desktop'] : [];
+    h.w.get_min_size = () => [true, 532, 300];
+    const target = {...h.slot, width: 498, height: 413};
+    h.app.place(h.w, target);
+    assert.deepEqual(h.requests.at(-1), {type: 'resize', x: target.x, y: target.y, width: 532, height: 442});
+    // The client keeps a wider real minimum than it reports.
+    h.commit({x: target.x, y: target.y, width: 646, height: 442});
+    h.advance(300);
+    assert.ok(Math.abs(h.actor.scale_x - 498 / 646) < 0.001, 'letterboxed while the refusal settles');
+    assert.ok(!h.requests.some(request => request.width === 646), 'a transient size is not learned early');
+    h.advance(2000);
+    assert.deepEqual(h.requests.at(-1), {type: 'resize', x: target.x, y: target.y, width: 532, height: 442},
+        'the refused size is requested once more before learning a minimum');
+    assert.equal(h.record.learnedMinimum, null);
+    h.advance(1000);
+    assert.deepEqual(h.requests.at(-1), {type: 'resize', x: target.x, y: target.y, width: 646, height: 536});
+    assert.deepEqual(h.record.learnedMinimum, {width: 646, height: 0});
+    h.commit({width: 646, height: 536});
+    h.advance(300);
+    assert.ok(Math.abs(h.actor.scale_x * 646 - target.width) < 1);
+    assert.ok(Math.abs(h.actor.scale_y * 536 - target.height) < 1, 'the scaled image fills the tile height');
+    // Another layout reuses the learned minimum immediately.
+    const second = {...target, width: 400, height: 500};
+    h.app.place(h.w, second);
+    assert.equal(h.requests.at(-1).width, 646);
+    assert.equal(h.requests.at(-1).height, Math.ceil(500 / (400 / 646)));
+});
+
+test('a scale-to-fit window resized externally accepts the repeated request without learning a minimum', () => {
+    const h = harness();
+    h.app.settings.get_strv = key => key === 'scaled-apps' ? ['test.desktop'] : [];
+    h.w.get_min_size = () => [true, 300, 200];
+    const target = {...h.slot, width: 498, height: 413};
+    h.app.place(h.w, target);
+    h.commit({x: target.x, y: target.y, width: 498, height: 413}); h.advance(300);
+    h.commit({width: 678, height: 553}); h.advance(2500);
+    assert.deepEqual(h.requests.at(-1), {type: 'resize', x: target.x, y: target.y, width: 498, height: 413});
+    h.commit({width: 498, height: 413}); h.advance(2000);
+    assert.equal(h.record.learnedMinimum, null);
+    assert.equal(h.actor.scale_x, 1);
+});
+
+test('a scale-to-fit client refusing every size stays tiled with bounded requests', () => {
+    const h = harness();
+    h.app.settings.get_strv = key => key === 'scaled-apps' ? ['test.desktop'] : [];
+    h.w.get_min_size = () => [true, 532, 300];
+    const target = {...h.slot, width: 498, height: 413};
+    h.app.place(h.w, target);
+    const stubborn = () => { if (h.frame().width !== 1000 || h.frame().height !== 700) h.commit({width: 1000, height: 700}); };
+    stubborn();
+    for (let i = 0; i < 40; i++) { h.advance(250); stubborn(); }
+    assert.equal(h.record.floating, false);
+    assert.ok(h.requests.filter(request => request.type === 'resize').length <= 6);
+    assert.ok(h.actor.scale_x < 1);
+});
+
 test('only configured applications use scale-to-fit fallback', () => {
     const h = harness();
     h.app.settings.get_strv = key => key === 'scaled-apps' ? ['test.desktop'] : [];

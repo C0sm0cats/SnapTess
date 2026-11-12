@@ -280,6 +280,9 @@ export async function run() {
     const stubbornActor=app.windowActor(stubborn);
     let [actorScaleX,actorScaleY]=stubbornActor.get_scale();
     if(nativeRepair) {
+        // The scale returns to native once the accepted size is checked (~90 ms).
+        for(let i=0;i<10 && stubbornRecord.visualScale!==1;i++) await Scripting.sleep(100);
+        [actorScaleX,actorScaleY]=stubbornActor.get_scale();
         assert(stubbornRecord.visualScale===1,'accepted size repair keeps native scale');
         assert(actorScaleX===1 && actorScaleY===1,'repaired window actor stays at native scale');
     } else {

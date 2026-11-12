@@ -11,7 +11,7 @@ import {Extension} from 'resource:///org/gnome/shell/extensions/extension.js';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import * as PanelMenu from 'resource:///org/gnome/shell/ui/panelMenu.js';
 import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js';
-import {layout, autoLayout, PRESETS, capacity, fitMinimumSize, frameScalePivot, nearestSlot, directionalFocusSlot, reconcileSlots,
+import {layout, autoLayout, PRESETS, capacity, fitMinimumSize, largerSize, frameScalePivot, nearestSlot, directionalFocusSlot, reconcileSlots,
     activePinnedSlots, reserveAppSlots, edgeNeighbors, swapNeighbor, advanceLinkedResize, resizedLayout, resizeOffsets, validCustomTiles} from './lib/layout.js';
 import {validSavedLayout} from './lib/archive.js';
 import {Studio} from './lib/studio.js';
@@ -21,7 +21,7 @@ import {radiusFromPixels, radiusStyle, plausibleWindowRadius, visualFrameRect} f
 import {actionStyle, actionHandleSize, actionPaletteSize, actionHandleIcon, actionSlide, actionPlacement,
     actionTooltipPlacement, actionHandleStyle, actionPaletteStyle, horizontalActions} from './lib/window-actions.js';
 
-const RUNTIME_REVISION = 87;
+const RUNTIME_REVISION = 88;
 const RESTORE_STABILIZE_MS = 1400;
 const RESTORE_QUIET_MS = 120;
 const MAX_RESTORE_MOVES = 8;
@@ -360,7 +360,7 @@ export default class SnapTess extends Extension {
             parked: false, restoreParked: false, signals: [], monitor: w.get_monitor(), tileRect: null,
             visualScale: 1, scaleTimer: 0, linkedResizePending: false,
             linkedResizeEligible: false, linkedResizeScale: false,
-            backingRect: null, scaleMinimum: null, scaleNegotiated: false, placementMoves: 0, placing: false, restoreStarted: false, restoreMoves: 0,
+            backingRect: null, scaleMinimum: null, learnedMinimum: null, backingRepairSent: false, scaleNegotiated: false, placementMoves: 0, placing: false, restoreStarted: false, restoreMoves: 0,
             sizeRepairs: 0, sizeRejectUntil: 0, mismatchSize: null, mismatchSince: 0, repairResetTimer: 0,
             lastTileChangeAt: 0, rapidLayoutRecovery: false, nativeFitSizes: [],
             windowRadius: null, activeWindowRadius: null, radiusDirty: true, radiusAttempts: 0, radiusPending: false,
@@ -1113,7 +1113,7 @@ export default class SnapTess extends Extension {
                     r.restorePending = false; r.restoreUntil = 0; r.restoreQuietUntil = 0;
                     if (r.parked || r.restoreParked) { w.unminimize(); r.parked = false; r.restoreParked = false; }
                     if (r.original) this.restore(w, r.original);
-                    r.scaleMinimum = null;
+                    r.scaleMinimum = null; r.learnedMinimum = null;
                     r.linkedResizePending = false;
                     r.linkedResizeEligible = false;
                     r.linkedResizeScale = false;
@@ -1479,6 +1479,7 @@ export default class SnapTess extends Extension {
             const reported = this.minimumSize(w);
             if (reported?.width || reported?.height) record.scaleMinimum = reported;
             else record.scaleMinimum ??= {width: frame.width, height: frame.height};
+            record.scaleMinimum = largerSize(record.scaleMinimum, record.learnedMinimum);
             const fitted = fitMinimumSize(target, record.scaleMinimum.width, record.scaleMinimum.height);
             record.scaleNegotiated = fitted.scale < 0.999;
             record.backingRect = {...fitted.frame};
@@ -1504,6 +1505,48 @@ export default class SnapTess extends Extension {
         const positionMismatch = Math.abs(actual.x - target.x) > 1 || Math.abs(actual.y - target.y) > 1;
         const linkedPreview = record.linkedResizePending || record.linkedResizeEligible;
         if (linkedPreview && (sizeMismatch || positionMismatch)) this.fitLinkedResize(w, actor, target);
+        if (!record.restorePending && scaled && !linkedPreview && sizeMismatch &&
+            record.sizeRepairs < MAX_SIZE_REPAIRS) {
+            // A scale-to-fit client that stays larger than its backing size may
+            // have a higher real minimum than reported. Once the size has
+            // settled, repeat the request once; if it is refused again, learn
+            // that minimum and request a backing size with the tile's
+            // proportions, so the scaled image fills the tile instead of being
+            // letterboxed. A window merely resized externally accepts the repeat.
+            const refusedWidth = actual.width > record.backingRect.width + 1;
+            const refusedHeight = actual.height > record.backingRect.height + 1;
+            if (refusedWidth || refusedHeight) {
+                const size = `${actual.width}:${actual.height}`;
+                if (record.mismatchSize !== size) {
+                    record.mismatchSize = size;
+                    record.mismatchSince = Date.now();
+                }
+                const settleAt = Math.max(record.sizeRejectUntil, record.mismatchSince + SIZE_MISMATCH_STABLE_MS);
+                if (Date.now() >= settleAt && !record.backingRepairSent) {
+                    record.backingRepairSent = true;
+                    record.sizeRepairs++;
+                    record.mismatchSize = null; record.mismatchSince = 0;
+                    this.requestWindowGeometry(w, 'tile-size', record.backingRect);
+                    this.scheduleWindowScale(w, SIZE_MISMATCH_STABLE_MS);
+                } else if (Date.now() >= settleAt) {
+                    record.learnedMinimum = largerSize(record.learnedMinimum, {
+                        width: refusedWidth ? actual.width : 0, height: refusedHeight ? actual.height : 0});
+                    record.scaleMinimum = largerSize(record.scaleMinimum, record.learnedMinimum);
+                    const fitted = fitMinimumSize(target, record.scaleMinimum.width, record.scaleMinimum.height);
+                    if (Math.abs(fitted.frame.width - record.backingRect.width) > 1 ||
+                        Math.abs(fitted.frame.height - record.backingRect.height) > 1) {
+                        record.sizeRepairs++;
+                        record.backingRect = {...fitted.frame};
+                        this.traceWindow(w, 'learn-minimum', {learnedMinimum: record.learnedMinimum});
+                        this.requestWindowGeometry(w, 'backing-fit', fitted.frame);
+                        this.scheduleWindowScale(w, 120);
+                        return;
+                    }
+                } else {
+                    this.scheduleWindowScale(w, Math.max(50, settleAt - Date.now()));
+                }
+            }
+        }
         if (!record.restorePending && !scaled && sizeMismatch) {
             const size = `${actual.width}:${actual.height}`;
             if (record.mismatchSize !== size) {
@@ -1633,6 +1676,7 @@ export default class SnapTess extends Extension {
             record.placementMoves = 0;
             record.restoreMoves = 0;
             record.sizeRepairs = 0;
+            record.backingRepairSent = false;
             record.mismatchSize = null;
             record.mismatchSince = 0;
             this.cancel(record.repairResetTimer); record.repairResetTimer = 0;
@@ -1660,8 +1704,8 @@ export default class SnapTess extends Extension {
         if (!preserveScale) this.resetWindowScale(w);
         record.tileRect = {...rect};
         const configuredMinimum = scaled ? this.minimumSize(w) : null;
-        const minimum = configuredMinimum?.width || configuredMinimum?.height
-            ? configuredMinimum : record.scaleMinimum ?? {width: 0, height: 0};
+        const minimum = largerSize(configuredMinimum?.width || configuredMinimum?.height
+            ? configuredMinimum : record.scaleMinimum ?? {width: 0, height: 0}, record.learnedMinimum);
         const fitted = scaled ? fitMinimumSize(rect, minimum.width, minimum.height) : {frame: rect, scale: 1};
         record.backingRect = {...fitted.frame};
         record.scaleNegotiated = !scaled;
