@@ -252,6 +252,37 @@ if (settings.get_value('window-action-colors').deepUnpack()['org.remmina.Remmina
     throw new Error('Editing one app changed remote desktop defaults');
 scaled.active = true;
 for (const key of ['window-action-positions', 'window-action-colors']) settings.reset(key);
+const removeButtonOf = row => {
+    let found;
+    const visitButtons = widget => {
+        if (widget instanceof Gtk.Button && widget.tooltip_text?.startsWith('Remove ')) found = widget;
+        for (let nested = widget.get_first_child(); nested && !found; nested = nested.get_next_sibling()) visitButtons(nested);
+    };
+    visitButtons(row);
+    return found;
+};
+const removeApp = removeButtonOf(appRow);
+if (!removeApp?.visible) throw new Error('Configured application has no remove button');
+floating.active = true; handlePosition.selected = 2; colorSwitch.active = true;
+removeApp.emit('clicked');
+const remaining = [...settings.get_strv('excluded-apps'), ...settings.get_strv('scaled-apps')];
+if (remaining.some(id => [appId, legacyId, startupAlias].includes(id)) ||
+    appId in settings.get_value('window-action-positions').deepUnpack() ||
+    appId in settings.get_value('window-action-colors').deepUnpack())
+    throw new Error('Removing an application configuration left a rule behind');
+if (floating.active || scaled.active || handlePosition.selected !== 0 || colorSwitch.active)
+    throw new Error('Removing a configuration did not reset its controls');
+if (!belongsTo(appRow, availableGroup) || removeApp.visible)
+    throw new Error('A cleared installed application did not return to Other applications');
+if (settings.get_value('window-action-colors').deepUnpack()['org.remmina.Remmina'] !== '#ed5b00')
+    throw new Error('Removing one application changed remote desktop defaults');
+const customRow = apps.find(row => row.subtitle.includes('custom-test.window'));
+removeButtonOf(customRow).emit('clicked');
+if (settings.get_strv('scaled-apps').includes('custom-test.window') || belongsTo(customRow, configuredGroup) ||
+    belongsTo(customRow, availableGroup))
+    throw new Error('Removing an uninstalled saved app ID did not remove its row');
+if (!/· \d+$/.test(configuredGroup.title)) throw new Error('Application counts were not refreshed');
+for (const key of ['excluded-apps', 'scaled-apps', 'window-action-positions', 'window-action-colors']) settings.reset(key);
 search.text = 'not-an-installed-app';
 if (appRow.visible) throw new Error('Application search did not filter rows');
 search.text = appInfo.get_display_name();
