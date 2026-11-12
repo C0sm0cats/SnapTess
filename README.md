@@ -80,6 +80,7 @@ All shortcuts can be changed or disabled in Preferences. Super is usually the Wi
 - **Focus outline:** follow the GNOME accent or choose a custom color, set thickness from 1 to 6 pixels, and choose a plain outline or subtle halo. Each corner continues to follow the window shape.
 - **Animations:** choose Fast, Normal, Slow or a custom base duration (40–500 ms), with ease out, linear or ease in and out motion. These settings affect guides, focus effects, Studio and space transitions; native window placement stays immediate. Disable animations with “Animate placement guides”.
 - **Window action handle:** the focused window shows a small handle that opens its actions (float, minimize, maximize, close). In **Preferences → Applications**, each app can place it on the left, right, top or bottom edge and give it a custom color. Remote desktop and virtual machine viewers (FreeRDP, Remmina, GNOME Connections, KRDC, TigerVNC, RustDesk, AnyDesk, TeamViewer, NoMachine, X2Go, Moonlight, Parsec, GNOME Boxes, virt-viewer, virt-manager, VirtualBox, VMware) default to an orange handle on the right, so it never covers the handle of a SnapTess session shown inside them.
+- **Application rules:** the trash button on a configured application removes all its rules at once (floating, scale-to-fit, handle position and color), including rules copied from another computer for apps that are not installed. **Undo** in the confirmation restores them.
 
 ## How spaces and profiles work
 

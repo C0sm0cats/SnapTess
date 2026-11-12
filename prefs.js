@@ -316,14 +316,21 @@ export default class SnapTessPreferences extends ExtensionPreferences {
             ids.forEach(alias => listed.add(normalizeAppId(alias)));
             const row = new Adw.ExpanderRow({title: name, subtitle: custom ? `${id} · Saved app ID` : id});
             if (icon) row.add_prefix(new Gtk.Image({gicon: icon, pixel_size: 32}));
-            let item;
+            let item, clearing = false;
+            const toggles = [];
+            const removeButton = new Gtk.Button({icon_name: 'user-trash-symbolic', valign: Gtk.Align.CENTER,
+                tooltip_text: `Remove ${name} configuration`});
+            removeButton.add_css_class('flat');
+            row.add_suffix(removeButton);
             const ruleChanged = () => {
+                if (clearing) return;
                 const configured = isConfigured(ids);
                 if (configured !== item.configured) {
                     (item.configured ? configuredGroup : availableGroup).remove(row);
                     (configured ? configuredGroup : availableGroup).add(row);
                     item.configured = configured;
                 }
+                removeButton.visible = configured;
                 refreshGroups();
             };
             for (const [key, title, subtitle] of [
@@ -333,9 +340,11 @@ export default class SnapTessPreferences extends ExtensionPreferences {
                 const toggle = new Adw.SwitchRow({title, subtitle});
                 toggle.active = ids.some(alias => settings.get_strv(key).includes(alias));
                 toggle.connect('notify::active', () => {
+                    if (clearing) return;
                     setAppRule(settings, key, ids, toggle.active);
                     ruleChanged();
                 });
+                toggles.push([key, toggle]);
                 row.add_row(toggle);
             }
             const position = new Adw.ComboRow({title: 'Handle position',
@@ -344,6 +353,7 @@ export default class SnapTessPreferences extends ExtensionPreferences {
             position.selected = Math.max(0, HANDLE_POSITIONS.findIndex(([value]) =>
                 value === appRuleValue(appMap(settings, 'window-action-positions'), ids)));
             position.connect('notify::selected', () => {
+                if (clearing) return;
                 const value = HANDLE_POSITIONS[position.selected]?.[0] ?? 'left';
                 setAppMapValue(settings, 'window-action-positions', ids, value === 'left' ? null : value);
                 ruleChanged();
@@ -359,6 +369,7 @@ export default class SnapTessPreferences extends ExtensionPreferences {
             const pickedColor = () => `#${[colorPicker.rgba.red, colorPicker.rgba.green, colorPicker.rgba.blue]
                 .map(value => Math.round(value * 255).toString(16).padStart(2, '0')).join('')}`;
             const saveColor = () => {
+                if (clearing) return;
                 colorPicker.sensitive = colorSwitch.active;
                 setAppMapValue(settings, 'window-action-colors', ids, colorSwitch.active ? pickedColor() : null);
                 ruleChanged();
@@ -369,6 +380,61 @@ export default class SnapTessPreferences extends ExtensionPreferences {
             colorRow.activatable_widget = colorSwitch;
             row.add_row(colorRow);
             item = {row, text: `${name} ${id}`.toLocaleLowerCase(), configured: isConfigured(ids)};
+            removeButton.visible = item.configured;
+            // Clear every rule of this app under all its identifiers, including
+            // shipped defaults and rules copied from another computer.
+            const matching = new Set(ids.map(normalizeAppId));
+            const matches = value => matching.has(normalizeAppId(value));
+            const syncControls = () => {
+                clearing = true;
+                for (const [key, toggle] of toggles) toggle.active = settings.get_strv(key).some(matches);
+                position.selected = Math.max(0, HANDLE_POSITIONS.findIndex(([value]) =>
+                    value === appRuleValue(appMap(settings, 'window-action-positions'), ids)));
+                const color = validColor(appRuleValue(appMap(settings, 'window-action-colors'), ids));
+                if (color) { const restored = new Gdk.RGBA(); restored.parse(color); colorPicker.rgba = restored; }
+                colorSwitch.active = color !== null; colorPicker.sensitive = color !== null;
+                clearing = false;
+            };
+            removeButton.connect('clicked', () => {
+                const removed = {};
+                for (const key of ['excluded-apps', 'scaled-apps']) {
+                    const values = settings.get_strv(key);
+                    removed[key] = values.filter(matches);
+                    settings.set_strv(key, values.filter(value => !matches(value)));
+                }
+                for (const key of ['window-action-positions', 'window-action-colors']) {
+                    removed[key] = Object.entries(appMap(settings, key)).filter(([alias]) => matches(alias));
+                    setAppMapValue(settings, key, ids, null);
+                }
+                syncControls();
+                const toast = new Adw.Toast({title: `Removed ${name} configuration`, button_label: 'Undo', timeout: 5});
+                // Undo restores exactly the removed entries; other apps keep any later edits.
+                toast.connect('button-clicked', () => {
+                    for (const key of ['excluded-apps', 'scaled-apps']) {
+                        const values = settings.get_strv(key);
+                        settings.set_strv(key, [...values, ...removed[key].filter(value => !values.includes(value))]);
+                    }
+                    for (const key of ['window-action-positions', 'window-action-colors'])
+                        settings.set_value(key, new GLib.Variant('a{ss}',
+                            {...appMap(settings, key), ...Object.fromEntries(removed[key])}));
+                    syncControls();
+                    if (custom && !searchable.includes(item)) {
+                        configuredGroup.add(row);
+                        item.configured = true;
+                        searchable.push(item);
+                    }
+                    ruleChanged();
+                });
+                item.toast = toast;
+                window.add_toast(toast);
+                if (custom) {
+                    configuredGroup.remove(row);
+                    searchable.splice(searchable.indexOf(item), 1);
+                    refreshGroups();
+                    return;
+                }
+                ruleChanged();
+            });
             (item.configured ? configuredGroup : availableGroup).add(row);
             searchable.push(item);
         };
