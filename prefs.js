@@ -7,6 +7,7 @@ import Gdk from 'gi://Gdk';
 import {ExtensionPreferences} from 'resource:///org/gnome/Shell/Extensions/js/extensions/prefs.js';
 import {layout, autoLayout, capacity, PRESETS} from './lib/layout.js';
 import {makeArchive, mergeArchive} from './lib/archive.js';
+import {appRuleValue, normalizeAppId, validColor, REMOTE_HANDLE_COLOR} from './lib/window-actions.js';
 
 function appAliases(id, startupWmClass = null) {
     const aliases = [id];
@@ -20,6 +21,28 @@ function setAppRule(settings, key, ids, enabled) {
     const values = settings.get_strv(key).filter(id => !matching.has(id));
     if (enabled) values.push(ids[0]);
     settings.set_strv(key, values);
+}
+
+const HANDLE_POSITIONS = [['left', 'Left'], ['right', 'Right'], ['top', 'Top'], ['bottom', 'Bottom']];
+
+function appMap(settings, key) {
+    return settings.get_value(key).deepUnpack();
+}
+
+// Replace every alias of an app with one canonical entry, or remove it.
+function setAppMapValue(settings, key, ids, value) {
+    const matching = new Set(ids.map(normalizeAppId));
+    const map = Object.fromEntries(Object.entries(appMap(settings, key))
+        .filter(([id]) => !matching.has(normalizeAppId(id))));
+    if (value !== null) map[ids[0]] = value;
+    settings.set_value(key, new GLib.Variant('a{ss}', map));
+}
+
+// Entries still equal to the shipped defaults (remote desktop clients) are not
+// listed as saved app IDs when the application is not installed.
+function customizedMapIds(settings, key) {
+    const defaults = settings.get_default_value(key).deepUnpack();
+    return Object.entries(appMap(settings, key)).filter(([id, value]) => defaults[id] !== value).map(([id]) => id);
 }
 
 export default class SnapTessPreferences extends ExtensionPreferences {
@@ -263,15 +286,20 @@ export default class SnapTessPreferences extends ExtensionPreferences {
         const availableGroup = new Adw.PreferencesGroup({title: 'Other applications'});
         applications.add(configuredGroup);
         applications.add(availableGroup);
-        const selected = new Set([...settings.get_strv('excluded-apps'), ...settings.get_strv('scaled-apps')]);
+        const isConfigured = ids => ids.some(alias =>
+            settings.get_strv('excluded-apps').includes(alias) ||
+            settings.get_strv('scaled-apps').includes(alias)) ||
+            (appRuleValue(appMap(settings, 'window-action-positions'), ids) ?? 'left') !== 'left' ||
+            appRuleValue(appMap(settings, 'window-action-colors'), ids) !== null;
+        const selected = new Set([...settings.get_strv('excluded-apps'), ...settings.get_strv('scaled-apps'),
+            ...customizedMapIds(settings, 'window-action-positions'), ...customizedMapIds(settings, 'window-action-colors')]);
         const appInfos = Gio.AppInfo.get_all().filter(info => {
             const id = info.get_id();
             return id && (info.should_show() ||
                 appAliases(id, info.get_startup_wm_class?.()).some(alias => selected.has(alias)));
         });
         appInfos.sort((a, b) => {
-            const chosen = info => appAliases(info.get_id(), info.get_startup_wm_class?.())
-                .some(alias => selected.has(alias));
+            const chosen = info => isConfigured(appAliases(info.get_id(), info.get_startup_wm_class?.()));
             return Number(chosen(b)) - Number(chosen(a)) || a.get_display_name().localeCompare(b.get_display_name());
         });
         const listed = new Set();
@@ -285,10 +313,19 @@ export default class SnapTessPreferences extends ExtensionPreferences {
         };
         const addApp = (id, name, icon = null, custom = false, startupWmClass = null) => {
             const ids = custom ? [id] : appAliases(id, startupWmClass);
-            ids.forEach(alias => listed.add(alias));
+            ids.forEach(alias => listed.add(normalizeAppId(alias)));
             const row = new Adw.ExpanderRow({title: name, subtitle: custom ? `${id} · Saved app ID` : id});
             if (icon) row.add_prefix(new Gtk.Image({gicon: icon, pixel_size: 32}));
             let item;
+            const ruleChanged = () => {
+                const configured = isConfigured(ids);
+                if (configured !== item.configured) {
+                    (item.configured ? configuredGroup : availableGroup).remove(row);
+                    (configured ? configuredGroup : availableGroup).add(row);
+                    item.configured = configured;
+                }
+                refreshGroups();
+            };
             for (const [key, title, subtitle] of [
                 ['excluded-apps', 'Always floating', 'Keep its windows outside the tiled grid'],
                 ['scaled-apps', 'Allow scale-to-fit', 'Fit constrained windows; XWayland clicks may be offset'],
@@ -297,26 +334,50 @@ export default class SnapTessPreferences extends ExtensionPreferences {
                 toggle.active = ids.some(alias => settings.get_strv(key).includes(alias));
                 toggle.connect('notify::active', () => {
                     setAppRule(settings, key, ids, toggle.active);
-                    const configured = ids.some(alias =>
-                        settings.get_strv('excluded-apps').includes(alias) ||
-                        settings.get_strv('scaled-apps').includes(alias));
-                    if (configured !== item.configured) {
-                        (item.configured ? configuredGroup : availableGroup).remove(row);
-                        (configured ? configuredGroup : availableGroup).add(row);
-                        item.configured = configured;
-                    }
-                    refreshGroups();
+                    ruleChanged();
                 });
                 row.add_row(toggle);
             }
-            item = {row, text: `${name} ${id}`.toLocaleLowerCase(),
-                configured: ids.some(alias => selected.has(alias))};
+            const position = new Adw.ComboRow({title: 'Handle position',
+                subtitle: 'Edge of the window where its action handle appears',
+                model: Gtk.StringList.new(HANDLE_POSITIONS.map(([, label]) => label))});
+            position.selected = Math.max(0, HANDLE_POSITIONS.findIndex(([value]) =>
+                value === appRuleValue(appMap(settings, 'window-action-positions'), ids)));
+            position.connect('notify::selected', () => {
+                const value = HANDLE_POSITIONS[position.selected]?.[0] ?? 'left';
+                setAppMapValue(settings, 'window-action-positions', ids, value === 'left' ? null : value);
+                ruleChanged();
+            });
+            row.add_row(position);
+            const savedColor = validColor(appRuleValue(appMap(settings, 'window-action-colors'), ids));
+            const colorRow = new Adw.ActionRow({title: 'Custom handle color',
+                subtitle: 'Off: default handle style'});
+            const colorSwitch = new Gtk.Switch({valign: Gtk.Align.CENTER, active: savedColor !== null});
+            const colorPicker = new Gtk.ColorDialogButton({valign: Gtk.Align.CENTER,
+                dialog: new Gtk.ColorDialog({with_alpha: false}), sensitive: savedColor !== null});
+            const rgba = new Gdk.RGBA(); rgba.parse(savedColor ?? REMOTE_HANDLE_COLOR); colorPicker.rgba = rgba;
+            const pickedColor = () => `#${[colorPicker.rgba.red, colorPicker.rgba.green, colorPicker.rgba.blue]
+                .map(value => Math.round(value * 255).toString(16).padStart(2, '0')).join('')}`;
+            const saveColor = () => {
+                colorPicker.sensitive = colorSwitch.active;
+                setAppMapValue(settings, 'window-action-colors', ids, colorSwitch.active ? pickedColor() : null);
+                ruleChanged();
+            };
+            colorSwitch.connect('notify::active', saveColor);
+            colorPicker.connect('notify::rgba', () => { if (colorSwitch.active) saveColor(); });
+            colorRow.add_suffix(colorPicker); colorRow.add_suffix(colorSwitch);
+            colorRow.activatable_widget = colorSwitch;
+            row.add_row(colorRow);
+            item = {row, text: `${name} ${id}`.toLocaleLowerCase(), configured: isConfigured(ids)};
             (item.configured ? configuredGroup : availableGroup).add(row);
             searchable.push(item);
         };
         for (const info of appInfos) addApp(info.get_id(), info.get_display_name(), info.get_icon(),
             false, info.get_startup_wm_class?.());
-        for (const id of selected) if (!listed.has(id)) addApp(id, id, null, true);
+        for (const id of selected) if (!listed.has(normalizeAppId(id))) {
+            listed.add(normalizeAppId(id));
+            addApp(id, id, null, true);
+        }
         const noResults = new Adw.ActionRow({title: 'No matching applications', visible: searchable.length === 0});
         appGroup.add(noResults);
         refreshGroups();
