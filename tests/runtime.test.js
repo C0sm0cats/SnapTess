@@ -2220,6 +2220,53 @@ test('Reset empties the selected tile group and floats local windows without cha
     assert.equal(app.groups.get('0:0:1').length, 2);
 });
 
+function stopHarness() {
+    const h = sharingHarness(), app = h.app, restored = [];
+    app.restore = (w, state) => { restored.push([w, state]); if (state.minimized) w.minimize(); else w.unminimize(); };
+    app.switchItem = {setToggleState() {}}; app.indicator = {remove_style_class_name() {}};
+    for (const name of ['cancelLinkedResizeFrame', 'clearPinnedPlaceholders', 'clearMotionGuides',
+        'clearSpaceTransitions', 'publishPreviewState']) app[name] = () => {};
+    h.record.original = {x: 1, y: 2, width: 300, height: 200, monitor: 0, maximized: 0, minimized: false, tileRect: null};
+    return {...h, restored};
+}
+
+test('stopping keeps a window the user minimized after tiling minimized', () => {
+    const {app, w, restored} = stopHarness();
+    w.minimize();
+    app.setRunning(false);
+    assert.equal(w.minimized, true);
+    assert.equal(restored[0][1].width, 300, 'original geometry is still restored');
+    assert.equal(restored[0][1].minimized, true);
+});
+
+test('stopping shows windows SnapTess minimized for an inactive Space', () => {
+    for (const flag of ['parked', 'restoreParked']) {
+        const {app, w, record} = stopHarness();
+        w.minimize(); record[flag] = true;
+        app.setRunning(false);
+        assert.equal(w.minimized, false, flag);
+        assert.equal(record[flag], false, flag);
+    }
+});
+
+test('stopping keeps a window shown when it was minimized only before tiling', () => {
+    const {app, w, record} = stopHarness();
+    record.original.minimized = true;
+    app.setRunning(false);
+    assert.equal(w.minimized, false);
+});
+
+test('Reset keeps a user-minimized local window minimized while floating it', () => {
+    const {app, w, record} = stopHarness();
+    record.space = 1;
+    app.groups = new Map([['0:0:1', [w]]]);
+    app.profiles = {};
+    w.minimize();
+    app.applyProfiles([{monitor: 0, space: 1, preset: 'auto', windows: [], pinned: [], reset: true}]);
+    assert.equal(record.floating, true);
+    assert.equal(w.minimized, true);
+});
+
 test('Clear tile floats only the removed local window and preserves neighboring slots', () => {
     const {app, w} = sharingHarness();
     const other = {...w, minimized: false, get_stable_sequence: () => 44};
