@@ -6,6 +6,7 @@ import * as appearance from '../lib/appearance.js';
 import {validSavedLayout} from '../lib/archive.js';
 import * as geometry from '../lib/layout.js';
 import {radiusStyle, radiusFromPixels, plausibleWindowRadius} from '../lib/window-radius.js';
+import * as windowActions from '../lib/window-actions.js';
 
 // Execute the actual runtime methods with asynchronous client commits and a
 // deterministic clock. GI imports alone are replaced; no duplicate restore code.
@@ -48,7 +49,7 @@ function harness(options = {}) {
         move_frame(user, x, y) { userOps.push(user); requests.push({type: 'move', x, y}); },
     };
     const Runtime = vm.runInNewContext(source, {
-        ...geometry, ...appearance, validSavedLayout, radiusStyle, radiusFromPixels, plausibleWindowRadius, Extension: class {}, console, TextDecoder,
+        ...geometry, ...appearance, ...windowActions, validSavedLayout, radiusStyle, radiusFromPixels, plausibleWindowRadius, Extension: class {}, console, TextDecoder,
         Date: class extends Date { static now() { return now; } },
         GLib: {SOURCE_CONTINUE: true, SOURCE_REMOVE: false, file_get_contents(path) {
             if (path === `/proc/${options.launchPid ?? 979491}/environ` && options.launchEnvironment)
@@ -624,6 +625,21 @@ test('scaled applications use the same identifier matching without changing save
     }
     h.app.settings.get_strv = () => ['unrelated.desktop'];
     assert.equal(h.app.scalesApp(h.w), false);
+});
+
+test('window action style follows per-app position and color rules', () => {
+    const h = harness();
+    h.w.get_wm_class = () => 'xfreerdp';
+    h.app.appId = () => 'window:42';
+    const maps = {'window-action-positions': {xfreerdp: 'right', 'org.example.Editor': 'bottom'},
+        'window-action-colors': {XFREERDP: '#112233'}};
+    h.app.settings.get_value = key => ({deepUnpack: () => maps[key] ?? {}});
+    assert.deepEqual(h.app.windowActionStyle(h.w), {position: 'right', color: '#112233'});
+    h.w.get_wm_class = () => 'Editor';
+    h.app.appId = () => 'org.example.Editor.desktop';
+    assert.deepEqual(h.app.windowActionStyle(h.w), {position: 'bottom', color: null});
+    h.app.settings.get_value = () => { throw new Error('missing key'); };
+    assert.deepEqual(h.app.windowActionStyle(h.w), {position: 'left', color: null});
 });
 
 test('a window-backed app uses its verified desktop launch for application rules', () => {

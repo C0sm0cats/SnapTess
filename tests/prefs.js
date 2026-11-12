@@ -11,7 +11,11 @@ const [, bytes] = root.get_child('metadata.json').load_contents(null);
 const metadata = {...JSON.parse(new TextDecoder().decode(bytes)), dir: root, path: root.get_path()};
 const prefs = new Preferences(metadata);
 const settings = prefs.getSettings();
-const installedApps = Gio.AppInfo.get_all().filter(info => info.should_show() && info.get_id()?.endsWith('.desktop'));
+// Remote desktop clients have default handle rules; test with an unconfigured app.
+const remoteIds = new Set(Object.keys(settings.get_default_value('window-action-positions').deepUnpack())
+    .map(id => id.toLowerCase()));
+const installedApps = Gio.AppInfo.get_all().filter(info => info.should_show() && info.get_id()?.endsWith('.desktop') &&
+    ![info.get_id().slice(0, -8), info.get_startup_wm_class?.()].some(id => id && remoteIds.has(id.toLowerCase())));
 const appInfo = installedApps.find(info => info.get_startup_wm_class?.()) ?? installedApps[0];
 if (!appInfo) throw new Error('No installed desktop application available for preferences test');
 const appId = appInfo.get_id(), legacyId = appId.slice(0, -8);
@@ -212,6 +216,42 @@ floating.active = true;
 if (!settings.get_strv('excluded-apps').includes(appId)) throw new Error('Always floating was not saved');
 floating.active = false;
 if (settings.get_strv('excluded-apps').includes(appId)) throw new Error('Always floating was not cleared');
+const appRows = [];
+const visitAppRows = widget => {
+    if (widget instanceof Adw.ActionRow) appRows.push(widget);
+    for (let nested = widget.get_first_child(); nested; nested = nested.get_next_sibling()) visitAppRows(nested);
+};
+visitAppRows(appRow);
+const handlePosition = appRows.find(row => row.title === 'Handle position');
+const handleColor = appRows.find(row => row.title === 'Custom handle color');
+if (!handlePosition || handlePosition.selected !== 0 || !handleColor) throw new Error('Handle rules are missing');
+scaled.active = false;
+handlePosition.selected = 1;
+if (settings.get_value('window-action-positions').deepUnpack()[appId] !== 'right')
+    throw new Error('Handle position was not saved');
+if (!belongsTo(appRow, configuredGroup)) throw new Error('A handle position did not configure the application');
+handlePosition.selected = 0;
+if (appId in settings.get_value('window-action-positions').deepUnpack()) throw new Error('Left handle position was not cleared');
+if (!belongsTo(appRow, availableGroup)) throw new Error('Clearing the handle position left the app configured');
+let colorSwitch, handlePicker;
+const findColorControls = widget => {
+    if (widget instanceof Gtk.Switch) colorSwitch = widget;
+    if (widget instanceof Gtk.ColorDialogButton) handlePicker = widget;
+    for (let nested = widget.get_first_child(); nested; nested = nested.get_next_sibling()) findColorControls(nested);
+};
+findColorControls(handleColor);
+if (!colorSwitch || colorSwitch.active || handlePicker.sensitive) throw new Error('Handle color should default to off');
+colorSwitch.active = true;
+if (settings.get_value('window-action-colors').deepUnpack()[appId] !== '#ed5b00' || !belongsTo(appRow, configuredGroup))
+    throw new Error('Enabling a handle color did not save the default orange');
+const blue = new Gdk.RGBA(); blue.parse('#1155aa'); handlePicker.rgba = blue;
+if (settings.get_value('window-action-colors').deepUnpack()[appId] !== '#1155aa') throw new Error('Handle color did not save');
+colorSwitch.active = false;
+if (appId in settings.get_value('window-action-colors').deepUnpack()) throw new Error('Handle color was not cleared');
+if (settings.get_value('window-action-colors').deepUnpack()['org.remmina.Remmina'] !== '#ed5b00')
+    throw new Error('Editing one app changed remote desktop defaults');
+scaled.active = true;
+for (const key of ['window-action-positions', 'window-action-colors']) settings.reset(key);
 search.text = 'not-an-installed-app';
 if (appRow.visible) throw new Error('Application search did not filter rows');
 search.text = appInfo.get_display_name();

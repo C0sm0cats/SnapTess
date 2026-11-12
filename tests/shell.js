@@ -395,6 +395,44 @@ export async function run() {
     assert(app.windowActions.visible && !app.windowActionHandle.visible,
         'hovering the edge handle restores window actions');
     app.hideWindowActions();
+    const actionRuleId=app.appId(stubborn);
+    const actionMap=(key, value) => app.settings.set_value(key,
+        new GLib.Variant('a{ss}', {...app.settings.get_value(key).deepUnpack(), [actionRuleId]: value}));
+    actionMap('window-action-positions','right'); actionMap('window-action-colors','#ed5b00');
+    app.showWindowActionHandle();
+    const rightRect=app.windowActionsRect(stubborn,stubbornRecord);
+    assert(app.windowActionHandle.visible && app.windowActionHandle.width===28 &&
+        app.windowActionHandle.x+28>=rightRect.x+rightRect.width-8 &&
+        app.windowActionHandle.x+28<=rightRect.x+rightRect.width &&
+        app.windowActionHandle.child.icon_name==='go-previous-symbolic' &&
+        app.windowActionHandle.get_style()?.includes('237,91,0'),
+        `a right-edge app shows an orange handle at its right edge (${app.windowActionHandle.x})`);
+    app.showWindowActions(); await Scripting.sleep(180);
+    assert(app.windowActions.visible && app.windowActions.width===44 &&
+        app.windowActions.x+44>=rightRect.x+rightRect.width-8 &&
+        app.windowActions.get_style()?.includes('#ed5b00'),
+        'its palette opens at the right edge with a colored border');
+    app.showWindowActionTooltip(app.floatAction);
+    assert(app.windowActionTooltip.visible && app.windowActionTooltip.x<app.windowActions.x,
+        'right-edge palette tooltips open toward the window');
+    actionMap('window-action-positions','top');
+    await Scripting.sleep(50);
+    const topRect=app.windowActionsRect(stubborn,stubbornRecord);
+    assert(app.windowActions.visible && app.windowActions.width===176 && app.windowActions.height===44 &&
+        app.windowActions.orientation===Clutter.Orientation.HORIZONTAL &&
+        app.windowActions.y>=topRect.y && app.windowActions.y<=topRect.y+12,
+        'changing the rule to top reopens a horizontal palette at the top edge');
+    app.hideWindowActions(); app.showWindowActionHandle();
+    assert(app.windowActionHandle.width===40 && app.windowActionHandle.height===28 &&
+        app.windowActionHandle.child.icon_name==='go-down-symbolic',
+        'the top handle is horizontal and points into the window');
+    app.settings.reset('window-action-positions'); app.settings.reset('window-action-colors');
+    await Scripting.sleep(50);
+    app.hideWindowActions(); app.showWindowActionHandle();
+    assert(app.windowActionHandle.width===28 && app.windowActionHandle.child.icon_name==='go-next-symbolic' &&
+        !app.windowActionHandle.get_style() && app.windowActionHandle.x<=rightRect.x+8,
+        'resetting the rules restores the default left handle');
+    app.hideWindowActions();
     app.place(stubborn,stubbornTarget); await pause();
     [actorScaleX,actorScaleY]=stubbornActor.get_scale();
     assert(Math.abs(actorScaleX-expectedScale)<0.001 && Math.abs(actorScaleY-expectedScale)<0.001,
