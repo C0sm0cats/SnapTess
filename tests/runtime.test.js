@@ -129,7 +129,7 @@ function harness(options = {}) {
     }
     return {app, w, actor, record, requests, scaleWrites, userOps, launches, slot, timers, advance, commit, special,
         shellMain, shellDisplay, notifyWindow: name => signals.get(name)?.(),
-        effectsDone, settleInitial, frame: () => frame, grab: value => { grabbed = value; },
+        effectsDone, settleInitial, frame: () => frame, actorSignal: name => actorSignals.get(name)?.(), grab: value => { grabbed = value; },
         monitor: value => { monitor = value; }, pointer: (x, y) => { pointer = [x, y]; }};
 }
 
@@ -625,6 +625,28 @@ test('scaled applications use the same identifier matching without changing save
     }
     h.app.settings.get_strv = () => ['unrelated.desktop'];
     assert.equal(h.app.scalesApp(h.w), false);
+});
+
+test('closing a window whose actor is already disposed does not touch the actor', () => {
+    const h = harness();
+    h.app.schedule = () => {};
+    h.actorSignal('destroy');
+    h.actor.disconnect = () => { throw new Error('disposed actor accessed'); };
+    h.notifyWindow('unmanaged');
+    assert.equal(h.app.records.has(h.w), false);
+});
+
+test('closing a window with a live actor disconnects every actor handler once', () => {
+    const h = harness();
+    h.app.schedule = () => {};
+    const disconnected = [];
+    h.actor.disconnect = id => disconnected.push(id);
+    const borderSignals = h.record.borderActorSignals.length;
+    h.notifyWindow('unmanaged');
+    // first-frame + border properties + destroy, plus effects-completed
+    assert.equal(disconnected.length, borderSignals + 3);
+    assert.equal(new Set(disconnected).size, disconnected.length);
+    assert.equal(h.app.records.has(h.w), false);
 });
 
 test('window action style follows per-app position and color rules', () => {
