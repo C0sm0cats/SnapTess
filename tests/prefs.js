@@ -261,6 +261,9 @@ const removeButtonOf = row => {
     visitButtons(row);
     return found;
 };
+const toasts = [];
+const showToast = window.add_toast.bind(window);
+window.add_toast = toast => { toasts.push(toast); showToast(toast); };
 const removeApp = removeButtonOf(appRow);
 if (!removeApp?.visible) throw new Error('Configured application has no remove button');
 floating.active = true; handlePosition.selected = 2; colorSwitch.active = true;
@@ -276,11 +279,26 @@ if (!belongsTo(appRow, availableGroup) || removeApp.visible)
     throw new Error('A cleared installed application did not return to Other applications');
 if (settings.get_value('window-action-colors').deepUnpack()['org.remmina.Remmina'] !== '#ed5b00')
     throw new Error('Removing one application changed remote desktop defaults');
+const undoRemoval = () => {
+    const toast = toasts.at(-1);
+    if (toast?.button_label !== 'Undo') throw new Error('Removal toast has no Undo');
+    toast.emit('button-clicked');
+};
+undoRemoval();
+if (!settings.get_strv('excluded-apps').includes(appId) || !scaled.active || !floating.active ||
+    settings.get_value('window-action-positions').deepUnpack()[appId] !== 'top' || !colorSwitch.active ||
+    !belongsTo(appRow, configuredGroup) || !removeApp.visible)
+    throw new Error('Undo did not restore the removed application rules');
+removeApp.emit('clicked');
+if (floating.active || !belongsTo(appRow, availableGroup)) throw new Error('Removing again after Undo failed');
 const customRow = apps.find(row => row.subtitle.includes('custom-test.window'));
 removeButtonOf(customRow).emit('clicked');
 if (settings.get_strv('scaled-apps').includes('custom-test.window') || belongsTo(customRow, configuredGroup) ||
     belongsTo(customRow, availableGroup))
     throw new Error('Removing an uninstalled saved app ID did not remove its row');
+undoRemoval();
+if (!settings.get_strv('scaled-apps').includes('custom-test.window') || !belongsTo(customRow, configuredGroup))
+    throw new Error('Undo did not restore an uninstalled saved app ID');
 if (!/· \d+$/.test(configuredGroup.title)) throw new Error('Application counts were not refreshed');
 for (const key of ['excluded-apps', 'scaled-apps', 'window-action-positions', 'window-action-colors']) settings.reset(key);
 search.text = 'not-an-installed-app';
