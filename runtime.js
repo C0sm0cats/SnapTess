@@ -21,7 +21,7 @@ import {radiusFromPixels, radiusStyle, plausibleWindowRadius, visualFrameRect} f
 import {actionStyle, actionHandleSize, actionPaletteSize, actionHandleIcon, actionSlide, actionPlacement,
     actionTooltipPlacement, actionHandleStyle, actionPaletteStyle, horizontalActions} from './lib/window-actions.js';
 
-const RUNTIME_REVISION = 86;
+const RUNTIME_REVISION = 87;
 const RESTORE_STABILIZE_MS = 1400;
 const RESTORE_QUIET_MS = 120;
 const MAX_RESTORE_MOVES = 8;
@@ -366,7 +366,7 @@ export default class SnapTess extends Extension {
             windowRadius: null, activeWindowRadius: null, radiusDirty: true, radiusAttempts: 0, radiusPending: false,
             radiusTimer: 0, radiusTimerDelay: 0,
             radiusFallbackTimer: 0, radiusFallbackReady: false,
-            radiusMonitor: w.get_monitor(), radiusGeneration: 0, radiusActorSignal: 0,
+            radiusMonitor: w.get_monitor(), radiusGeneration: 0, radiusActorSignal: 0, actorDestroySignal: 0,
             borderActorSignals: [],
             traceUntil: 0, traceSignals: [], traceTimer: 0, requestSequence: 0, effectActor: null, effectSignal: 0, specialState: this.isSpecialWindow(w),
             restorePending: false, restoreTimer: 0, settleTimer: 0, restoreUntil: 0, restoreQuietUntil: 0};
@@ -384,6 +384,9 @@ export default class SnapTess extends Extension {
                         this.updateBorder(); this.updateWindowActionsPosition(w);
                     }
                 }));
+            // GNOME may dispose the actor before the window is unmanaged; its
+            // handlers are then already gone and must not be disconnected again.
+            record.actorDestroySignal = actor.connect('destroy', () => this.forgetWindowActor(record, actor));
         }
         const watch = (signal, fn) => record.signals.push(w.connect(signal, fn));
         const untrack = () => {
@@ -394,8 +397,7 @@ export default class SnapTess extends Extension {
             this.cancel(record.settleTimer); record.settleTimer = 0;
             this.cancel(record.radiusTimer); record.radiusTimer = 0;
             this.cancel(record.radiusFallbackTimer); record.radiusFallbackTimer = 0;
-            if (actor && record.radiusActorSignal) actor.disconnect(record.radiusActorSignal);
-            if (actor) for (const id of record.borderActorSignals) actor.disconnect(id);
+            this.disconnectWindowActor(record, actor);
             this.disconnectWindowEffects(record);
             if (record.motionGuide) { this.motionGuides.delete(record.motionGuide); record.motionGuide.destroy(); }
             for (const id of record.signals) w.disconnect(id);
@@ -1346,6 +1348,21 @@ export default class SnapTess extends Extension {
         } catch {
             return global.get_window_actors().find(actor => actor.meta_window === w) ?? null;
         }
+    }
+    forgetWindowActor(record, actor) {
+        record.actorDestroySignal = 0;
+        record.radiusActorSignal = 0;
+        record.borderActorSignals = [];
+        if (record.effectActor === actor) { record.effectActor = null; record.effectSignal = 0; }
+        record.traceSignals = record.traceSignals.filter(([traced]) => traced !== actor);
+    }
+    disconnectWindowActor(record, actor) {
+        if (!actor || !record.actorDestroySignal) return;
+        for (const id of [record.radiusActorSignal, ...record.borderActorSignals, record.actorDestroySignal])
+            if (id) actor.disconnect(id);
+        record.actorDestroySignal = 0;
+        record.radiusActorSignal = 0;
+        record.borderActorSignals = [];
     }
     disconnectWindowEffects(record) {
         if (!record) return;
