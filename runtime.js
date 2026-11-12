@@ -21,7 +21,7 @@ import {radiusFromPixels, radiusStyle, plausibleWindowRadius, visualFrameRect} f
 import {actionStyle, actionHandleSize, actionPaletteSize, actionHandleIcon, actionSlide, actionPlacement,
     actionTooltipPlacement, actionHandleStyle, actionPaletteStyle, horizontalActions} from './lib/window-actions.js';
 
-const RUNTIME_REVISION = 88;
+const RUNTIME_REVISION = 89;
 const RESTORE_STABILIZE_MS = 1400;
 const RESTORE_QUIET_MS = 120;
 const MAX_RESTORE_MOVES = 8;
@@ -415,7 +415,7 @@ export default class SnapTess extends Extension {
         // Wayland may publish the title/app identity after window-created.
         const identityChanged = () => {
             if (!this.isOwnPreferences(w) || !this.records.has(w)) return;
-            if (record.original) this.restore(w, record.original);
+            if (record.original) this.restore(w, this.originalState(w, record));
             untrack();
             this.updateBorder(); this.hideWindowActions();
         };
@@ -1039,6 +1039,11 @@ export default class SnapTess extends Extension {
         }
         this.tile(true);
     }
+    // The original geometry with the window's current minimized state, so a window
+    // the user minimized stays minimized; windows SnapTess hid for a Space are shown.
+    originalState(w, record) {
+        return {...record.original, minimized: w.minimized && !record.parked && !record.restoreParked};
+    }
     restore(w, state) {
         if (w.fullscreen) return;
         this.resetWindowScale(w, true);
@@ -1111,8 +1116,9 @@ export default class SnapTess extends Extension {
                     this.cancel(r.restoreTimer); r.restoreTimer = 0;
                     this.cancel(r.settleTimer); r.settleTimer = 0;
                     r.restorePending = false; r.restoreUntil = 0; r.restoreQuietUntil = 0;
+                    const state = r.original && this.originalState(w, r);
                     if (r.parked || r.restoreParked) { w.unminimize(); r.parked = false; r.restoreParked = false; }
-                    if (r.original) this.restore(w, r.original);
+                    if (state) this.restore(w, state);
                     r.scaleMinimum = null; r.learnedMinimum = null;
                     r.linkedResizePending = false;
                     r.linkedResizeEligible = false;
@@ -2975,8 +2981,9 @@ export default class SnapTess extends Extension {
                     if ((reset || releaseWindows.includes(w)) && !claimed.has(w) && this.windowSpaces(w).size === 1) {
                         // A local window has no other Space to return to. Untile it
                         // without closing it or assigning it to another Space.
+                        const state = r.original && this.originalState(w, r);
                         r.floating = true; r.parked = false; r.restoreParked = false;
-                        if (r.original) this.restore(w, r.original);
+                        if (state) this.restore(w, state);
                         r.tileRect = null;
                         continue;
                     }
