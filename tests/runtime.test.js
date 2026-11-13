@@ -71,7 +71,7 @@ function harness(options = {}) {
                     get_app_info: () => ({launch: () => { launches.push(id); return true; }})} :
                 options.installedApps?.find(info => info.get_id() === id)?.app ?? null})},
         WindowTracker: {get_default: () => ({get_window_app: () => options.trackedApp ?? null})}},
-        Meta: {LaterType: {BEFORE_REDRAW: 0}, WindowType: {NORMAL: 0}, GrabOp: {MOVING: 1, KEYBOARD_MOVING: 2,
+        Meta: {LaterType: {BEFORE_REDRAW: 0}, WindowType: {NORMAL: 0}, WindowClientType: {WAYLAND: 0, X11: 1}, GrabOp: {MOVING: 1, KEYBOARD_MOVING: 2,
             RESIZING_N: 3, RESIZING_S: 4, RESIZING_E: 5, RESIZING_W: 6,
             RESIZING_NE: 7, RESIZING_NW: 8, RESIZING_SE: 9, RESIZING_SW: 10}},
         Mtk: {Rectangle: class { constructor(rect) { Object.assign(this, rect); } }},
@@ -2524,4 +2524,57 @@ test('a layout-launched window is released at most three times', () => {
     for (let i = 0; i < 5; i++) { h.advance(300); w.maximize(); h.advance(1); }
     assert.equal(calls.unmaximize, 3);
     assert.equal(w.get_maximize_flags(), 3, 'an app that insists keeps its state');
+});
+
+function actionActor(name, eases) {
+    return {name, visible: false, opacity: 255, translation_x: 0, translation_y: 0,
+        show() { this.visible = true; }, hide() { this.visible = false; },
+        remove_all_transitions() {}, ease(params) { eases.push([name, params]); },
+        add_style_class_name() {}, remove_style_class_name() {}, set_style() {}, set_position() {}};
+}
+
+function windowActionsHarness(clientType) {
+    const h = harness(), app = h.app, eases = [];
+    h.w.get_client_type = () => clientType;
+    h.shellDisplay.focus_window = h.w;
+    app.settings.get_boolean = key => key === 'animations';
+    app.visualDuration = base => base; app.visualMode = () => 0;
+    app.windowActionHandle = actionActor('handle', eases);
+    app.windowActions = actionActor('palette', eases);
+    app.windowActionTooltip = actionActor('tooltip', eases);
+    app.floatAction = {...actionActor('float', eases), child: {}};
+    app.maximizeAction = {child: {}};
+    app.applyWindowActionStyle = () => { app.actionPosition = 'left'; };
+    app.stackWindowOverlays = () => {}; app.scheduleWindowActionsHide = () => {};
+    app.windowActionsRect = () => ({x: 0, y: 0, width: 400, height: 300});
+    app.windowActionPosition = () => ({x: 0, y: 0});
+    return {...h, eases};
+}
+
+test('an X11 window swaps its handle and palette without fading', () => {
+    const {app, eases} = windowActionsHarness(1);
+    app.showWindowActionHandle(true);
+    assert.equal(app.windowActionHandle.visible, true);
+    assert.equal(app.windowActionHandle.opacity, 255);
+    app.showWindowActions();
+    assert.equal(app.windowActions.visible, true);
+    assert.equal(app.windowActions.opacity, 255);
+    assert.equal(app.windowActionHandle.visible, false);
+    app.transitionWindowActionsToHandle();
+    assert.equal(app.windowActions.visible, false, 'palette closes at once');
+    assert.equal(app.windowActionHandle.visible, true);
+    assert.equal(app.windowActionHandle.opacity, 255);
+    assert.equal(eases.length, 0);
+});
+
+test('a Wayland window keeps its handle and palette fades', () => {
+    const {app, eases} = windowActionsHarness(0);
+    app.showWindowActionHandle(true);
+    assert.deepEqual(eases.map(([name, params]) => [name, params.opacity]), [['handle', 255]]);
+    app.showWindowActions();
+    assert.equal(app.windowActions.opacity, 0, 'palette fades in');
+    assert.deepEqual(eases.at(-1)[0], 'palette');
+    app.transitionWindowActionsToHandle();
+    assert.equal(app.windowActions.visible, true, 'palette fades out before hiding');
+    assert.equal(eases.at(-1)[1].opacity, 0);
 });
