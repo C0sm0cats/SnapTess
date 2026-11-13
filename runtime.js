@@ -21,7 +21,7 @@ import {radiusFromPixels, radiusStyle, plausibleWindowRadius, visualFrameRect} f
 import {actionStyle, actionHandleSize, actionPaletteSize, actionHandleIcon, actionSlide, actionPlacement,
     actionTooltipPlacement, actionHandleStyle, actionPaletteStyle, horizontalActions} from './lib/window-actions.js';
 
-const RUNTIME_REVISION = 90;
+const RUNTIME_REVISION = 91;
 const RESTORE_STABILIZE_MS = 1400;
 const RESTORE_QUIET_MS = 120;
 const MAX_RESTORE_MOVES = 8;
@@ -2180,10 +2180,15 @@ export default class SnapTess extends Extension {
             this.actionsTimer = 0; this.transitionWindowActionsToHandle();
         });
     }
+    // Fading the handle or palette over an X11 (Xwayland) window flickers on
+    // GNOME 50 and 51; those windows swap them instantly instead.
+    fadeWindowActions(w) {
+        return this.settings.get_boolean('animations') && w?.get_client_type?.() !== Meta.WindowClientType.X11;
+    }
     transitionWindowActionsToHandle() {
         this.windowActionTooltip.hide();
         this.windowActions.remove_all_transitions();
-        if (!this.windowActions.visible || !this.settings.get_boolean('animations')) {
+        if (!this.windowActions.visible || !this.fadeWindowActions(this.actionWindow)) {
             this.windowActions.hide(); this.showWindowActionHandle(); return;
         }
         const slide = actionSlide(this.actionPosition);
@@ -2276,7 +2281,7 @@ export default class SnapTess extends Extension {
         this.windowActionHandle.set_position(x, y);
         this.stackWindowOverlays(w);
         this.windowActionHandle.show();
-        if (animate && this.settings.get_boolean('animations')) {
+        if (animate && this.fadeWindowActions(w)) {
             this.windowActionHandle.opacity = 0;
             this.windowActionHandle.ease({opacity: 255, duration: this.visualDuration(120), mode: this.visualMode()});
         } else this.windowActionHandle.opacity = 255;
@@ -2326,7 +2331,7 @@ export default class SnapTess extends Extension {
         const appearing = !this.windowActions.visible;
         this.windowActions.remove_all_transitions();
         this.windowActions.show();
-        if (appearing && this.settings.get_boolean('animations')) {
+        if (appearing && this.fadeWindowActions(w)) {
             const slide = actionSlide(this.actionPosition);
             this.windowActions.opacity = 0;
             this.windowActions.translation_x = slide.x; this.windowActions.translation_y = slide.y;
