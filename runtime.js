@@ -21,7 +21,7 @@ import {radiusFromPixels, radiusStyle, plausibleWindowRadius, visualFrameRect} f
 import {actionStyle, actionHandleSize, actionPaletteSize, actionHandleIcon, actionSlide, actionPlacement,
     actionTooltipPlacement, actionHandleStyle, actionPaletteStyle, horizontalActions} from './lib/window-actions.js';
 
-const RUNTIME_REVISION = 89;
+const RUNTIME_REVISION = 90;
 const RESTORE_STABILIZE_MS = 1400;
 const RESTORE_QUIET_MS = 120;
 const MAX_RESTORE_MOVES = 8;
@@ -31,6 +31,8 @@ const SIZE_REJECTION_GRACE_MS = 1800;
 const SIZE_MISMATCH_STABLE_MS = 600;
 const RAPID_LAYOUT_WINDOW_MS = 5000;
 const RAPID_LAYOUT_SETTLE_MS = 6000;
+const LAUNCH_RELEASE_GRACE_MS = 5000;
+const MAX_LAUNCH_RELEASES = 3;
 const VISUAL = Object.freeze({quick: 140, move: 210, space: 230, osd: 1300, inset: 7});
 
 export default class SnapTess extends Extension {
@@ -508,6 +510,21 @@ export default class SnapTess extends Extension {
                 if (!this.windowActions.visible && !this.windowActionHandle.visible)
                     this.queueWindowActions(w);
             }
+            // An app launched by a layout that restores its own maximized or
+            // fullscreen state belongs in its tile. Released outside this handler.
+            if (Date.now() < (record.launchReleaseUntil ?? 0) && !record.launchReleaseTimer)
+                record.launchReleaseTimer = this.later(0, () => {
+                    record.launchReleaseTimer = 0;
+                    if (this.records.get(w) === record && Date.now() < record.launchReleaseUntil)
+                        this.releaseLaunchedSpecial(w, record);
+                });
+            return;
+        }
+        if (record.specialState && !record.tileRect && Date.now() < (record.launchReleaseUntil ?? 0)) {
+            // A released launch has no tile to restore yet: tile it directly
+            // instead of holding its display for the restore transaction.
+            record.specialState = false;
+            this.schedule(true);
             return;
         }
         if (record.specialState) {
@@ -528,6 +545,15 @@ export default class SnapTess extends Extension {
         }
         // Both maximize properties notify for one transition. The second
         // notification must not schedule a full tile()/place() during restore.
+    }
+
+    releaseLaunchedSpecial(w, record) {
+        if (!this.running || !this.isSpecialWindow(w) || record.floating || (record.launchReleases ?? 0) >= MAX_LAUNCH_RELEASES ||
+            this.matchesAppRule(w, 'excluded-apps')) return false;
+        record.launchReleases = (record.launchReleases ?? 0) + 1;
+        if (w.fullscreen) w.unmake_fullscreen();
+        else w.unmaximize();
+        return true;
     }
 
     queueWindowRestore(w, delay = 120) {
@@ -975,6 +1001,9 @@ export default class SnapTess extends Extension {
             this.persistWindowSharing();
             this.settings.set_string('profiles', JSON.stringify(this.profiles));
         }
+        r.launchReleaseUntil = Date.now() + LAUNCH_RELEASE_GRACE_MS;
+        r.launchReleases = 0;
+        this.releaseLaunchedSpecial(w, r);
         this.schedule(true);
         return true;
     }

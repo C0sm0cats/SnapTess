@@ -2406,3 +2406,122 @@ test('a window made floating keeps its size, centred on its display, never maxim
     assert.equal(unmaximized, 1);
     assert.deepEqual(h.requests.at(-1), {type: 'resize', x: 40, y: 30, width: 720, height: 540});
 });
+
+// A layout-launched app that restores its own maximized/fullscreen state.
+function launchHarness({excluded = false} = {}) {
+    const h = harness(), {app, w} = h;
+    const calls = {unmaximize: 0, unfullscreen: 0, scheduled: 0};
+    w.maximize = () => h.special(3, w.fullscreen);
+    w.unmaximize = () => { calls.unmaximize++; h.special(0, w.fullscreen); };
+    w.unmake_fullscreen = () => { calls.unfullscreen++; h.special(w.flags, false); };
+    app.groups = new Map(); app.profiles = {}; app.pendingLayoutApps = new Map();
+    app.updatePinnedPlaceholders = () => {}; app.publishPreviewState = () => {};
+    app.persistWindowSharing = () => {}; app.profileKey = (monitor, space = 0) => `${monitor}:${space}`;
+    if (excluded) app.settings.get_strv = key => key === 'excluded-apps' ? ['test.desktop'] : [];
+    app.schedule = compact => {
+        calls.scheduled++;
+        app.cancel(app.pending);
+        app.pending = app.later(110, () => { app.pending = 0; app.tile(compact, false, false); });
+    };
+    const pend = () => app.pendingLayoutApps.set('test', {monitor: 0, space: 0, workspace: w.get_workspace()});
+    return {...h, calls, pend};
+}
+
+test('a layout-launched window that starts maximized is released and tiled', () => {
+    const h = launchHarness(), {app, w, record, calls} = h;
+    h.special(3); h.pend();
+    assert.equal(app.claimLayoutWindow(w), true);
+    assert.equal(calls.unmaximize, 1);
+    assert.equal(w.get_maximize_flags(), 0);
+    h.advance(150);
+    assert.equal(app.deferredRetile.size, 0, 'its display is tiled without waiting for a restore');
+    assert.ok(record.tileRect, 'the released window is placed in a tile');
+    assert.equal(record.restorePending, false);
+    assert.ok(h.requests.some(request => request.type === 'resize'));
+});
+
+test('a layout-launched window that maximizes itself during the grace returns to its tile', () => {
+    const h = launchHarness(), {app, w, record, calls} = h;
+    h.pend();
+    assert.equal(app.claimLayoutWindow(w), true);
+    assert.equal(calls.unmaximize, 0);
+    h.advance(150);
+    const tile = {...record.tileRect};
+    h.commit(tile);
+    h.advance(1000);
+    w.maximize();
+    assert.equal(calls.unmaximize, 0, 'the release never runs inside the notify handler');
+    h.advance(1);
+    assert.equal(calls.unmaximize, 1, 'both maximize notifications cause one release');
+    assert.equal(w.get_maximize_flags(), 0);
+    h.advance(2000);
+    assert.equal(record.restorePending, false);
+    assert.deepEqual({...record.tileRect}, tile);
+    assert.equal(app.deferredRetile.size, 0);
+});
+
+test('a maximize after the launch grace is the user\'s and is kept', () => {
+    const h = launchHarness(), {app, w, record, calls} = h;
+    h.pend();
+    assert.equal(app.claimLayoutWindow(w), true);
+    h.advance(150);
+    h.commit(record.tileRect);
+    h.advance(4850);
+    w.maximize();
+    h.advance(2000);
+    assert.equal(calls.unmaximize, 0);
+    assert.equal(w.get_maximize_flags(), 3);
+    app.tile(true, false, false);
+    assert.equal(app.deferredRetile.has(app.key(0)), true, 'a user-maximized window still defers its display');
+});
+
+test('a window not launched by a layout keeps its maximized state', () => {
+    const h = launchHarness(), {w, calls} = h;
+    w.maximize();
+    h.advance(2000);
+    assert.equal(calls.unmaximize, 0);
+    assert.equal(w.get_maximize_flags(), 3);
+});
+
+test('a layout-launched fullscreen window leaves fullscreen and is tiled', () => {
+    const h = launchHarness(), {app, w, record, calls} = h;
+    h.special(0, true); h.pend();
+    assert.equal(app.claimLayoutWindow(w), true);
+    assert.equal(calls.unfullscreen, 1);
+    assert.equal(calls.unmaximize, 0);
+    assert.equal(w.fullscreen, false);
+    h.advance(150);
+    assert.ok(record.tileRect);
+    assert.equal(app.deferredRetile.size, 0);
+});
+
+test('an excluded or floating layout-launched window is never released', () => {
+    const h = launchHarness({excluded: true}), {app, w, calls} = h;
+    h.special(3); h.pend();
+    assert.equal(app.claimLayoutWindow(w), true);
+    h.advance(1000);
+    w.unmaximize(); calls.unmaximize = 0;
+    w.maximize();
+    h.advance(1000);
+    assert.equal(calls.unmaximize, 0);
+    assert.equal(w.get_maximize_flags(), 3);
+
+    const f = launchHarness();
+    f.pend();
+    assert.equal(f.app.claimLayoutWindow(f.w), true);
+    f.advance(150);
+    f.record.floating = true;
+    f.w.maximize();
+    f.advance(1000);
+    assert.equal(f.calls.unmaximize, 0);
+    assert.equal(f.w.get_maximize_flags(), 3);
+});
+
+test('a layout-launched window is released at most three times', () => {
+    const h = launchHarness(), {app, w, calls} = h;
+    h.special(3); h.pend();
+    assert.equal(app.claimLayoutWindow(w), true);
+    for (let i = 0; i < 5; i++) { h.advance(300); w.maximize(); h.advance(1); }
+    assert.equal(calls.unmaximize, 3);
+    assert.equal(w.get_maximize_flags(), 3, 'an app that insists keeps its state');
+});
