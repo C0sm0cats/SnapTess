@@ -50,8 +50,11 @@ export async function run() {
             surfaceMismatches++;
     });
     try {
+        // Start after the window that already holds focus: re-activating it
+        // changes nothing, so an idle stage would never emit the paint awaited.
+        const start = windows.indexOf(global.display.focus_window) + 1;
         for (let n = 0; n < 35; n++) {
-            target = windows[n % windows.length];
+            target = windows[(start + n) % windows.length];
             painted = 0;
             target.activate(global.get_current_time());
             await Scripting.sleep(50);
