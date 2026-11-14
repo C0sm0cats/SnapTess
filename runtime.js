@@ -21,7 +21,7 @@ import {radiusFromPixels, radiusStyle, plausibleWindowRadius, visualFrameRect} f
 import {actionStyle, actionHandleSize, actionPaletteSize, actionHandleIcon, actionSlide, actionPlacement,
     actionTooltipPlacement, actionHandleStyle, actionPaletteStyle, horizontalActions} from './lib/window-actions.js';
 
-const RUNTIME_REVISION = 91;
+const RUNTIME_REVISION = 92;
 const RESTORE_STABILIZE_MS = 1400;
 const RESTORE_QUIET_MS = 120;
 const MAX_RESTORE_MOVES = 8;
@@ -534,6 +534,9 @@ export default class SnapTess extends Extension {
             record.restoreMoves = 0;
             record.restoreUntil = Date.now() + RESTORE_STABILIZE_MS;
             record.restoreQuietUntil = 0;
+            // The grid kept its slots while the window was maximized; show the
+            // reserved slots now instead of after the restore transaction.
+            this.updatePinnedPlaceholders();
             this.cancel(record.settleTimer);
             record.settleTimer = this.later(RESTORE_STABILIZE_MS, () => {
                 record.settleTimer = 0;

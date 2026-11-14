@@ -2475,6 +2475,23 @@ test('a maximize after the launch grace is the user\'s and is kept', () => {
     assert.equal(app.deferredRetile.has(app.key(0)), true, 'a user-maximized window still defers its display');
 });
 
+test('reserved slots come back as soon as a window leaves maximized', () => {
+    const h = launchHarness(), {app, w, record} = h;
+    let updates = 0;
+    app.updatePinnedPlaceholders = () => { updates++; };
+    h.pend();
+    assert.equal(app.claimLayoutWindow(w), true);
+    h.advance(150);
+    h.commit(record.tileRect);
+    h.advance(5000);
+    w.maximize();
+    h.advance(2000);
+    updates = 0;
+    h.special(0);
+    assert.equal(record.restorePending, true, 'the restore transaction still runs');
+    assert.ok(updates > 0, 'placeholders refresh without waiting for the restore');
+});
+
 test('a window not launched by a layout keeps its maximized state', () => {
     const h = launchHarness(), {w, calls} = h;
     w.maximize();
