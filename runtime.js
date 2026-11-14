@@ -21,7 +21,7 @@ import {radiusFromPixels, radiusStyle, plausibleWindowRadius, visualFrameRect} f
 import {actionStyle, actionHandleSize, actionPaletteSize, actionHandleIcon, actionSlide, actionPlacement,
     actionTooltipPlacement, actionHandleStyle, actionPaletteStyle, horizontalActions} from './lib/window-actions.js';
 
-const RUNTIME_REVISION = 92;
+const RUNTIME_REVISION = 93;
 const RESTORE_STABILIZE_MS = 1400;
 const RESTORE_QUIET_MS = 120;
 const MAX_RESTORE_MOVES = 8;
@@ -198,6 +198,7 @@ export default class SnapTess extends Extension {
         this.connect(global.display, 'restacked', () => this.windowsRestacked());
         this.connect(global.display, 'grab-op-begin', (_d, w, op) => this.grabBegin(w, op));
         this.connect(global.display, 'grab-op-end', () => this.grabEnd());
+        this.connect(global.display, 'workareas-changed', () => this.workareasChanged());
         this.connect(global.workspace_manager, 'active-workspace-changed', () => {
             this.exitSwap(); this.hideGuides(); this.clearPinnedPlaceholders(); this.schedule(true);
         });
@@ -1244,6 +1245,12 @@ export default class SnapTess extends Extension {
         this.updateBorder();
         this.updatePinnedPlaceholders();
         this.publishPreviewState();
+    }
+
+    // A dock or panel that appears or hides changes the grid the reserved
+    // slots are drawn on, without any window moving.
+    workareasChanged() {
+        if (this.pinnedPlaceholders?.size) this.updatePinnedPlaceholders();
     }
 
     clearPinnedPlaceholders() {

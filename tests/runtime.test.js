@@ -1082,6 +1082,40 @@ test('closed pinned cards use the window grid despite trailing unpinned profile 
     }
 });
 
+test('reserved slot cards follow the grid when the work area changes', () => {
+    const h = harness(), app = h.app;
+    h.shellMain.overview = {visible: false};
+    app.spaceTransitions = new Set();
+    app.key = () => 'workspace'; app.profileKey = () => 'profile'; app.activeSpace = () => 0;
+    app.windows = () => [h.w];
+    const pinned = [null, 'app-1.desktop', null, null];
+    app.profiles = {profile: {preset: 'auto', pinned}};
+    app.pinnedSlotState = () => ({window: null, state: 'CLOSED'});
+    const button = {
+        set_size(width, height) { this.width = width; this.height = height; },
+        set_position(x, y) { this.x = x; this.y = y; },
+        set_style() {}, add_style_class_name() {}, remove_style_class_name() {},
+        destroy() { assert.fail('the card should be reused'); },
+    };
+    app.pinnedPlaceholders = new Map([['0:1', {id: pinned[1], window: null, state: 'CLOSED',
+        button, title: {set_width() {}}}]]);
+    app.stackPinnedPlaceholders = () => {};
+    app.groups = new Map([['workspace', [h.w, null, h.w, h.w]]]);
+    let area = {x: 0, y: 30, width: 1920, height: 1050};
+    app.area = () => ({...area});
+    app.updatePinnedPlaceholders();
+    const before = {...app.slotRects(0, 4)[1]};
+    assert.equal(button.height, before.height - 14);
+    area = {x: 0, y: 30, width: 1920, height: 1000};
+    app.workareasChanged();
+    const after = app.slotRects(0, 4)[1];
+    assert.notEqual(after.height, before.height);
+    assert.equal(button.y, after.y + 7);
+    assert.equal(button.height, after.height - 14);
+    assert.match(fs.readFileSync(new URL('../runtime.js', import.meta.url), 'utf8'),
+        /connect\(global\.display, 'workareas-changed'/);
+});
+
 test('pinned slot state distinguishes minimized, floating, elsewhere, opening, and closed apps', () => {
     const h = harness(), app = h.app, record = h.record;
     app.pendingLayoutApps = new Map();
