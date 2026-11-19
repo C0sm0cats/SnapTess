@@ -21,7 +21,7 @@ import {radiusFromPixels, radiusStyle, plausibleWindowRadius, visualFrameRect} f
 import {actionStyle, actionHandleSize, actionPaletteSize, actionHandleIcon, actionSlide, actionPlacement,
     actionTooltipPlacement, actionHandleStyle, actionPaletteStyle, horizontalActions} from './lib/window-actions.js';
 
-const RUNTIME_REVISION = 93;
+const RUNTIME_REVISION = 94;
 const RESTORE_STABILIZE_MS = 1400;
 const RESTORE_QUIET_MS = 120;
 const MAX_RESTORE_MOVES = 8;
@@ -244,6 +244,13 @@ export default class SnapTess extends Extension {
             'ease-in-out': Clutter.AnimationMode.EASE_IN_OUT_QUAD,
             spring: Clutter.AnimationMode.EASE_OUT_BACK})[this.settings.get_string('animation-curve')]
             ?? Clutter.AnimationMode.EASE_OUT_QUAD;
+    }
+
+    // Opacity wraps around as an 8-bit value: an overshooting curve (spring)
+    // would flash a fading actor, so fades never overshoot. Motion keeps it.
+    fadeMode() {
+        const mode = this.visualMode();
+        return mode === Clutter.AnimationMode.EASE_OUT_BACK ? Clutter.AnimationMode.EASE_OUT_QUAD : mode;
     }
 
     later(ms, callback) {
@@ -1921,7 +1928,7 @@ export default class SnapTess extends Extension {
             this.swapGuideTimer = 0;
             for (const actor of [this.swapFromGuide, this.swapToGuide, this.swapArrow]) {
                 if (this.settings.get_boolean('animations'))
-                    actor.ease({opacity: 0, duration: this.visualDuration(VISUAL.quick), mode: this.visualMode(), onComplete: () => { actor.hide(); actor.opacity = 255; }});
+                    actor.ease({opacity: 0, duration: this.visualDuration(VISUAL.quick), mode: this.fadeMode(), onComplete: () => { actor.hide(); actor.opacity = 255; }});
                 else actor.hide();
             }
         });
@@ -1931,7 +1938,7 @@ export default class SnapTess extends Extension {
         actor.set_position(rect.x, rect.y); actor.set_size(rect.width, rect.height); actor.show();
         if (appearing && this.settings.get_boolean('animations')) {
             actor.opacity = 0;
-            actor.ease({opacity: 255, duration: this.visualDuration(VISUAL.quick), mode: this.visualMode()});
+            actor.ease({opacity: 255, duration: this.visualDuration(VISUAL.quick), mode: this.fadeMode()});
         } else if (appearing) actor.opacity = 255;
     }
     invalidateWindowRadius(w, retry = false, {focusOnly = false} = {}) {
@@ -2103,8 +2110,9 @@ export default class SnapTess extends Extension {
         global.window_group.add_child(guide);
         this.motionGuides.add(guide);
         if (record) record.motionGuide = guide;
-        guide.ease({x: to.x, y: to.y, width: to.width, height: to.height, opacity: 0,
-            duration: this.visualDuration(VISUAL.move), mode: this.visualMode(), onComplete: () => {
+        guide.ease({x: to.x, y: to.y, width: to.width, height: to.height,
+            duration: this.visualDuration(VISUAL.move), mode: this.visualMode()});
+        guide.ease({opacity: 0, duration: this.visualDuration(VISUAL.move), mode: this.fadeMode(), onComplete: () => {
                 this.motionGuides.delete(guide);
                 if (record?.motionGuide === guide) record.motionGuide = null;
                 guide.destroy();
@@ -2163,7 +2171,7 @@ export default class SnapTess extends Extension {
         this.borderSwapActive = swapping;
         if ((fadeIn || modeChanged) && this.settings.get_boolean('animations'))
             this.border.ease({opacity: swapping ? 255 : 205, duration: this.visualDuration(VISUAL.quick),
-                mode: this.visualMode()});
+                mode: this.fadeMode()});
         else this.border.opacity = swapping ? 255 : 205;
         this.stackWindowOverlays(w);
     }
@@ -2190,10 +2198,8 @@ export default class SnapTess extends Extension {
             this.actionsTimer = 0; this.transitionWindowActionsToHandle();
         });
     }
-    // Fading the handle or palette over an X11 (Xwayland) window flickers on
-    // GNOME 50 and 51; those windows swap them instantly instead.
-    fadeWindowActions(w) {
-        return this.settings.get_boolean('animations') && w?.get_client_type?.() !== Meta.WindowClientType.X11;
+    fadeWindowActions() {
+        return this.settings.get_boolean('animations');
     }
     transitionWindowActionsToHandle() {
         this.windowActionTooltip.hide();
@@ -2202,8 +2208,9 @@ export default class SnapTess extends Extension {
             this.windowActions.hide(); this.showWindowActionHandle(); return;
         }
         const slide = actionSlide(this.actionPosition);
-        this.windowActions.ease({opacity: 0, translation_x: slide.x, translation_y: slide.y, duration: this.visualDuration(120),
-            mode: this.visualMode(), onComplete: () => {
+        this.windowActions.ease({translation_x: slide.x, translation_y: slide.y, duration: this.visualDuration(120),
+            mode: this.visualMode()});
+        this.windowActions.ease({opacity: 0, duration: this.visualDuration(120), mode: this.fadeMode(), onComplete: () => {
                 this.windowActions.hide(); this.windowActions.opacity = 255;
                 this.windowActions.translation_x = 0; this.windowActions.translation_y = 0;
                 this.showWindowActionHandle(true);
@@ -2293,7 +2300,7 @@ export default class SnapTess extends Extension {
         this.windowActionHandle.show();
         if (animate && this.fadeWindowActions(w)) {
             this.windowActionHandle.opacity = 0;
-            this.windowActionHandle.ease({opacity: 255, duration: this.visualDuration(120), mode: this.visualMode()});
+            this.windowActionHandle.ease({opacity: 255, duration: this.visualDuration(120), mode: this.fadeMode()});
         } else this.windowActionHandle.opacity = 255;
     }
     showWindowActionTooltip(button) {
@@ -2345,8 +2352,9 @@ export default class SnapTess extends Extension {
             const slide = actionSlide(this.actionPosition);
             this.windowActions.opacity = 0;
             this.windowActions.translation_x = slide.x; this.windowActions.translation_y = slide.y;
-            this.windowActions.ease({opacity: 255, translation_x: 0, translation_y: 0, duration: this.visualDuration(140),
+            this.windowActions.ease({translation_x: 0, translation_y: 0, duration: this.visualDuration(140),
                 mode: this.visualMode()});
+            this.windowActions.ease({opacity: 255, duration: this.visualDuration(140), mode: this.fadeMode()});
         }
         this.scheduleWindowActionsHide();
     }
@@ -2583,20 +2591,20 @@ export default class SnapTess extends Extension {
         const duration = animated ? this.visualDuration(VISUAL.space) : 0;
         if (animated) {
             backdrop.opacity = 0;
-            backdrop.ease({opacity: 150, duration: this.visualDuration(90), mode: this.visualMode()});
+            backdrop.ease({opacity: 150, duration: this.visualDuration(90), mode: this.fadeMode()});
             osd.opacity = 0;
             osd.ease({opacity: 255, duration: this.visualDuration(VISUAL.quick),
-                mode: this.visualMode()});
+                mode: this.fadeMode()});
         } else { backdrop.opacity = 0; for (const {clone} of clones) clone.opacity = 0; }
         if (animated) for (const {clone, rect, entering} of clones) {
-            clone.ease({x: entering ? rect.x : rect.x - direction * shift, opacity: entering ? 255 : 0,
-                duration, mode: this.visualMode()});
+            clone.ease({x: entering ? rect.x : rect.x - direction * shift, duration, mode: this.visualMode()});
+            clone.ease({opacity: entering ? 255 : 0, duration, mode: this.fadeMode()});
         }
         if (animated) this.later(duration, () => {
             if (!this.spaceTransitions.has(layer)) return;
-            backdrop.ease({opacity: 0, duration: this.visualDuration(110), mode: this.visualMode()});
+            backdrop.ease({opacity: 0, duration: this.visualDuration(110), mode: this.fadeMode()});
             for (const {clone} of clones) clone.ease({opacity: 0, duration: this.visualDuration(110),
-                mode: this.visualMode()});
+                mode: this.fadeMode()});
         });
         this.later(VISUAL.osd, () => {
             if (!this.spaceTransitions.has(layer)) return;
@@ -2606,7 +2614,7 @@ export default class SnapTess extends Extension {
                 layer.destroy(); this.updatePinnedPlaceholders();
             };
             if (animated) osd.ease({opacity: 0, duration: this.visualDuration(100),
-                mode: this.visualMode(), onComplete: finish});
+                mode: this.fadeMode(), onComplete: finish});
             else finish();
         });
     }
