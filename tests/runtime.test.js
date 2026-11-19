@@ -71,6 +71,7 @@ function harness(options = {}) {
                     get_app_info: () => ({launch: () => { launches.push(id); return true; }})} :
                 options.installedApps?.find(info => info.get_id() === id)?.app ?? null})},
         WindowTracker: {get_default: () => ({get_window_app: () => options.trackedApp ?? null})}},
+        Clutter: {AnimationMode: {LINEAR: 1, EASE_OUT_QUAD: 2, EASE_IN_OUT_QUAD: 3, EASE_OUT_BACK: 4}},
         Meta: {LaterType: {BEFORE_REDRAW: 0}, WindowType: {NORMAL: 0}, WindowClientType: {WAYLAND: 0, X11: 1}, GrabOp: {MOVING: 1, KEYBOARD_MOVING: 2,
             RESIZING_N: 3, RESIZING_S: 4, RESIZING_E: 5, RESIZING_W: 6,
             RESIZING_NE: 7, RESIZING_NW: 8, RESIZING_SE: 9, RESIZING_SW: 10}},
@@ -2602,20 +2603,33 @@ function windowActionsHarness(clientType) {
     return {...h, eases};
 }
 
-test('an X11 window swaps its handle and palette without fading', () => {
-    const {app, eases} = windowActionsHarness(1);
-    app.showWindowActionHandle(true);
-    assert.equal(app.windowActionHandle.visible, true);
-    assert.equal(app.windowActionHandle.opacity, 255);
-    app.showWindowActions();
-    assert.equal(app.windowActions.visible, true);
-    assert.equal(app.windowActions.opacity, 255);
-    assert.equal(app.windowActionHandle.visible, false);
-    app.transitionWindowActionsToHandle();
-    assert.equal(app.windowActions.visible, false, 'palette closes at once');
-    assert.equal(app.windowActionHandle.visible, true);
-    assert.equal(app.windowActionHandle.opacity, 255);
-    assert.equal(eases.length, 0);
+test('an X11 window fades its handle and palette like any other window', () => {
+    const names = clientType => {
+        const {app, eases} = windowActionsHarness(clientType);
+        app.showWindowActionHandle(true); app.showWindowActions(); app.transitionWindowActionsToHandle();
+        return eases.map(([name, params]) => [name, Object.keys(params).sort().join()]);
+    };
+    assert.deepEqual(names(1), names(0));
+    assert.ok(names(1).length > 0);
+});
+
+test('the spring curve never drives an opacity fade but keeps the palette slide', () => {
+    const {app, eases} = windowActionsHarness(0);
+    delete app.visualMode;
+    app.settings.get_string = key => key === 'animation-curve' ? 'spring' : '';
+    app.showWindowActionHandle(true); app.showWindowActions(); app.transitionWindowActionsToHandle();
+    const fades = eases.filter(([, params]) => 'opacity' in params);
+    assert.equal(fades.length, 3);
+    for (const [name, params] of fades)
+        assert.equal(params.mode, 2, `${name} fades without overshoot`);
+    const slides = eases.filter(([, params]) => 'translation_x' in params);
+    assert.equal(slides.length, 2);
+    for (const [, params] of slides) {
+        assert.equal(params.mode, 4, 'the slide keeps the spring');
+        assert.equal('opacity' in params, false);
+    }
+    app.settings.get_string = key => key === 'animation-curve' ? 'linear' : '';
+    assert.equal(app.fadeMode(), app.visualMode());
 });
 
 test('a Wayland window keeps its handle and palette fades', () => {
