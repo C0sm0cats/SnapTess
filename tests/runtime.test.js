@@ -935,7 +935,9 @@ test('a blank fixed-preset layout saves app IDs and pins without changing the cu
     assert.deepEqual(Array.from(app.savedLayouts[0].apps), apps);
     assert.equal(app.saveNewLayout('Auto', 'auto', apps, pins), false);
     assert.equal(app.saveNewLayout('Duplicate', '2x2',
-        ['test.desktop', 'test.desktop', null, null], [null, null, null, null]), false);
+        ['test.desktop', 'test.desktop', null, null], ['test.desktop', 'test.desktop', null, null]), 'saved-layout-id');
+    assert.deepEqual(Array.from(stored.at(-1).apps), ['test.desktop', 'test.desktop', null, null],
+        'the same app may fill and pin several tiles');
     assert.equal(app.saveNewLayout('Invalid pin', '2x2', apps,
         ['other.desktop', null, null, null]), false);
 });
@@ -1131,7 +1133,7 @@ test('pinned slot state distinguishes minimized, floating, elsewhere, opening, a
     assert.equal(app.pinnedSlotState('test.desktop', 0, 0, 0).state, 'OPEN ELSEWHERE');
     app.records.delete(h.w);
     assert.equal(app.pinnedSlotState('test.desktop', 0, 0, 0).state, 'CLOSED');
-    app.pendingLayoutApps.set('test', {monitor: 0, space: 0, workspace: h.w.get_workspace()});
+    app.pendingLayoutApps.set('test', [{monitor: 0, space: 0, workspace: h.w.get_workspace()}]);
     assert.equal(app.pinnedSlotState('test.desktop', 0, 0, 0).state, 'OPENING');
 });
 
@@ -2324,7 +2326,7 @@ test('Apply opens an assigned app and claims its exact unpinned tile', () => {
     app.applyProfiles([{monitor: 0, space: 1, preset: 'master', windows: [null, null, null],
         apps: [null, null, 'test.desktop'], pinned: [], preserveSlots: true}]);
     assert.deepEqual(launches, ['test.desktop']);
-    assert.equal(app.pendingLayoutApps.get('test').index, 2);
+    assert.equal(app.pendingLayoutApps.get('test')[0].index, 2);
     assert.equal(app.profiles['0:1'].pinned.length, 0, 'assignment does not implicitly pin the app');
     app.eligible = () => true; app.schedule = () => {};
     assert.equal(app.claimLayoutWindow(w), true);
@@ -2342,7 +2344,7 @@ test('a launch appearing after a minute retains its exact Space and tile without
     app.applyProfiles([{monitor: 0, space: 1, preset: 'master', windows: [null, null, null],
         apps: [null, null, 'test.desktop'], pinned: [], preserveSlots: true}]);
     advance(60000);
-    assert.equal(app.pendingLayoutApps.get('test').index, 2);
+    assert.equal(app.pendingLayoutApps.get('test')[0].index, 2);
     assert.equal(notifications.length, 0);
     app.eligible = () => true; app.schedule = () => {};
     assert.equal(app.claimLayoutWindow(w), true);
@@ -2420,6 +2422,94 @@ test('clearing a launching app in one Space keeps its pending assignment in anot
     assert.equal(app.windowInSpace(w, 1), false);
 });
 
+// A new window of the harness app, created after its launch was requested.
+function arrivingWindow(h, sequence) {
+    const w = {...h.w, minimized: false, get_stable_sequence: () => sequence};
+    w.minimize = () => { w.minimized = true; };
+    w.unminimize = () => { w.minimized = false; };
+    h.app.records.set(w, {space: 0, floating: false, parked: false});
+    return w;
+}
+
+function twoTileHarness({pinned = [], withoutWindows = true} = {}) {
+    const h = sharingHarness(), {app, w} = h;
+    h.timers.clear();
+    app.pendingLayoutApps = new Map(); app.updatePinnedPlaceholders = () => {};
+    if (withoutWindows) { app.records.delete(w); app.groups.clear(); }
+    app.applyProfiles([{monitor: 0, space: 0, preset: 'split', windows: [null, null],
+        apps: ['test.desktop', 'test.desktop'], pinned, preserveSlots: true}]);
+    app.eligible = () => true; app.schedule = () => {};
+    return h;
+}
+
+test('the same app on two tiles launches twice and each window fills its own tile', () => {
+    const h = twoTileHarness(), {app, launches} = h;
+    assert.deepEqual(launches, ['test.desktop', 'test.desktop']);
+    assert.deepEqual(Array.from(app.pendingLayoutApps.get('test'), request => request.index), [0, 1]);
+    const first = arrivingWindow(h, 50), second = arrivingWindow(h, 51);
+    assert.equal(app.claimLayoutWindow(first), true);
+    assert.equal(app.claimLayoutWindow(first), false, 'a window claims a single tile');
+    assert.deepEqual(Array.from(app.profiles['0:0'].pendingApps), ['test.desktop']);
+    assert.equal(app.claimLayoutWindow(second), true);
+    assert.equal(app.groups.get('0:0:0')[0], first);
+    assert.equal(app.groups.get('0:0:0')[1], second);
+    assert.equal(app.profiles['0:0'].pendingApps.length, 0);
+    assert.equal(app.pendingLayoutApps.size, 0);
+});
+
+test('a pinned tile whose window never arrives returns to CLOSED, then fills with a later window', () => {
+    const h = twoTileHarness({pinned: ['test.desktop', 'test.desktop']}), {app, advance} = h;
+    const first = arrivingWindow(h, 50);
+    assert.equal(app.claimLayoutWindow(first), true);
+    assert.equal(app.pinnedSlotState('test.desktop', 0, 0, 1).state, 'OPENING');
+    advance(29000);
+    assert.equal(app.pinnedSlotState('test.desktop', 0, 0, 1).state, 'OPENING');
+    advance(1500);
+    assert.equal(app.pinnedSlotState('test.desktop', 0, 0, 1).state, 'CLOSED',
+        'a single-instance app that opened no second window frees its card');
+    const later = arrivingWindow(h, 60);
+    assert.equal(app.claimLayoutWindow(later), true);
+    assert.equal(app.groups.get('0:0:0')[0], first);
+    assert.equal(app.groups.get('0:0:0')[1], later);
+    assert.equal(app.pendingLayoutApps.size, 0);
+});
+
+test('an app with no window at all keeps every launching tile opening past the expiry', () => {
+    const h = twoTileHarness({pinned: ['test.desktop', 'test.desktop']}), {app, advance, launches} = h;
+    assert.equal(launches.length, 2);
+    advance(60000);
+    assert.equal(app.pinnedSlotState('test.desktop', 0, 0, 0).state, 'OPENING');
+    assert.equal(app.pinnedSlotState('test.desktop', 0, 0, 1).state, 'OPENING');
+    assert.equal(app.pendingLayoutApps.get('test').filter(request => !request.expired).length, 2);
+});
+
+test('a closed pinned card launches for its tile while another window of the app is tiled here', () => {
+    const h = sharingHarness(), {app, w, launches, advance} = h;
+    h.timers.clear();
+    app.pendingLayoutApps = new Map(); app.updatePinnedPlaceholders = () => {};
+    app.eligible = () => true; app.schedule = () => {};
+    app.profiles['0:0'] = {preset: 'split', apps: ['test.desktop', null], pinned: ['test.desktop', 'test.desktop']};
+    app.groups.set('0:0:0', [w, null]);
+    const workspace = w.get_workspace();
+    const entry = () => ({id: 'test.desktop', monitor: 0, space: 0, index: 1, window: null,
+        state: app.pinnedSlotState('test.desktop', 0, 0, 1).state});
+    assert.equal(entry().state, 'CLOSED', 'the tiled window of the same app is not open elsewhere');
+    app.activatePinnedPlaceholder(entry(), workspace);
+    assert.deepEqual(launches, ['test.desktop']);
+    assert.equal(entry().state, 'OPENING');
+    app.activatePinnedPlaceholder({...entry(), state: 'CLOSED'}, workspace);
+    assert.equal(launches.length, 1, 'an opening tile does not launch twice');
+    assert.equal(app.claimLayoutWindow(w), false, 'the window already tiled here is not the launched one');
+    advance(30100);
+    assert.equal(entry().state, 'CLOSED');
+    app.activatePinnedPlaceholder(entry(), workspace);
+    assert.equal(launches.length, 2, 'the card stays clickable after the expiry');
+    const arriving = arrivingWindow(h, 50);
+    assert.equal(app.claimLayoutWindow(arriving), true);
+    assert.equal(app.groups.get('0:0:0')[0], w);
+    assert.equal(app.groups.get('0:0:0')[1], arriving);
+});
+
 test('a New layout can save the app identity selected from an open window', () => {
     const {app} = harness();
     app.appId = () => 'WindowBackedApp'; app.savedLayouts = [];
@@ -2458,7 +2548,7 @@ function launchHarness({excluded = false} = {}) {
         app.cancel(app.pending);
         app.pending = app.later(110, () => { app.pending = 0; app.tile(compact, false, false); });
     };
-    const pend = () => app.pendingLayoutApps.set('test', {monitor: 0, space: 0, workspace: w.get_workspace()});
+    const pend = () => app.pendingLayoutApps.set('test', [{monitor: 0, space: 0, workspace: w.get_workspace()}]);
     return {...h, calls, pend};
 }
 

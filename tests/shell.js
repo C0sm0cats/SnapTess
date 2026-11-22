@@ -803,6 +803,17 @@ export async function run() {
     studio.selected=1; studio.updatePinButton();
     assert(studio.pinButton.label.startsWith('Pin this app'),
         'Studio pin action refreshes when selection moves to an unpinned tile');
+    // Pins belong to tiles: two tiles of the same app can both be pinned.
+    const priorAppId=app.appId, sharedPinId=app.appId(pinnedWindow), secondWindow=studio.draft[1];
+    app.appId=w=>w===secondWindow?sharedPinId:priorAppId.call(app,w);
+    studio.togglePin();
+    assert(studio.pins[0]===sharedPinId && studio.pins[1]===sharedPinId,
+        'pinning a second tile of the same app keeps the first pin');
+    studio.togglePin();
+    assert(studio.pins[0]===sharedPinId && !studio.pins[1],
+        'unpinning one tile of the same app keeps the other pin');
+    studio.undo(); studio.undo();
+    app.appId=priorAppId;
     studio.selected=0; studio.updatePinButton();
     assert(studio.undoButton.visible && !studio.modifiedBadge,
         'Studio exposes Undo without the prominent modified badge');
