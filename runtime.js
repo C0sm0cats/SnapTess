@@ -32,7 +32,12 @@ const SIZE_MISMATCH_STABLE_MS = 600;
 const RAPID_LAYOUT_WINDOW_MS = 5000;
 const RAPID_LAYOUT_SETTLE_MS = 6000;
 const LAUNCH_RELEASE_GRACE_MS = 5000;
+// A single-instance app with a window already open may never open another.
+const LAUNCH_EXPIRY_MS = 30000;
 const MAX_LAUNCH_RELEASES = 3;
+const copyPendingLaunches = pending => new Map([...(pending ?? [])].map(([id, requests]) => [id,
+    requests.map(request => ({...request, targets: request.targets?.map(target => ({...target})),
+        ...(request.known ? {known: new Set(request.known)} : {})}))]));
 const VISUAL = Object.freeze({quick: 140, move: 210, space: 230, osd: 1300, inset: 7});
 
 export default class SnapTess extends Extension {
@@ -823,7 +828,6 @@ export default class SnapTess extends Extension {
                 (typeof id !== 'string' || !id.length || id.length > 256 ||
                     (!editingExisting && !id.endsWith('.desktop') &&
                         ![...this.records.keys()].some(w => this.appId(w) === id)))) ||
-            (!replaceId && new Set(apps.filter(Boolean)).size !== apps.filter(Boolean).length) ||
             pinned.some((id, index) => id !== null && id !== apps[index])) return false;
         return this.saveLayout(name, preset, apps, pinned, replaceId, tiles);
     }
@@ -880,7 +884,8 @@ export default class SnapTess extends Extension {
             return found ?? null;
         });
         while (slots.length < layout.slotCount) slots.push(null);
-        const missing = [...new Set(apps.filter((id, i) => id && !slots[i]))];
+        // One launch per empty tile: the same app may fill several tiles.
+        const missing = apps.filter((id, i) => id && !slots[i]);
         return {slots, missing, extras: candidates.filter(w => !used.has(w) &&
             (!w.minimized || this.records.get(w)?.parked || this.records.get(w)?.restoreParked))};
     }
@@ -929,9 +934,11 @@ export default class SnapTess extends Extension {
         if (!layout) return false;
         const workspace = global.workspace_manager.get_active_workspace();
         const {slots, missing, extras} = this.savedLayoutPlan(layout, monitor, space);
+        const launching = (layout.apps ?? layout.pinned).map((id, i) => id && !slots[i] ? id : null);
         this.applyProfiles([{monitor, space, preset: layout.preset, windows: slots,
-            pinned: [...layout.pinned], slotCount: layout.slotCount, tiles: layout.tiles, parkUnused: extras}], {monitor, space});
-        this.launchLayoutApps(missing, monitor, space, workspace);
+            pinned: [...layout.pinned], slotCount: layout.slotCount, tiles: layout.tiles, parkUnused: extras,
+            launching}], {monitor, space});
+        this.launchLayoutApps(missing, monitor, space, workspace, launching);
         return true;
     }
     restorePendingLaunches() {
@@ -939,76 +946,186 @@ export default class SnapTess extends Extension {
         // Shell process. Keep workspace identities without persisting launches
         // across login sessions or including them in exported profiles.
         this.pendingLayoutApps = global._snaptessPendingLayoutApps ?? new Map();
+        // Earlier revisions kept a single request per app.
+        for (const [key, value] of this.pendingLayoutApps)
+            if (!Array.isArray(value)) this.pendingLayoutApps.set(key, [value]);
         global._snaptessPendingLayoutApps = this.pendingLayoutApps;
+        this.schedulePendingExpiry();
+    }
+    // Each pending request is one launch, headed to one tile per Space.
+    pendingTargets(request) {
+        return request.targets ?? [{monitor: request.monitor, space: request.space, index: request.index}];
+    }
+    removePendingRequest(key, request) {
+        const requests = this.pendingLayoutApps.get(key);
+        const index = requests?.indexOf(request) ?? -1;
+        if (index >= 0) requests.splice(index, 1);
+        if (requests && !requests.length) this.pendingLayoutApps.delete(key);
+    }
+    pendingTileOpening(id, monitor, space, index, workspace = global.workspace_manager.get_active_workspace()) {
+        const key = (id ?? '').toLowerCase().replace(/\.desktop$/i, '');
+        return (this.pendingLayoutApps?.get(key) ?? []).some(request => !request.expired &&
+            request.workspace === workspace && this.pendingTargets(request).some(target =>
+                target.monitor === monitor && target.space === space && (target.index === index || !(target.index >= 0))));
+    }
+    // Windows of the app already in the tile's Space are not the launched one.
+    rememberLaunchWindows(request, key, monitor, space) {
+        request.known ??= new Set();
+        for (const w of this.groups?.get(this.key(monitor, space)) ?? [])
+            if (w && (this.appId(w) ?? '').toLowerCase().replace(/\.desktop$/i, '') === key) request.known.add(w);
+    }
+    schedulePendingExpiry() {
+        this.cancel(this.pendingExpiry);
+        this.pendingExpiry = 0;
+        const times = [...(this.pendingLayoutApps?.values() ?? [])].flat()
+            .filter(request => !request.expired && request.expiresAt).map(request => request.expiresAt);
+        if (!times.length) return;
+        this.pendingExpiry = this.later(Math.max(0, Math.min(...times) - Date.now()), () => {
+            this.pendingExpiry = 0;
+            this.expirePendingLaunches();
+        });
+    }
+    // An expired request no longer shows its tile as opening, but a later
+    // window of the app still fills that tile.
+    expirePendingLaunches() {
+        const now = Date.now();
+        for (const request of [...this.pendingLayoutApps.values()].flat())
+            if (!request.expired && request.expiresAt <= now) request.expired = true;
+        this.updatePinnedPlaceholders();
+        this.schedulePendingExpiry();
     }
     launchLayoutApps(missing, monitor, space, workspace, assignments = []) {
         const appSystem = Shell.AppSystem.get_default();
-        const unavailable = [];
-        for (const appId of missing) {
-            const key = appId.toLowerCase().replace(/\.desktop$/i, '');
-            if (this.pendingLayoutApps.has(key)) {
-                const pending = this.pendingLayoutApps.get(key);
-                const target = {monitor, space, index: assignments.indexOf(appId)};
-                if (pending.workspace === workspace && pending.monitor === monitor) {
-                    pending.targets ??= [{monitor: pending.monitor, space: pending.space, index: pending.index}];
-                    pending.targets = pending.targets.filter(item => item.space !== space);
-                    pending.targets.push(target);
-                } else { Object.assign(pending, {monitor, space, workspace, index: target.index}); delete pending.targets; }
+        const normalize = id => (id ?? '').toLowerCase().replace(/\.desktop$/i, '');
+        const unavailable = [], seen = new Map(), handled = new Set();
+        // The nth launch of an app goes to the nth tile that app holds here.
+        const items = missing.map(appId => {
+            const key = normalize(appId), occurrence = seen.get(key) ?? 0;
+            seen.set(key, occurrence + 1);
+            const indexes = assignments.map((id, i) => normalize(id) === key ? i : -1).filter(i => i >= 0);
+            return {appId, key, index: indexes[occurrence] ?? -1, request: null};
+        });
+        const requests = key => (this.pendingLayoutApps.get(key) ?? []).filter(request => !handled.has(request));
+        const local = request => request.workspace === workspace && request.monitor === monitor;
+        const target = (item, request) => {
+            handled.add(request); item.request = request;
+            request.targets = this.pendingTargets(request).filter(other => other.space !== space);
+            request.targets.push({monitor, space, index: item.index});
+            this.rememberLaunchWindows(request, item.key, monitor, space);
+        };
+        // A repeated Apply or Restore keeps the request already headed to each tile.
+        for (const item of items) {
+            const request = requests(item.key).find(request => local(request) &&
+                this.pendingTargets(request).some(other => other.space === space && other.index === item.index));
+            if (request) target(item, request);
+        }
+        const launch = [];
+        for (const item of items) {
+            if (item.request) {
+                // Asking again for an expired tile launches the app again.
+                if (item.request.expired) launch.push(item);
                 continue;
             }
-            const app = appSystem.lookup_app(appId) ?? appSystem.lookup_app(`${appId}.desktop`);
+            // One launching window can be shared by tiles in several Spaces.
+            const shared = requests(item.key).find(request => local(request) && !request.expired &&
+                !this.pendingTargets(request).some(other => other.space === space && other.index >= 0));
+            if (shared) { target(item, shared); continue; }
+            const moved = requests(item.key).find(request => !local(request) && !request.expired);
+            if (moved) {
+                handled.add(moved); item.request = moved;
+                Object.assign(moved, {monitor, space, workspace, index: item.index});
+                delete moved.targets; moved.known = new Set();
+                this.rememberLaunchWindows(moved, item.key, monitor, space);
+                continue;
+            }
+            launch.push(item);
+        }
+        for (const item of launch) {
+            const app = appSystem.lookup_app(item.appId) ?? appSystem.lookup_app(`${item.appId}.desktop`);
             const info = app?.get_app_info?.();
-            if (!info) { unavailable.push(appId); continue; }
-            const pending = {monitor, space, workspace, index: assignments.indexOf(appId)};
-            // Keep the requested destination until the window arrives or a
-            // later Studio Apply clears, replaces or resets its assignment.
-            this.pendingLayoutApps.set(key, pending);
+            if (!info) {
+                if (item.request) this.removePendingRequest(item.key, item.request);
+                unavailable.push(item.appId);
+                continue;
+            }
+            const request = item.request ?? {monitor, space, workspace, index: item.index};
+            const createdAt = Date.now();
+            Object.assign(request, {createdAt, expired: false});
+            delete request.expiresAt;
+            if ([...this.records.keys()].some(w => normalize(this.appId(w)) === item.key))
+                request.expiresAt = createdAt + LAUNCH_EXPIRY_MS;
+            if (!item.request) {
+                this.rememberLaunchWindows(request, item.key, monitor, space);
+                // Keep the requested destination until the window arrives or a
+                // later Studio Apply clears, replaces or resets its assignment.
+                if (!this.pendingLayoutApps.has(item.key)) this.pendingLayoutApps.set(item.key, []);
+                this.pendingLayoutApps.get(item.key).push(request);
+            }
             try {
                 if (!info.launch([], null)) {
-                    this.pendingLayoutApps.delete(key); unavailable.push(appId);
+                    this.removePendingRequest(item.key, request); unavailable.push(item.appId);
                 }
             } catch (error) {
-                this.pendingLayoutApps.delete(key); unavailable.push(appId);
-                console.warn(`[SnapTess] Could not launch ${appId}: ${error}`);
+                this.removePendingRequest(item.key, request); unavailable.push(item.appId);
+                console.warn(`[SnapTess] Could not launch ${item.appId}: ${error}`);
             }
         }
+        this.schedulePendingExpiry();
         this.updatePinnedPlaceholders();
-        if (unavailable.length) Main.notify('SnapTess', `Could not open: ${unavailable.join(', ')}. Their tiles remain reserved.`);
+        if (unavailable.length) Main.notify('SnapTess', `Could not open: ${[...new Set(unavailable)].join(', ')}. Their tiles remain reserved.`);
         return true;
     }
     claimLayoutWindow(w) {
-        const key = this.appId(w).toLowerCase().replace(/\.desktop$/i, '');
-        const pending = this.pendingLayoutApps.get(key);
-        if (!pending || w.get_workspace() !== pending.workspace || !this.eligible(w)) return false;
-        this.pendingLayoutApps.delete(key);
+        const normalize = id => (id ?? '').toLowerCase().replace(/\.desktop$/i, '');
+        const key = normalize(this.appId(w));
+        const requests = this.pendingLayoutApps?.get(key);
+        if (!requests?.length || !this.eligible(w)) return false;
+        const filled = target => target.index >= 0 && this.groups?.get(this.key(target.monitor, target.space))?.[target.index];
+        // An expired request whose tiles were filled meanwhile has nothing left to open.
+        for (const request of [...requests])
+            if (request.expired && this.pendingTargets(request).every(filled)) this.removePendingRequest(key, request);
+        // One window claims one request: the oldest still opening, then an expired one.
+        const remaining = this.pendingLayoutApps.get(key) ?? [];
+        const pending = [...remaining.filter(request => !request.expired), ...remaining.filter(request => request.expired)]
+            .find(request => request.workspace === w.get_workspace() && !request.known?.has(w));
+        if (!pending) return false;
+        this.removePendingRequest(key, pending);
+        // The app now has a window: give its other launches a bounded wait.
+        for (const other of this.pendingLayoutApps.get(key) ?? []) {
+            (other.known ??= new Set()).add(w);
+            if (!other.expired) other.expiresAt = Math.max(other.expiresAt ?? 0, Date.now() + LAUNCH_EXPIRY_MS);
+        }
+        this.schedulePendingExpiry();
         const r = this.records.get(w);
         r.space = pending.space; r.floating = false; r.restoreParked = false;
         if (w.get_monitor() !== pending.monitor) w.move_to_monitor(pending.monitor);
         r.parked = this.running && this.activeSpace(pending.monitor) !== pending.space;
         if (r.parked) w.minimize();
-        const targets = pending.targets ?? [pending];
+        const targets = this.pendingTargets(pending);
         if (targets.length > 1) {
             r.spaces = new Set(targets.map(target => target.space));
             r.space = r.spaces.has(this.activeSpace(pending.monitor)) ? this.activeSpace(pending.monitor) : pending.space;
             r.parked = this.running && !r.spaces.has(this.activeSpace(pending.monitor));
             if (!r.parked && w.minimized) w.unminimize();
         }
+        let assigned = false;
         for (const target of targets) {
-            if (!(target.index >= 0)) continue;
+            if (!(target.index >= 0) || !this.groups) continue;
+            assigned = true;
             const groupKey = this.key(target.monitor, target.space);
             let slots = this.groups.get(groupKey);
             const profile = this.profiles[this.profileKey(target.monitor, target.space)];
-            const normalize = id => id?.toLowerCase().replace(/\.desktop$/i, '');
-            if (normalize(profile?.apps?.[target.index]) === key) {
+            if (normalize(profile?.apps?.[target.index]) === key || normalize(profile?.pinned?.[target.index]) === key) {
                 if (!slots) {
-                    slots = Array(Math.max(profile.apps.length, target.index + 1)).fill(null);
+                    slots = Array(Math.max(profile.apps?.length ?? 0, target.index + 1)).fill(null);
                     this.groups.set(groupKey, slots);
                 }
                 slots[target.index] = w;
-                profile.pendingApps = profile.pendingApps?.filter(id => normalize(id) !== key);
+                const occurrence = profile.pendingApps?.findIndex(id => normalize(id) === key) ?? -1;
+                if (occurrence >= 0) profile.pendingApps.splice(occurrence, 1);
             }
         }
-        if (targets.some(target => target.index >= 0)) {
+        if (assigned) {
             this.persistWindowSharing();
             this.settings.set_string('profiles', JSON.stringify(this.profiles));
         }
@@ -1056,8 +1173,7 @@ export default class SnapTess extends Extension {
                 spaces: r.spaces ? new Set(r.spaces) : null,
                 parked: r.parked, restoreParked: r.restoreParked}])),
             spaces: new Map([...this.spaces].map(([w, m]) => [w, new Map(m)])),
-            pending: new Map([...(this.pendingLayoutApps ?? [])].map(([id, pending]) => [id,
-                {...pending, targets: pending.targets?.map(target => ({...target}))}])),
+            pending: copyPendingLaunches(this.pendingLayoutApps),
             profiles: JSON.stringify(this.profiles)};
     }
     pushCheckpoint(state) {
@@ -1112,9 +1228,9 @@ export default class SnapTess extends Extension {
             this.settings.set_string('profiles', state.profiles);
             this.pendingLayoutApps ??= new Map();
             this.pendingLayoutApps.clear();
-            for (const [id, pending] of state.pending ?? []) this.pendingLayoutApps.set(id,
-                {...pending, targets: pending.targets?.map(target => ({...target}))});
+            for (const [id, requests] of copyPendingLaunches(state.pending)) this.pendingLayoutApps.set(id, requests);
             global._snaptessPendingLayoutApps = this.pendingLayoutApps;
+            this.schedulePendingExpiry();
             for (const [w, rect] of state.windows) if (this.records.has(w)) this.restore(w, rect);
             // An app may have finished opening between Undo and Redo. Reuse its
             // existing window for a restored pending destination without launching again.
@@ -1279,10 +1395,11 @@ export default class SnapTess extends Extension {
         const floating = matches.find(([w, record]) => !used.has(w) && record.floating &&
             this.windowInSpace(w, space) && w.get_monitor() === monitor && w.get_workspace() === workspace)?.[0];
         if (floating) return {window: floating, state: 'FLOATING'};
-        const pending = this.pendingLayoutApps?.get(normalize(id));
-        if (pending?.monitor === monitor && pending.space === space && pending.workspace === workspace)
-            return {window: null, state: 'OPENING'};
-        return {window: null, state: matches.length ? 'OPEN ELSEWHERE' : 'CLOSED'};
+        if (this.pendingTileOpening(id, monitor, space, index, workspace)) return {window: null, state: 'OPENING'};
+        // Windows of the app already tiled in this Space are not the pinned one.
+        const here = new Set(this.groups?.get(this.key(monitor, space)) ?? []);
+        const elsewhere = matches.some(([w]) => !here.has(w) && !used.has(w));
+        return {window: null, state: elsewhere ? 'OPEN ELSEWHERE' : 'CLOSED'};
     }
 
     reservedPinnedSlot(monitor, index, slots = this.groups.get(this.key(monitor)) ?? []) {
@@ -1298,7 +1415,6 @@ export default class SnapTess extends Extension {
         }
         const desired = new Map(), workspace = global.workspace_manager.get_active_workspace();
         const used = new Set();
-        const normalize = id => (id ?? '').replace(/\.desktop$/i, '').toLowerCase();
         for (let monitor = 0; monitor < Main.layoutManager.monitors.length; monitor++) {
             const space = this.activeSpace(monitor), pins = this.profiles[this.profileKey(monitor, space)]?.pinned;
             if (!Array.isArray(pins) || !pins.some(Boolean) ||
@@ -1311,7 +1427,7 @@ export default class SnapTess extends Extension {
                 if (!id || slots[index] || !rect) continue;
                 const {window, state} = this.pinnedSlotState(id, monitor, space, index, used);
                 if (window) used.add(window);
-                desired.set(`${monitor}:${index}`, {id, rect, monitor, space, window, state});
+                desired.set(`${monitor}:${index}`, {id, rect, monitor, space, index, window, state});
             }
         }
         for (const [key, current] of this.pinnedPlaceholders) {
@@ -1352,18 +1468,7 @@ export default class SnapTess extends Extension {
                     child: content});
                 button.connect('clicked', () => {
                     if (this.pinnedPlaceholders.get(key)?.button !== button || !this.running || this.studio || this.layoutSwitcher) return;
-                    if (entry.state === 'FLOATING' && this.records.get(entry.window)?.floating) {
-                        this.checkpoint();
-                        this.records.get(entry.window).floating = false;
-                        if (entry.window.minimized) entry.window.unminimize();
-                        this.tile(true);
-                        entry.window.activate(global.get_current_time());
-                    } else if (entry.window && this.records.has(entry.window) && entry.window.minimized) {
-                        entry.window.unminimize();
-                        entry.window.activate(global.get_current_time());
-                    } else if (entry.state === 'CLOSED' && !this.pendingLayoutApps.has(normalize(entry.id))) {
-                        this.launchLayoutApps([entry.id], entry.monitor, entry.space, workspace);
-                    }
+                    this.activatePinnedPlaceholder(entry, workspace);
                 });
                 // Keep the card above the desktop background and below real windows.
                 global.window_group.add_child(button);
@@ -1383,6 +1488,23 @@ export default class SnapTess extends Extension {
             else current.button.remove_style_class_name('compact');
         }
         this.stackPinnedPlaceholders();
+    }
+
+    activatePinnedPlaceholder(entry, workspace = global.workspace_manager.get_active_workspace()) {
+        if (entry.state === 'FLOATING' && this.records.get(entry.window)?.floating) {
+            this.checkpoint();
+            this.records.get(entry.window).floating = false;
+            if (entry.window.minimized) entry.window.unminimize();
+            this.tile(true);
+            entry.window.activate(global.get_current_time());
+        } else if (entry.window && this.records.has(entry.window) && entry.window.minimized) {
+            entry.window.unminimize();
+            entry.window.activate(global.get_current_time());
+        } else if (entry.state === 'CLOSED' &&
+            !this.pendingTileOpening(entry.id, entry.monitor, entry.space, entry.index, workspace)) {
+            const tiles = Array.from({length: entry.index + 1}, (_, i) => i === entry.index ? entry.id : null);
+            this.launchLayoutApps([entry.id], entry.monitor, entry.space, workspace, tiles);
+        }
     }
 
     stackPinnedPlaceholders() {
@@ -3000,25 +3122,29 @@ export default class SnapTess extends Extension {
         const claimed = new Map();
         const plans = changes.map(change => {
             const local = new Set();
-            return {...change, slots: change.windows.map(w => {
+            const slots = change.windows.map(w => {
                 if (!w || !this.records.has(w) || w.get_workspace() !== workspace || local.has(w) ||
                     (claimed.has(w) && claimed.get(w) !== change.monitor)) return null;
                 local.add(w); claimed.set(w, change.monitor); return w;
-            })};
+            });
+            // A tile that already holds a window has nothing to open.
+            return {...change, slots, opening: change.apps?.map((id, i) => slots[i] ? null : id)};
         });
         // An app already launching must not reclaim a tile cleared by a later
         // Apply or Reset. Keep its requests in other Spaces intact.
         const normalize = id => id?.toLowerCase().replace(/\.desktop$/i, '');
-        for (const [id, pending] of this.pendingLayoutApps ?? []) {
-            if (pending.workspace !== workspace) continue;
-            const targets = (pending.targets ?? [{monitor: pending.monitor, space: pending.space, index: pending.index}]).filter(target => {
-                const plan = plans.find(item => item.monitor === target.monitor && item.space === target.space);
-                return !plan || (!plan.reset && (target.index >= 0
-                    ? normalize(plan.apps?.[target.index]) === id
-                    : [...(plan.apps ?? []), ...(plan.pinned ?? [])].some(appId => normalize(appId) === id)));
-            });
-            if (!targets.length) this.pendingLayoutApps.delete(id);
-            else { pending.targets = targets; Object.assign(pending, targets[0]); }
+        for (const [id, requests] of this.pendingLayoutApps ?? []) {
+            for (const pending of [...requests]) {
+                if (pending.workspace !== workspace) continue;
+                const targets = this.pendingTargets(pending).filter(target => {
+                    const plan = plans.find(item => item.monitor === target.monitor && item.space === target.space);
+                    return !plan || (!plan.reset && (target.index >= 0
+                        ? [plan.apps, plan.pinned, plan.launching].some(apps => normalize(apps?.[target.index]) === id)
+                        : [...(plan.apps ?? []), ...(plan.pinned ?? [])].some(appId => normalize(appId) === id)));
+                });
+                if (!targets.length) this.removePendingRequest(id, pending);
+                else { pending.targets = targets; Object.assign(pending, targets[0]); }
+            }
         }
         this.busy = true;
         try {
@@ -3043,7 +3169,7 @@ export default class SnapTess extends Extension {
                     if (r.spaces.size && r.space === space) r.space = [...r.spaces][0];
                 }
             }
-            for (const {monitor, space, preset, slots, pinned = [], slotCount, tiles, parkUnused = [], apps, preserveSlots} of plans) {
+            for (const {monitor, space, preset, slots, pinned = [], slotCount, tiles, parkUnused = [], apps, opening, preserveSlots} of plans) {
                 for (const w of parkUnused) {
                     if (!this.records.has(w)) continue;
                     const r = this.records.get(w);
@@ -3073,7 +3199,7 @@ export default class SnapTess extends Extension {
                 this.groups.set(this.key(monitor, space), slots);
                 this.profiles[this.profileKey(monitor, space)] = {
                     preset, apps: apps || preserveSlots ? slots.map((w, i) => w ? this.appId(w) : apps?.[i] ?? null) : slots.filter(Boolean).map(w => this.appId(w)), pinned,
-                    ...(apps?.some(Boolean) ? {pendingApps: apps.filter(Boolean)} : {}),
+                    ...(opening?.some(Boolean) ? {pendingApps: opening.filter(Boolean)} : {}),
                     ...(preserveSlots ? {preserveSlots: true, ...(slots.length ? {slotCount: slots.length} : {})} : {}),
                     ...(slotCount ? {slotCount} : {}),
                     ...(preset === 'custom' ? {tiles: tiles.map(t => ({...t})), slotCount: tiles.length} : {}),
@@ -3093,8 +3219,8 @@ export default class SnapTess extends Extension {
         this.settings.set_string('profiles', JSON.stringify(this.profiles));
         this.tile(true, true);
         this.updatePanelStatus();
-        for (const {monitor, space, apps = []} of plans)
-            if (apps.some(Boolean)) this.launchLayoutApps(apps.filter(Boolean), monitor, space, workspace, apps);
+        for (const {monitor, space, opening = []} of plans)
+            if (opening.some(Boolean)) this.launchLayoutApps(opening.filter(Boolean), monitor, space, workspace, opening);
         this.deletedLayouts?.splice(0);
     }
 

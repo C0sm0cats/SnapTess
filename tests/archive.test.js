@@ -77,3 +77,13 @@ test('profiles with deliberately empty tiles round-trip without pending launch m
     assert.equal(archive.profiles['0:DP-1:0'].preserveSlots, true);
     assert.equal(archive.profiles['0:DP-1:0'].pendingApps, undefined);
 });
+
+test('a layout holding and pinning the same app on several tiles survives export then import', () => {
+    const repeated = {id: 'orca', name: 'Orca', preset: 'split', slotCount: 2,
+        apps: ['orca.desktop', 'orca.desktop'], pinned: ['orca.desktop', 'orca.desktop']};
+    const text = makeArchive([repeated], {});
+    assert.deepEqual(parseArchive(text).layouts, [repeated]);
+    const merged = mergeArchive(text, [], {}, () => 'unused');
+    assert.equal(merged.addedLayouts, 1);
+    assert.deepEqual(merged.layouts, [repeated]);
+});
