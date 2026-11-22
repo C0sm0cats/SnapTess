@@ -40,5 +40,30 @@ export async function run() {
     card.emit('leave-event', null);
     assert(!card._sharedTooltip.visible, 'shared tooltip hides on leave');
     after.studio.dialog.close();
+    // Two windows of one app keep their own tiles through another reload.
+    await Scripting.createTestWindow({width: 320, height: 240});
+    await Scripting.waitTestWindows(); await Scripting.sleep(400);
+    after.setRunning(true); await Scripting.sleep(400);
+    const second = [...after.records.keys()].find(item => item !== w);
+    assert(second && after.appId(second) === id, 'second window of the same app');
+    // Both orders: the default order after a reload can only match one of them.
+    let current = after;
+    for (const order of [[second, w], [w, second]]) {
+        current.groups.set(current.key(0, 0), [...order]);
+        current.tile(true); await Scripting.sleep(400);
+        assert(current.groups.get(current.key(0, 0)).every((item, i) => item === order[i]), 'windows placed');
+        const previous = current;
+        Main.extensionManager.disableExtension(uuid);
+        Main.extensionManager.enableExtension(uuid);
+        for (let n = 0; n < 40 && (!entry.stateObj?.runtime || entry.stateObj.runtime === previous); n++)
+            await Scripting.sleep(100);
+        current = entry.stateObj?.runtime;
+        assert(current && current !== previous && !current.running, 'runtime loaded again, paused');
+        current.setRunning(true); await Scripting.sleep(400);
+        const restored = current.groups.get(current.key(0, 0));
+        assert(restored?.length === 2 && restored.every((item, i) => item === order[i]),
+            'each window returns to its own tile after the reload');
+    }
+    current.setRunning(false);
     console.log('SNAPTESS_PENDING_RELOAD_TESTS_PASSED');
 }
