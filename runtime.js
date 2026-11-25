@@ -200,7 +200,7 @@ export default class SnapTess extends Extension {
         for (const [name, callback] of Object.entries(this.bindings))
             Main.wm.addKeybinding(name, this.settings, Meta.KeyBindingFlags.NONE, Shell.ActionMode.NORMAL, callback);
         this.connect(global.display, 'window-created', (_d, w) => {
-            this.track(w);
+            this.track(w, true);
             for (const delay of [160, 500, 1200]) this.later(delay, () => {
                 if (!this.records.has(w) || this.awaitingShow(w)) return;
                 if (!this.claimLayoutWindow(w) && !this.floatCancelledLaunch(w)) this.schedule(true);
@@ -378,8 +378,8 @@ export default class SnapTess extends Extension {
     }
 
     // A Wayland window configured before its initial commit is never made
-    // ready by Mutter, which then ignores every later maximize. It has no
-    // frame until then: its geometry waits for its first show.
+    // ready by Mutter, which then ignores every later maximize. A new window
+    // without a frame waits for its initial configure or its first show.
     awaitingShow(w, record = this.records.get(w)) {
         if (!record?.unshown) return false;
         const frame = w.get_frame_rect();
@@ -387,7 +387,7 @@ export default class SnapTess extends Extension {
         return record.unshown;
     }
 
-    track(w) {
+    track(w, created = false) {
         if (!this.eligible(w) || this.records.has(w)) return;
         const frame = w.get_frame_rect();
         const record = {original: null, floating: false, space: this.activeSpace(w.get_monitor(), w.get_workspace()),
@@ -395,7 +395,7 @@ export default class SnapTess extends Extension {
             visualScale: 1, scaleTimer: 0, linkedResizePending: false,
             linkedResizeEligible: false, linkedResizeScale: false,
             backingRect: null, scaleMinimum: null, learnedMinimum: null, backingRepairSent: false, scaleNegotiated: false, placementMoves: 0, placing: false, restoreStarted: false, restoreMoves: 0, userSpecial: false,
-            unshown: !(frame.width > 0 && frame.height > 0),
+            unshown: created && !(frame.width > 0 && frame.height > 0),
             sizeRepairs: 0, sizeRejectUntil: 0, mismatchSize: null, mismatchSince: 0, repairResetTimer: 0,
             lastTileChangeAt: 0, rapidLayoutRecovery: false, nativeFitSizes: [],
             windowRadius: null, activeWindowRadius: null, radiusDirty: true, radiusAttempts: 0, radiusPending: false,
@@ -447,11 +447,22 @@ export default class SnapTess extends Extension {
             this.schedule(this.settings.get_boolean('compact-close'));
         };
         watch('unmanaged', untrack);
-        watch('shown', () => {
+        const shown = () => {
             if (!record.unshown) return;
             record.unshown = false;
             if (!this.claimLayoutWindow(w) && !this.floatCancelledLaunch(w)) this.schedule(true);
-        });
+        };
+        watch('shown', shown);
+        // Mutter makes the window ready right after its initial configure; a
+        // client may attach its first buffer much later.
+        if (record.unshown) {
+            try {
+                watch('configure', (_w, config) => {
+                    if (config?.get_is_initial?.() === false) return;
+                    this.later(0, () => { if (this.records.get(w) === record) shown(); });
+                });
+            } catch { /* no configure signal: the first show releases it */ }
+        }
         // Wayland may publish the title/app identity after window-created.
         const identityChanged = () => {
             if (!this.isOwnPreferences(w) || !this.records.has(w)) return;
