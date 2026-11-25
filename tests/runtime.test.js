@@ -3129,6 +3129,7 @@ function launchHarness({excluded = false} = {}) {
     const h = harness(), {app, w} = h;
     const calls = {unmaximize: 0, unfullscreen: 0, scheduled: 0};
     w.maximize = () => h.special(3, w.fullscreen);
+    w.can_maximize = () => true;
     w.unmaximize = () => { calls.unmaximize++; h.special(0, w.fullscreen); };
     w.unmake_fullscreen = () => { calls.unfullscreen++; h.special(w.flags, false); };
     app.groups = new Map(); app.profiles = {}; app.pendingLayoutApps = new Map();
@@ -3175,6 +3176,52 @@ test('a layout-launched window that maximizes itself during the grace returns to
     assert.equal(record.restorePending, false);
     assert.deepEqual({...record.tileRect}, tile);
     assert.equal(app.deferredRetile.size, 0);
+});
+
+test('a handle maximize during the launch grace is kept on the first click', () => {
+    const h = launchHarness(), {app, w, record, calls} = h;
+    h.pend();
+    assert.equal(app.claimLayoutWindow(w), true);
+    h.advance(150);
+    h.commit(record.tileRect);
+    h.advance(500);
+    app.toggleMaximize(w);
+    h.advance(2000);
+    assert.equal(calls.unmaximize, 0);
+    assert.equal(w.get_maximize_flags(), 3);
+    app.toggleMaximize(w);
+    assert.equal(calls.unmaximize, 1, 'the handle restores it');
+    assert.equal(record.userSpecial, false);
+    w.maximize();
+    h.advance(1);
+    assert.equal(calls.unmaximize, 2, 'a later self-maximize within the grace is still released');
+});
+
+test('a handle maximize before the layout claim survives the claim', () => {
+    const h = launchHarness(), {app, w, calls} = h;
+    app.toggleMaximize(w);
+    h.pend();
+    assert.equal(app.claimLayoutWindow(w), true);
+    h.advance(2000);
+    assert.equal(calls.unmaximize, 0);
+    assert.equal(w.get_maximize_flags(), 3);
+});
+
+test('a handle maximize on a window that cannot maximize leaves the launch grace intact', () => {
+    const h = launchHarness(), {app, w, record, calls} = h;
+    h.pend();
+    assert.equal(app.claimLayoutWindow(w), true);
+    h.advance(150);
+    h.commit(record.tileRect);
+    w.can_maximize = () => false;
+    const maximize = w.maximize;
+    w.maximize = () => {};
+    app.toggleMaximize(w);
+    assert.equal(record.userSpecial, false);
+    w.maximize = maximize;
+    w.maximize();
+    h.advance(1);
+    assert.equal(calls.unmaximize, 1, 'a later self-maximize within the grace is still released');
 });
 
 test('a maximize after the launch grace is the user\'s and is kept', () => {

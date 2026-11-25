@@ -21,7 +21,7 @@ import {radiusFromPixels, radiusStyle, plausibleWindowRadius, visualFrameRect} f
 import {actionStyle, actionHandleSize, actionPaletteSize, actionHandleIcon, actionSlide, actionPlacement,
     actionTooltipPlacement, actionHandleStyle, actionPaletteStyle, horizontalActions} from './lib/window-actions.js';
 
-const RUNTIME_REVISION = 96;
+const RUNTIME_REVISION = 97;
 const RESTORE_STABILIZE_MS = 1400;
 const RESTORE_QUIET_MS = 120;
 const MAX_RESTORE_MOVES = 8;
@@ -153,7 +153,7 @@ export default class SnapTess extends Extension {
         this.maximizeAction = actionButton('Maximize or restore window', 'window-maximize-symbolic', () => {
             const w = global.display.focus_window;
             if (!this.records.has(w)) return;
-            if (w.get_maximize_flags()) w.unmaximize(); else w.maximize();
+            this.toggleMaximize(w);
             this.hideWindowActions();
             if (global.display.focus_window === w) this.queueWindowActions(w, 180);
         });
@@ -383,7 +383,7 @@ export default class SnapTess extends Extension {
             parked: false, restoreParked: false, signals: [], monitor: w.get_monitor(), tileRect: null,
             visualScale: 1, scaleTimer: 0, linkedResizePending: false,
             linkedResizeEligible: false, linkedResizeScale: false,
-            backingRect: null, scaleMinimum: null, learnedMinimum: null, backingRepairSent: false, scaleNegotiated: false, placementMoves: 0, placing: false, restoreStarted: false, restoreMoves: 0,
+            backingRect: null, scaleMinimum: null, learnedMinimum: null, backingRepairSent: false, scaleNegotiated: false, placementMoves: 0, placing: false, restoreStarted: false, restoreMoves: 0, userSpecial: false,
             sizeRepairs: 0, sizeRejectUntil: 0, mismatchSize: null, mismatchSince: 0, repairResetTimer: 0,
             lastTileChangeAt: 0, rapidLayoutRecovery: false, nativeFitSizes: [],
             windowRadius: null, activeWindowRadius: null, radiusDirty: true, radiusAttempts: 0, radiusPending: false,
@@ -541,6 +541,7 @@ export default class SnapTess extends Extension {
                 });
             return;
         }
+        record.userSpecial = false;
         if (record.specialState && !record.tileRect && Date.now() < (record.launchReleaseUntil ?? 0)) {
             // A released launch has no tile to restore yet: tile it directly
             // instead of holding its display for the restore transaction.
@@ -572,7 +573,8 @@ export default class SnapTess extends Extension {
     }
 
     releaseLaunchedSpecial(w, record) {
-        if (!this.running || !this.isSpecialWindow(w) || record.floating || (record.launchReleases ?? 0) >= MAX_LAUNCH_RELEASES ||
+        if (!this.running || !this.isSpecialWindow(w) || record.floating || record.userSpecial ||
+            (record.launchReleases ?? 0) >= MAX_LAUNCH_RELEASES ||
             this.matchesAppRule(w, 'excluded-apps')) return false;
         record.launchReleases = (record.launchReleases ?? 0) + 1;
         if (w.fullscreen) w.unmake_fullscreen();
@@ -2800,6 +2802,19 @@ export default class SnapTess extends Extension {
             if (w) this.queueWindowActions(w);
         }
         this.publishPreviewState();
+    }
+
+    toggleMaximize(w) {
+        if (w.get_maximize_flags()) {
+            w.unmaximize();
+            return;
+        }
+        // A maximize the user asked for is never a launch restoring its own
+        // state, even within the launch grace or before the layout claim.
+        const record = this.records.get(w);
+        // A client that cannot maximize never notifies: no flag left behind.
+        if (record && w.can_maximize()) record.userSpecial = true;
+        w.maximize();
     }
 
     toggleFloating() {
