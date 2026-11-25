@@ -3207,21 +3207,104 @@ test('a handle maximize before the layout claim survives the claim', () => {
     assert.equal(w.get_maximize_flags(), 3);
 });
 
-test('a handle maximize on a window that cannot maximize leaves the launch grace intact', () => {
+test('a handle maximize that is not applied leaves the launch grace intact', () => {
+    const h = launchHarness(), {app, w, record, calls} = h;
+    h.pend();
+    assert.equal(app.claimLayoutWindow(w), true);
+    h.advance(150);
+    h.commit(record.tileRect);
+    const maximize = w.maximize, warn = console.warn, warnings = [];
+    w.maximize = () => {};
+    w.get_wm_class = () => 'test-app';
+    console.warn = message => warnings.push(message);
+    try {
+        app.toggleMaximize(w);
+        assert.equal(record.userSpecial, false);
+        app.toggleMaximize(w);
+    } finally { console.warn = warn; }
+    assert.equal(warnings.length, 1, 'reported once per window');
+    assert.match(warnings[0], /test-app/);
+    w.maximize = maximize;
+    w.maximize();
+    h.advance(1);
+    assert.equal(calls.unmaximize, 1, 'a later self-maximize within the grace is still released');
+});
+
+test('a handle maximize is kept even when the window reports it cannot maximize', () => {
     const h = launchHarness(), {app, w, record, calls} = h;
     h.pend();
     assert.equal(app.claimLayoutWindow(w), true);
     h.advance(150);
     h.commit(record.tileRect);
     w.can_maximize = () => false;
-    const maximize = w.maximize;
-    w.maximize = () => {};
     app.toggleMaximize(w);
-    assert.equal(record.userSpecial, false);
-    w.maximize = maximize;
-    w.maximize();
-    h.advance(1);
-    assert.equal(calls.unmaximize, 1, 'a later self-maximize within the grace is still released');
+    h.advance(2000);
+    assert.equal(calls.unmaximize, 0);
+    assert.equal(w.get_maximize_flags(), 3);
+});
+
+// Mutter never makes a Wayland window ready once it is configured before its
+// initial commit; such a window has no frame yet.
+function unshownHarness() {
+    const h = launchHarness(), {app, w} = h;
+    const frameRect = w.get_frame_rect;
+    w.get_frame_rect = () => ({x: 0, y: 0, width: 0, height: 0});
+    app.records.delete(w);
+    app.track(w);
+    return {...h, record: app.records.get(w), show: () => { w.get_frame_rect = frameRect; h.notifyWindow('shown'); }};
+}
+
+test('a window that is not shown yet gets no geometry request and keeps its slot', () => {
+    const h = unshownHarness(), {app, w, record, calls} = h;
+    let moved = 0;
+    w.move_to_monitor = () => { moved++; };
+    assert.equal(record.unshown, true);
+    app.tile(true, false, false);
+    app.place(w, h.slot);
+    app.requestWindowGeometry(w, 'test', h.slot);
+    app.restore(w, {...h.slot, monitor: 0, maximized: 0, minimized: false});
+    assert.deepEqual(h.requests, []);
+    assert.equal(moved, 0);
+    assert.equal(record.tileRect, null);
+    assert.equal(record.original, null);
+    assert.ok(app.groups.get(app.key(0)).includes(w), 'its slot is reserved');
+    h.show();
+    assert.equal(record.unshown, false);
+    assert.equal(calls.scheduled, 1);
+    h.advance(150);
+    assert.ok(record.tileRect, 'placed once shown');
+    assert.ok(h.requests.some(request => request.type === 'resize'));
+    h.requests.length = 0; calls.scheduled = 0;
+    h.notifyWindow('shown');
+    assert.equal(calls.scheduled, 0, 'a later show does not retile');
+});
+
+test('a layout launch is claimed only once its window is shown', () => {
+    const h = unshownHarness(), {app, w, record} = h;
+    h.pend();
+    assert.equal(app.claimLayoutWindow(w), false);
+    assert.equal(app.pendingLayoutApps.get('test').length, 1, 'its destination stays reserved');
+    h.show();
+    assert.equal(app.pendingLayoutApps.has('test') && app.pendingLayoutApps.get('test').length > 0, false);
+    assert.ok(record.launchReleaseUntil);
+    h.advance(150);
+    assert.ok(h.requests.some(request => request.type === 'resize'));
+});
+
+test('a window whose frame arrives before the show signal is placed without it', () => {
+    const h = unshownHarness(), {app, w, record} = h;
+    w.get_frame_rect = () => ({x: 10, y: 10, width: 300, height: 200});
+    app.tile(true, false, false);
+    assert.equal(record.unshown, false);
+    assert.ok(h.requests.some(request => request.type === 'resize'));
+});
+
+test('a window already shown when tracked is placed immediately', () => {
+    const h = launchHarness(), {app, record} = h;
+    assert.equal(record.unshown, false);
+    app.tile(true, false, false);
+    assert.ok(record.tileRect);
+    assert.ok(h.requests.some(request => request.type === 'resize'));
 });
 
 test('a maximize after the launch grace is the user\'s and is kept', () => {

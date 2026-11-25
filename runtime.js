@@ -21,7 +21,7 @@ import {radiusFromPixels, radiusStyle, plausibleWindowRadius, visualFrameRect} f
 import {actionStyle, actionHandleSize, actionPaletteSize, actionHandleIcon, actionSlide, actionPlacement,
     actionTooltipPlacement, actionHandleStyle, actionPaletteStyle, horizontalActions} from './lib/window-actions.js';
 
-const RUNTIME_REVISION = 97;
+const RUNTIME_REVISION = 98;
 const RESTORE_STABILIZE_MS = 1400;
 const RESTORE_QUIET_MS = 120;
 const MAX_RESTORE_MOVES = 8;
@@ -202,7 +202,7 @@ export default class SnapTess extends Extension {
         this.connect(global.display, 'window-created', (_d, w) => {
             this.track(w);
             for (const delay of [160, 500, 1200]) this.later(delay, () => {
-                if (!this.records.has(w)) return;
+                if (!this.records.has(w) || this.awaitingShow(w)) return;
                 if (!this.claimLayoutWindow(w) && !this.floatCancelledLaunch(w)) this.schedule(true);
             });
         });
@@ -377,13 +377,25 @@ export default class SnapTess extends Extension {
         return Boolean(w?.fullscreen || w?.get_maximize_flags?.());
     }
 
+    // A Wayland window configured before its initial commit is never made
+    // ready by Mutter, which then ignores every later maximize. It has no
+    // frame until then: its geometry waits for its first show.
+    awaitingShow(w, record = this.records.get(w)) {
+        if (!record?.unshown) return false;
+        const frame = w.get_frame_rect();
+        if (frame.width > 0 && frame.height > 0) record.unshown = false;
+        return record.unshown;
+    }
+
     track(w) {
         if (!this.eligible(w) || this.records.has(w)) return;
+        const frame = w.get_frame_rect();
         const record = {original: null, floating: false, space: this.activeSpace(w.get_monitor(), w.get_workspace()),
             parked: false, restoreParked: false, signals: [], monitor: w.get_monitor(), tileRect: null,
             visualScale: 1, scaleTimer: 0, linkedResizePending: false,
             linkedResizeEligible: false, linkedResizeScale: false,
             backingRect: null, scaleMinimum: null, learnedMinimum: null, backingRepairSent: false, scaleNegotiated: false, placementMoves: 0, placing: false, restoreStarted: false, restoreMoves: 0, userSpecial: false,
+            unshown: !(frame.width > 0 && frame.height > 0),
             sizeRepairs: 0, sizeRejectUntil: 0, mismatchSize: null, mismatchSince: 0, repairResetTimer: 0,
             lastTileChangeAt: 0, rapidLayoutRecovery: false, nativeFitSizes: [],
             windowRadius: null, activeWindowRadius: null, radiusDirty: true, radiusAttempts: 0, radiusPending: false,
@@ -435,6 +447,11 @@ export default class SnapTess extends Extension {
             this.schedule(this.settings.get_boolean('compact-close'));
         };
         watch('unmanaged', untrack);
+        watch('shown', () => {
+            if (!record.unshown) return;
+            record.unshown = false;
+            if (!this.claimLayoutWindow(w) && !this.floatCancelledLaunch(w)) this.schedule(true);
+        });
         // Wayland may publish the title/app identity after window-created.
         const identityChanged = () => {
             if (!this.isOwnPreferences(w) || !this.records.has(w)) return;
@@ -673,7 +690,7 @@ export default class SnapTess extends Extension {
 
     requestWindowGeometry(w, reason, rect, positionOnly = false) {
         const record = this.records.get(w);
-        if (!record) return;
+        if (!record || this.awaitingShow(w, record)) return;
         record.requestSequence++;
         record.placing = true;
         this.traceWindow(w, `request:${reason}`, {requested: {...rect}, positionOnly});
@@ -1288,7 +1305,7 @@ export default class SnapTess extends Extension {
         const normalize = id => (id ?? '').toLowerCase().replace(/\.desktop$/i, '');
         const key = normalize(this.appId(w));
         const requests = this.pendingLayoutApps?.get(key);
-        if (!requests?.length || !this.eligible(w)) return false;
+        if (!requests?.length || !this.eligible(w) || this.awaitingShow(w)) return false;
         const filled = target => target.index >= 0 && this.groups?.get(this.key(target.monitor, target.space))?.[target.index];
         // An expired request whose tiles were filled meanwhile has nothing left to open.
         for (const request of [...requests])
@@ -1409,7 +1426,7 @@ export default class SnapTess extends Extension {
         return {...record.original, minimized: w.minimized && !record.parked && !record.restoreParked};
     }
     restore(w, state) {
-        if (w.fullscreen) return;
+        if (w.fullscreen || this.awaitingShow(w)) return;
         this.resetWindowScale(w, true);
         w.unmaximize();
         if (state.monitor < Main.layoutManager.monitors.length) w.move_to_monitor(state.monitor);
@@ -1572,7 +1589,7 @@ export default class SnapTess extends Extension {
                 this.groups.set(key, slots);
                 const rects = this.slotRects(monitor, slots.length);
                 slots.forEach((w, i) => {
-                    if (!w || w.fullscreen) return;
+                    if (!w || w.fullscreen || this.awaitingShow(w)) return;
                     const record = this.records.get(w);
                     record.original ??= this.snapshot(w);
                     if (releaseMaximized) w.unmaximize();
@@ -2105,7 +2122,7 @@ export default class SnapTess extends Extension {
         });
     }
     place(w, rect, restoring = false, force = false, motionGuides = true) {
-        if (!rect || this.isSpecialWindow(w)) return;
+        if (!rect || this.isSpecialWindow(w) || this.awaitingShow(w)) return;
         this.watchWindowEffects(w);
         const actor = this.windowActor(w), record = this.records.get(w);
         if (!record) return;
@@ -2812,9 +2829,15 @@ export default class SnapTess extends Extension {
         // A maximize the user asked for is never a launch restoring its own
         // state, even within the launch grace or before the layout claim.
         const record = this.records.get(w);
-        // A client that cannot maximize never notifies: no flag left behind.
-        if (record && w.can_maximize()) record.userSpecial = true;
+        if (record) record.userSpecial = true;
         w.maximize();
+        // A request that is not applied never notifies: no flag left behind.
+        if (record && !w.get_maximize_flags()) {
+            record.userSpecial = false;
+            if (!record.maximizeWarned)
+                console.warn(`[SnapTess] Maximize was not applied to ${w.get_wm_class?.() ?? 'a window'}`);
+            record.maximizeWarned = true;
+        }
     }
 
     toggleFloating() {
