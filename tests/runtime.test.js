@@ -3250,7 +3250,7 @@ function unshownHarness() {
     const frameRect = w.get_frame_rect;
     w.get_frame_rect = () => ({x: 0, y: 0, width: 0, height: 0});
     app.records.delete(w);
-    app.track(w);
+    app.track(w, true);
     return {...h, record: app.records.get(w), show: () => { w.get_frame_rect = frameRect; h.notifyWindow('shown'); }};
 }
 
@@ -3297,6 +3297,33 @@ test('a window whose frame arrives before the show signal is placed without it',
     app.tile(true, false, false);
     assert.equal(record.unshown, false);
     assert.ok(h.requests.some(request => request.type === 'resize'));
+});
+
+test('a new window is released by its initial configure, before any frame', () => {
+    const h = unshownHarness(), {app, w, record, calls} = h;
+    h.pend();
+    h.notifyWindow('configure');
+    assert.equal(record.unshown, true, 'Mutter makes it ready only after the signal');
+    assert.equal(app.claimLayoutWindow(w), false);
+    h.advance(0);
+    assert.equal(record.unshown, false);
+    assert.ok(record.launchReleaseUntil, 'its layout launch is claimed');
+    h.advance(150);
+    assert.ok(h.requests.some(request => request.type === 'resize'));
+    calls.scheduled = 0;
+    h.notifyWindow('shown');
+    assert.equal(calls.scheduled, 0);
+});
+
+test('a window that already exists when the extension loads is claimed without a frame', () => {
+    const h = launchHarness(), {app, w} = h;
+    w.get_frame_rect = () => ({x: 0, y: 0, width: 0, height: 0});
+    app.records.delete(w);
+    app.track(w);
+    assert.equal(app.records.get(w).unshown, false);
+    h.pend();
+    assert.equal(app.claimLayoutWindow(w), true);
+    assert.equal(app.pendingLayoutApps.has('test') && app.pendingLayoutApps.get('test').length > 0, false);
 });
 
 test('a window already shown when tracked is placed immediately', () => {
