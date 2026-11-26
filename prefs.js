@@ -8,6 +8,7 @@ import {ExtensionPreferences} from 'resource:///org/gnome/Shell/Extensions/js/ex
 import {layout, autoLayout, capacity, PRESETS} from './lib/layout.js';
 import {makeArchive, mergeArchive} from './lib/archive.js';
 import {appRuleValue, normalizeAppId, validColor, REMOTE_HANDLE_COLOR} from './lib/window-actions.js';
+import {versionNotice, loaderVersionFromSource} from './lib/version-notice.js';
 
 function appAliases(id, startupWmClass = null) {
     const aliases = [id];
@@ -52,8 +53,20 @@ export default class SnapTessPreferences extends ExtensionPreferences {
         window.set_default_size(660, 720);
         const [, packageBytes] = this.dir.get_child('package.json').load_contents(null);
         const releaseVersion = JSON.parse(new TextDecoder().decode(packageBytes)).version;
-        const page = new Adw.PreferencesPage({title: `SnapTess v${releaseVersion}`, icon_name: 'view-grid-symbolic'});
+        // package.json is what is installed; runtime-status.json is what runs.
+        const readText = file => {
+            try { return new TextDecoder().decode(file.load_contents(null)[1]); } catch { return null; }
+        };
+        let status = null;
+        try {
+            status = JSON.parse(readText(Gio.File.new_for_path(GLib.build_filenamev([
+                GLib.get_user_runtime_dir(), 'snaptess', 'runtime-status.json']))));
+        } catch { /* not running */ }
+        const running = versionNotice(releaseVersion,
+            loaderVersionFromSource(readText(this.dir.get_child('extension.js'))), status);
+        const page = new Adw.PreferencesPage({title: `SnapTess v${running.version}`, icon_name: 'view-grid-symbolic'});
         window.add(page);
+        if (running.notice) page.add(new Adw.PreferencesGroup({title: 'Version status', description: running.notice}));
         const appearance = new Adw.PreferencesGroup({title: 'Make room', description: 'Fine-tune the space around your windows.'});
         page.add(appearance);
         const addReset = (row, key) => {

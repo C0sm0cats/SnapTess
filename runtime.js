@@ -21,7 +21,7 @@ import {radiusFromPixels, radiusStyle, plausibleWindowRadius, visualFrameRect} f
 import {actionStyle, actionHandleSize, actionPaletteSize, actionHandleIcon, actionSlide, actionPlacement,
     actionTooltipPlacement, actionHandleStyle, actionPaletteStyle, horizontalActions} from './lib/window-actions.js';
 
-const RUNTIME_REVISION = 99;
+const RUNTIME_REVISION = 100;
 const RESTORE_STABILIZE_MS = 1400;
 const RESTORE_QUIET_MS = 120;
 const MAX_RESTORE_MOVES = 8;
@@ -49,6 +49,12 @@ const VISUAL = Object.freeze({quick: 140, move: 210, space: 230, osd: 1300, inse
 
 export default class SnapTess extends Extension {
     enable() {
+        try {
+            const [, bytes] = this.dir.get_child('package.json').load_contents(null);
+            this.releaseVersion = JSON.parse(new TextDecoder().decode(bytes)).version ?? null;
+        } catch {
+            this.releaseVersion = null;
+        }
         this.settings = this.getSettings();
         this.settings.reset('preview-state');
         this.running = false;
@@ -285,6 +291,7 @@ export default class SnapTess extends Extension {
             const dir = GLib.build_filenamev([GLib.get_user_runtime_dir(), 'snaptess']);
             GLib.mkdir_with_parents(dir, 0o700);
             GLib.file_set_contents(GLib.build_filenamev([dir, 'runtime-status.json']), JSON.stringify({
+                release_version: this.releaseVersion ?? null,
                 extension_version: this.metadata.version ?? null,
                 loader_version: this.loaderVersion ?? null,
                 runtime_revision: RUNTIME_REVISION,

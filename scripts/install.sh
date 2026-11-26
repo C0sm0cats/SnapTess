@@ -60,7 +60,7 @@ for _ in $(seq 50); do
             echo "SnapTess reload failed: $(status_field error). Fix it and run this script again." >&2
             exit 1
         fi
-        echo "SnapTess reloaded in place: runtime revision $(status_field runtime_revision), loader v$running."
+        echo "SnapTess $(status_field release_version) reloaded in place: runtime revision $(status_field runtime_revision), loader v$running."
         exit 0
     fi
 done

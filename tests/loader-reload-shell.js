@@ -16,6 +16,7 @@ export async function run() {
     const before = entry.stateObj.runtime, state = entry.state;
     assert(before?.running !== undefined, 'runtime loaded at enable');
     assert(readStatus().loader_version === 1, 'status exposes the loader version');
+    assert(/^\d+\.\d+\.\d+$/.test(readStatus().release_version ?? ''), 'status exposes the running release version');
     await Scripting.createTestWindow({width: 320, height: 240});
     await Scripting.waitTestWindows(); await Scripting.sleep(400);
     const w = [...before.records.keys()][0];
