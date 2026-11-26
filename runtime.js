@@ -21,7 +21,7 @@ import {radiusFromPixels, radiusStyle, plausibleWindowRadius, visualFrameRect} f
 import {actionStyle, actionHandleSize, actionPaletteSize, actionHandleIcon, actionSlide, actionPlacement,
     actionTooltipPlacement, actionHandleStyle, actionPaletteStyle, horizontalActions} from './lib/window-actions.js';
 
-const RUNTIME_REVISION = 98;
+const RUNTIME_REVISION = 99;
 const RESTORE_STABILIZE_MS = 1400;
 const RESTORE_QUIET_MS = 120;
 const MAX_RESTORE_MOVES = 8;
@@ -286,6 +286,7 @@ export default class SnapTess extends Extension {
             GLib.mkdir_with_parents(dir, 0o700);
             GLib.file_set_contents(GLib.build_filenamev([dir, 'runtime-status.json']), JSON.stringify({
                 extension_version: this.metadata.version ?? null,
+                loader_version: this.loaderVersion ?? null,
                 runtime_revision: RUNTIME_REVISION,
                 runtime_uri: import.meta.url,
                 loaded_at: new Date().toISOString(),
