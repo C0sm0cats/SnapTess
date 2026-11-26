@@ -41,3 +41,9 @@ test('the loader version is read from extension.js like install.sh does', () => 
     assert.equal(loaderVersionFromSource(fs.readFileSync(new URL('../extension.js', import.meta.url), 'utf8')), 1);
     assert.equal(loaderVersionFromSource('const x = 1;'), null);
 });
+
+test('a zip install without scripts/ is never told to run install.sh', () => {
+    const {notice} = versionNotice('0.2.71', 1, running, false);
+    assert.match(notice, /v0\.2\.71 is installed\. Log out and back in/);
+    assert.doesNotMatch(notice, /install\.sh/);
+});

@@ -62,11 +62,15 @@ export default class SnapTessPreferences extends ExtensionPreferences {
             status = JSON.parse(readText(Gio.File.new_for_path(GLib.build_filenamev([
                 GLib.get_user_runtime_dir(), 'snaptess', 'runtime-status.json']))));
         } catch { /* not running */ }
+        // The loader deletes the runtime copy on disable: a status left behind
+        // (disabled extension, earlier session) does not describe a running SnapTess.
+        if (status?.runtime_uri && !Gio.File.new_for_uri(status.runtime_uri).query_exists(null)) status = null;
         const running = versionNotice(releaseVersion,
-            loaderVersionFromSource(readText(this.dir.get_child('extension.js'))), status);
+            loaderVersionFromSource(readText(this.dir.get_child('extension.js'))), status,
+            this.dir.get_child('scripts').get_child('install.sh').query_exists(null));
         const page = new Adw.PreferencesPage({title: `SnapTess v${running.version}`, icon_name: 'view-grid-symbolic'});
         window.add(page);
-        if (running.notice) page.add(new Adw.PreferencesGroup({title: 'Version status', description: running.notice}));
+        if (running.notice) page.add(new Adw.PreferencesGroup({title: 'Version status', description: GLib.markup_escape_text(running.notice, -1)}));
         const appearance = new Adw.PreferencesGroup({title: 'Make room', description: 'Fine-tune the space around your windows.'});
         page.add(appearance);
         const addReset = (row, key) => {

@@ -63,6 +63,7 @@ export async function run() {
     entry.stateObj.reload();
     for (let n = 0; n < 50 && !swapped(healthy); n++) await Scripting.sleep(100);
     assert(swapped(healthy) && !readStatus().error, 'next reload recovers');
+    assert(readStatus().release_version, 'release version restored after recovery');
     entry.stateObj.disable = loaderDisable;
     console.log('SNAPTESS_TEST_PASSED: loader-reload-shell.js');
 }
