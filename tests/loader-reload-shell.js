@@ -16,6 +16,7 @@ export async function run() {
     const before = entry.stateObj.runtime, state = entry.state;
     assert(before?.running !== undefined, 'runtime loaded at enable');
     assert(readStatus().loader_version === 1, 'status exposes the loader version');
+    assert(/^\d+\.\d+\.\d+$/.test(readStatus().release_version ?? ''), 'status exposes the running release version');
     await Scripting.createTestWindow({width: 320, height: 240});
     await Scripting.waitTestWindows(); await Scripting.sleep(400);
     const w = [...before.records.keys()][0];
@@ -62,6 +63,7 @@ export async function run() {
     entry.stateObj.reload();
     for (let n = 0; n < 50 && !swapped(healthy); n++) await Scripting.sleep(100);
     assert(swapped(healthy) && !readStatus().error, 'next reload recovers');
+    assert(readStatus().release_version, 'release version restored after recovery');
     entry.stateObj.disable = loaderDisable;
     console.log('SNAPTESS_TEST_PASSED: loader-reload-shell.js');
 }
