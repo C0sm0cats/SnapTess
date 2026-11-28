@@ -246,9 +246,19 @@ export default class SnapTess extends Extension {
         if (key === 'animations' || key.startsWith('animation-')) return;
         if (key === 'profiles') {
             const value = this.settings.get_string('profiles');
+            // Preferences (Import…) writes this key from its own process. Undo and Redo
+            // would write back the profiles of their checkpoints and erase the imported
+            // ones, so an outside write clears both histories, as stopping tiling does.
+            // Import never rearranges the desktop: its profiles apply at the next arrangement.
+            const external = value !== this.profilesWrite && value !== JSON.stringify(this.profiles);
             this.loadProfiles();
             const linkedResizeWrite = value === this.linkedResizeProfileWrite;
             this.linkedResizeProfileWrite = null;
+            if (external) {
+                this.history = []; this.redoHistory = [];
+                this.updateMenuSensitivity();
+                return;
+            }
             if (linkedResizeWrite) return;
         }
         if (key === 'saved-layouts') { this.loadSavedLayouts(); return; }
@@ -800,6 +810,12 @@ export default class SnapTess extends Extension {
         for (const profile of Object.values(this.profiles))
             if (profile && typeof profile === 'object') delete profile.pendingApps;
     }
+    // Every runtime write goes through here, so settingsChanged can tell it from
+    // a write made by Preferences.
+    writeProfiles(value = JSON.stringify(this.profiles)) {
+        this.profilesWrite = value;
+        this.settings.set_string('profiles', value);
+    }
     windowSpaces(w) {
         const r = this.records.get(w);
         return r?.spaces ?? new Set(r ? [r.space] : []);
@@ -1054,7 +1070,7 @@ export default class SnapTess extends Extension {
         if (!apps) return;
         for (let i = 0; i <= Math.max(index, to); i++) apps[i] ??= null;
         [apps[index], apps[to]] = [apps[to], apps[index]];
-        this.settings.set_string('profiles', JSON.stringify(this.profiles));
+        this.writeProfiles();
     }
     // Which window each tile holds and which Space each display shows, for this
     // Shell session only: after a restart the windows that stayed open return to
@@ -1232,7 +1248,7 @@ export default class SnapTess extends Extension {
             }
         }
         if (released) {
-            this.settings.set_string('profiles', JSON.stringify(this.profiles));
+            this.writeProfiles();
             this.schedule(true);
         }
         this.updatePinnedPlaceholders();
@@ -1370,7 +1386,7 @@ export default class SnapTess extends Extension {
         }
         if (assigned) {
             this.persistWindowSharing();
-            this.settings.set_string('profiles', JSON.stringify(this.profiles));
+            this.writeProfiles();
         }
         r.launchReleaseUntil = Date.now() + LAUNCH_RELEASE_GRACE_MS;
         r.launchReleases = 0;
@@ -1435,7 +1451,7 @@ export default class SnapTess extends Extension {
         this.checkpoint();
         if (profile?.resize) {
             delete profile.resize;
-            this.settings.set_string('profiles', JSON.stringify(this.profiles));
+            this.writeProfiles();
         }
         this.tile(true);
     }
@@ -1469,7 +1485,7 @@ export default class SnapTess extends Extension {
             for (const [w, record] of state.records) if (this.records.has(w))
                 Object.assign(this.records.get(w), record, {spaces: record.spaces ? new Set(record.spaces) : null});
             this.profiles = JSON.parse(state.profiles);
-            this.settings.set_string('profiles', state.profiles);
+            this.writeProfiles(state.profiles);
             this.pendingLayoutApps ??= new Map();
             this.pendingLayoutApps.clear();
             for (const [id, requests] of copyPendingLaunches(state.pending)) this.pendingLayoutApps.set(id, requests);
@@ -1707,7 +1723,7 @@ export default class SnapTess extends Extension {
         slots[index] = w;
         this.groups.set(key, slots);
         this.persistWindowSharing();
-        this.settings.set_string('profiles', JSON.stringify(this.profiles));
+        this.writeProfiles();
         this.tile(true);
         w.activate(global.get_current_time());
     }
@@ -3248,7 +3264,7 @@ export default class SnapTess extends Extension {
                     this.options(grab.monitor, grab.space)), grab.updated, this.area(grab.monitor))};
             const value = JSON.stringify(this.profiles);
             this.linkedResizeProfileWrite = value;
-            this.settings.set_string('profiles', value);
+            this.writeProfiles(value);
         }
         if (this.running && (grab.updated || settleWindows.size)) {
             this.busy = true;
@@ -3589,7 +3605,7 @@ export default class SnapTess extends Extension {
             }
         } finally { this.busy = false; }
         this.persistWindowSharing();
-        this.settings.set_string('profiles', JSON.stringify(this.profiles));
+        this.writeProfiles();
         // Launch before tiling: the arrangement then keeps the tiles that wait.
         for (const {monitor, space, opening, launching} of plans) {
             const tiles = opening ?? launching ?? [];

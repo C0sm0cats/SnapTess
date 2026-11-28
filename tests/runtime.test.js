@@ -237,12 +237,60 @@ test('resize grab moves its neighbor and persists only the active space', () => 
     assert.equal(app.profiles['profile-0'].apps.length, 2);
 });
 
-test('an external profile change still schedules a retile', () => {
-    const h = harness(), scheduled = [];
-    h.app.schedule = compact => scheduled.push(compact);
-    h.app.settings.set_string('profiles', '{}');
-    h.app.settingsChanged('profiles');
-    assert.deepEqual(scheduled, [true]);
+// Preferences (Import…) writes these keys from its own process while Shell runs.
+function preferencesStore(app) {
+    const store = {profiles: '{}', 'saved-layouts': '[]'};
+    app.settings.get_string = key => store[key] ?? '';
+    app.settings.set_string = (key, value) => { store[key] = value; app.settingsChanged(key); };
+    return {store, write(key, value) { store[key] = value; app.settingsChanged(key); }};
+}
+
+test('layouts and profiles written by Preferences reach the running runtime', () => {
+    const {app} = harness(), prefs = preferencesStore(app);
+    app.schedule = () => {};
+    app.loadSavedLayouts(); app.loadProfiles();
+    prefs.write('saved-layouts', JSON.stringify([{id: 'imported', name: 'Imported', preset: 'split',
+        slotCount: 2, pinned: [null, null]}]));
+    assert.deepEqual(Array.from(app.savedLayouts, layout => layout.id), ['imported']);
+    prefs.write('profiles', JSON.stringify({'0:HDMI-A-1:1': {preset: 'split', apps: ['a.desktop'], pinned: []}}));
+    assert.equal(app.profiles['0:HDMI-A-1:1']?.preset, 'split');
+});
+
+test('a profile write by the runtime retiles; an import written by Preferences does not', () => {
+    const {app} = harness(), prefs = preferencesStore(app), scheduled = [];
+    app.schedule = compact => scheduled.push(compact);
+    app.updateMenuSensitivity = () => {};
+    app.loadProfiles();
+    app.profiles['0:DP-1:0'] = {preset: 'full', apps: ['test.desktop'], pinned: []};
+    app.settings.set_string('profiles', JSON.stringify(app.profiles));
+    assert.deepEqual(scheduled, [true], 'a runtime write still applies at once');
+    const imported = {...JSON.parse(prefs.store.profiles),
+        '0:HDMI-A-1:1': {preset: 'custom', slotCount: 2, apps: [], pinned: [],
+            tiles: [{x: 0, y: 0, width: 0.5, height: 1}, {x: 0.5, y: 0, width: 0.5, height: 1}]}};
+    prefs.write('profiles', JSON.stringify(imported));
+    assert.equal(app.profiles['0:HDMI-A-1:1']?.preset, 'custom');
+    assert.deepEqual(scheduled, [true], 'Import does not rearrange the desktop');
+});
+
+test('profiles imported by Preferences survive Undo and Redo', () => {
+    const {app, w} = harness(), prefs = preferencesStore(app);
+    app.schedule = () => {};
+    app.running = true; app.history = []; app.redoHistory = [];
+    app.groups = new Map([['a', [w]]]); app.spaces = new Map();
+    app.snapshot = () => ({}); app.restore = () => {}; app.updateMenuSensitivity = () => {}; app.publishPreviewState = () => {};
+    app.loadProfiles();
+    app.profiles['0:DP-1:0'] = {preset: 'full', apps: ['test.desktop'], pinned: []};
+    app.checkpoint();
+    app.profiles['0:DP-1:0'].preset = 'split';
+    app.settings.set_string('profiles', JSON.stringify(app.profiles));
+    app.undo(); app.redo();
+    assert.equal(app.profiles['0:DP-1:0'].preset, 'split', 'runtime Undo and Redo still travel');
+    prefs.write('profiles', JSON.stringify({...JSON.parse(prefs.store.profiles),
+        '0:HDMI-A-1:1': {preset: 'split', apps: ['a.desktop', 'b.desktop'], pinned: []}}));
+    app.undo(); app.redo(); app.undo();
+    assert.ok(JSON.parse(prefs.store.profiles)['0:HDMI-A-1:1'], 'the imported profile stays saved');
+    assert.ok(app.profiles['0:HDMI-A-1:1'], 'the imported profile stays loaded');
+    assert.equal(app.profiles['0:DP-1:0'].preset, 'split');
 });
 
 test('a growing neighbor receives native geometry during the grab', () => {
