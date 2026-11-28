@@ -1321,7 +1321,13 @@ export default class SnapTess extends Extension {
     launchLayoutApps(missing, monitor, space, workspace, assignments = []) {
         const appSystem = Shell.AppSystem.get_default();
         const normalize = id => (id ?? '').toLowerCase().replace(/\.desktop$/i, '');
-        const unavailable = [], seen = new Map(), handled = new Set();
+        const unavailable = [], reserved = [], seen = new Map(), handled = new Set();
+        // Only a pinned tile, or any tile of a custom layout, stays in place
+        // without its app; other empty tiles collapse.
+        const profile = this.profiles?.[this.profileKey(monitor, space)];
+        const keepsTile = item => profile?.preset === 'custom' ||
+            (item.index >= 0 && normalize(profile?.pinned?.[item.index]) === item.key);
+        const fail = item => { unavailable.push(item.appId); if (keepsTile(item)) reserved.push(item.appId); };
         // The nth launch of an app goes to the nth tile that app holds here.
         const items = missing.map(appId => {
             const key = normalize(appId), occurrence = seen.get(key) ?? 0;
@@ -1370,7 +1376,7 @@ export default class SnapTess extends Extension {
             const info = app?.get_app_info?.();
             if (!info) {
                 if (item.request) this.removePendingRequest(item.key, item.request);
-                unavailable.push(item.appId);
+                fail(item);
                 continue;
             }
             const request = item.request ?? {monitor, space, workspace, index: item.index};
@@ -1388,16 +1394,21 @@ export default class SnapTess extends Extension {
             }
             try {
                 if (!info.launch([], null)) {
-                    this.removePendingRequest(item.key, request); unavailable.push(item.appId);
+                    this.removePendingRequest(item.key, request); fail(item);
                 }
             } catch (error) {
-                this.removePendingRequest(item.key, request); unavailable.push(item.appId);
+                this.removePendingRequest(item.key, request); fail(item);
                 console.warn(`[SnapTess] Could not launch ${item.appId}: ${error}`);
             }
         }
         this.schedulePendingExpiry();
         this.updatePinnedPlaceholders();
-        if (unavailable.length) Main.notify('SnapTess', `Could not open: ${[...new Set(unavailable)].join(', ')}. Their tiles remain reserved.`);
+        if (unavailable.length) {
+            const names = [...new Set(unavailable)], kept = [...new Set(reserved)];
+            const note = !kept.length ? '' : kept.length === names.length ? ' Their tiles remain reserved.'
+                : ` Tiles remain reserved for: ${kept.join(', ')}.`;
+            Main.notify('SnapTess', `Could not open: ${names.join(', ')}.${note}`);
+        }
         return true;
     }
     claimLayoutWindow(w) {

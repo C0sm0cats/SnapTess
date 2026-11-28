@@ -2661,6 +2661,28 @@ test('a pending launch ignores a window on another workspace', () => {
     assert.equal(app.records.get(w).space, 0);
 });
 
+test('a missing app is announced as keeping its tile only when the tile is pinned or custom', () => {
+    const h = sharingHarness(), {app, w, shellMain} = h;
+    const notifications = [];
+    shellMain.notify = (_title, body) => notifications.push(body);
+    app.pendingLayoutApps = new Map(); app.updatePinnedPlaceholders = () => {};
+    const restore = (preset, pinned, extra = {}) => app.applyProfiles([{monitor: 0, space: 0, preset,
+        windows: [w, null, null, null], pinned, launching: [null, 'org.example.Gone', 'org.example.Pinned', null],
+        ...extra}]);
+    restore('2x2', []);
+    assert.equal(notifications.pop(), 'Could not open: org.example.Gone, org.example.Pinned.',
+        'empty unpinned preset tiles collapse, so nothing is announced as reserved');
+    restore('2x2', [null, null, 'org.example.Pinned', null]);
+    assert.equal(notifications.pop(), 'Could not open: org.example.Gone, org.example.Pinned. Tiles remain reserved for: org.example.Pinned.');
+    restore('2x2', [null, 'org.example.Gone', 'org.example.Pinned', null]);
+    assert.equal(notifications.pop(), 'Could not open: org.example.Gone, org.example.Pinned. Their tiles remain reserved.');
+    const tiles = [0, 1, 2, 3].map(i => ({x: (i % 2) / 2, y: Math.floor(i / 2) / 2, width: 0.5, height: 0.5}));
+    restore('custom', [], {tiles});
+    assert.equal(notifications.pop(), 'Could not open: org.example.Gone, org.example.Pinned. Their tiles remain reserved.',
+        'a custom layout keeps the geometry of its empty tiles');
+    assert.equal(notifications.length, 0);
+});
+
 test('a launch appearing after a minute retains its exact Space and tile without a timeout notification', () => {
     const h = sharingHarness(), {app, w, advance, timers, shellMain, launches} = h, arrive = opensLater(h);
     timers.clear();
