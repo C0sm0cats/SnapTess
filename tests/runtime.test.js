@@ -2469,6 +2469,29 @@ test('stopping shows windows SnapTess minimized for an inactive Space', () => {
     }
 });
 
+test('a window minimized by the user stays minimized across a Space round trip', () => {
+    const {app, w, record} = stopHarness();
+    w.minimize();
+    app.switchSpace(1, 0);
+    assert.equal(record.parked, false, 'leaving the Space does not park a user-minimized window');
+    app.switchSpace(0, 0);
+    assert.equal(w.minimized, true);
+    assert.equal(record.parked, false);
+});
+
+test('restoring a saved layout never hides a user-minimized surplus window', () => {
+    const {app, w, record} = stopHarness();
+    const layout = {id: 'x', name: 'Other', preset: 'full', apps: ['other.desktop'], pinned: [], slotCount: 1};
+    app.savedLayouts = [layout];
+    app.pendingLayoutApps = new Map(); app.updatePinnedPlaceholders = () => {};
+    w.minimize();
+    assert.equal(app.savedLayoutPlan(layout, 0, 0).extras.includes(w), false);
+    assert.equal(app.restoreSavedLayout('x', 0, 0), true);
+    assert.equal(record.restoreParked || record.parked, false);
+    app.setRunning(false);
+    assert.equal(w.minimized, true);
+});
+
 test('stopping keeps a window shown when it was minimized only before tiling', () => {
     const {app, w, record} = stopHarness();
     record.original.minimized = true;
