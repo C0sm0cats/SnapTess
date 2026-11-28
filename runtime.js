@@ -1556,7 +1556,7 @@ export default class SnapTess extends Extension {
         this.publishPreviewState();
     }
 
-    setRunning(value, silent = false) {
+    setRunning(value) {
         if (this.running === value) return;
         this.running = value;
         this.switchItem.setToggleState(value);
@@ -2732,7 +2732,7 @@ export default class SnapTess extends Extension {
     transitionWindowActionsToHandle() {
         this.windowActionTooltip.hide();
         this.windowActions.remove_all_transitions();
-        if (!this.windowActions.visible || !this.fadeWindowActions(this.actionWindow)) {
+        if (!this.windowActions.visible || !this.fadeWindowActions()) {
             this.windowActions.hide(); this.showWindowActionHandle(); return;
         }
         const slide = actionSlide(this.actionPosition);
@@ -2827,7 +2827,7 @@ export default class SnapTess extends Extension {
         this.windowActionHandle.set_position(x, y);
         this.stackWindowOverlays(w);
         this.windowActionHandle.show();
-        if (animate && this.fadeWindowActions(w)) {
+        if (animate && this.fadeWindowActions()) {
             this.windowActionHandle.opacity = 0;
             this.windowActionHandle.ease({opacity: 255, duration: this.visualDuration(120), mode: this.fadeMode()});
         } else this.windowActionHandle.opacity = 255;
@@ -2878,7 +2878,7 @@ export default class SnapTess extends Extension {
         const appearing = !this.windowActions.visible;
         this.windowActions.remove_all_transitions();
         this.windowActions.show();
-        if (appearing && this.fadeWindowActions(w)) {
+        if (appearing && this.fadeWindowActions()) {
             const slide = actionSlide(this.actionPosition);
             this.windowActions.opacity = 0;
             this.windowActions.translation_x = slide.x; this.windowActions.translation_y = slide.y;
@@ -3726,7 +3726,7 @@ export default class SnapTess extends Extension {
         this.focusRadiusLater = 0;
         this.layoutSwitcher?.dialog.destroy(); this.layoutSwitcher = null;
         this.studio?.dialog.destroy(); this.studio = null;
-        this.setRunning(false, true);
+        this.setRunning(false);
         this.clearPinnedPlaceholders();
         this.exitSwap();
         for (const name of Object.keys(this.bindings)) Main.wm.removeKeybinding(name);

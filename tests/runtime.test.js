@@ -3797,6 +3797,20 @@ test('an X11 window fades its handle and palette like any other window', () => {
     assert.ok(names(1).length > 0);
 });
 
+test('fadeWindowActions and setRunning are called with the arguments they read', () => {
+    // fadeWindowActions no longer depends on the window, and setRunning has no
+    // silent mode: a leftover argument would suggest a rule that does not exist.
+    const text = fs.readFileSync(new URL('../runtime.js', import.meta.url), 'utf8');
+    assert.match(text, /^ {4}fadeWindowActions\(\) \{$/m, 'fadeWindowActions takes no argument');
+    assert.match(text, /^ {4}setRunning\(value\) \{$/m, 'setRunning takes only value');
+    const fades = [...text.matchAll(/this\.fadeWindowActions\(([^)]*)\)/g)];
+    assert.ok(fades.length >= 3);
+    for (const [call, args] of fades) assert.equal(args, '', call);
+    const runs = [...text.matchAll(/\.setRunning\(([^()]*(?:\([^()]*\))?[^()]*)\)/g)];
+    assert.ok(runs.length > 0);
+    for (const [call, args] of runs) assert.doesNotMatch(args, /,/, call);
+});
+
 test('the spring curve never drives an opacity fade but keeps the palette slide', () => {
     const {app, eases} = windowActionsHarness(0);
     delete app.visualMode;
