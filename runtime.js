@@ -3357,11 +3357,25 @@ export default class SnapTess extends Extension {
         } finally { grab.updating = false; }
     }
 
+    // Escape (GNOME's cancel) ends a pointer grab while the button is still
+    // held and Mutter puts the window back; a release ends it with no button
+    // down. A keyboard grab has no button, so a frame back where the grab
+    // started means it was cancelled.
+    grabCancelled(w, startFrame = null) {
+        const buttons = Clutter.ModifierType.BUTTON1_MASK | Clutter.ModifierType.BUTTON2_MASK |
+            Clutter.ModifierType.BUTTON3_MASK;
+        if (global.get_pointer()[2] & buttons) return true;
+        if (!startFrame || typeof w?.get_frame_rect !== 'function') return false;
+        const frame = w.get_frame_rect();
+        return ['x', 'y', 'width', 'height'].every(key => frame[key] === startFrame[key]);
+    }
+
     endLinkedResize() {
         const grab = this.resizeGrab;
         if (!grab) return;
         this.cancelLinkedResizeFrame();
         this.resizeGrab = null;
+        if (grab.updated && this.grabCancelled(grab.window)) grab.updated = null;
         const rects = grab.updated ?? grab.rects;
         const settleWindows = new Set(grab.nativeRequests?.keys() ?? []);
         // Mutter can resize the grabbed window even when the divider is blocked,
@@ -3431,9 +3445,12 @@ export default class SnapTess extends Extension {
         record.restorePending = false;
         this.traceWindow(w, 'grab-begin');
         const [startX, startY] = global.get_pointer();
+        const keyboard = op === Meta.GrabOp.KEYBOARD_MOVING;
+        const frame = keyboard ? w.get_frame_rect() : null;
         this.drag = {window: w, monitor: w.get_monitor(), target: null,
             checkpoint: this.captureCheckpoint(), startX, startY,
-            started: op === Meta.GrabOp.KEYBOARD_MOVING, blocked: false};
+            startFrame: frame && {x: frame.x, y: frame.y, width: frame.width, height: frame.height},
+            started: keyboard, blocked: false};
         if (this.drag.started) this.setPreviewApp(w);
         const tick = () => {
             if (!this.drag) return;
@@ -3516,9 +3533,17 @@ export default class SnapTess extends Extension {
         if (this.resizeGrab) { this.endLinkedResize(); return; }
         if (!this.drag) return;
         this.cancel(this.dragTimer); this.dragTimer = 0;
-        const {window: w, target, monitor: source, checkpoint, startX, startY, started, blocked} = this.drag;
+        const {window: w, target, monitor: source, checkpoint, startX, startY, started, blocked, startFrame} = this.drag;
         this.drag = null; this.preview.hide(); this.previewLabel.hide();
         if (!this.records.has(w)) { this.updatePinnedPlaceholders(); return; }
+        if (this.grabCancelled(w, startFrame)) {
+            // A cancelled move changes nothing: the window goes back to its tile.
+            if (this.records.get(w).tileRect) this.place(w, this.records.get(w).tileRect);
+            this.updateBorder();
+            this.updatePinnedPlaceholders();
+            this.queueWindowActions(w);
+            return;
+        }
         if (started === false) {
             const [x, y] = global.get_pointer();
             if ((x - startX) ** 2 + (y - startY) ** 2 >= 64) this.tile(true);

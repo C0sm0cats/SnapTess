@@ -72,7 +72,8 @@ function harness(options = {}) {
                     get_app_info: () => ({launch: () => { launches.push(id); return true; }})} :
                 options.installedApps?.find(info => info.get_id() === id)?.app ?? null})},
         WindowTracker: {get_default: () => ({get_window_app: () => options.trackedApp ?? null})}},
-        Clutter: {AnimationMode: {LINEAR: 1, EASE_OUT_QUAD: 2, EASE_IN_OUT_QUAD: 3, EASE_OUT_BACK: 4}},
+        Clutter: {AnimationMode: {LINEAR: 1, EASE_OUT_QUAD: 2, EASE_IN_OUT_QUAD: 3, EASE_OUT_BACK: 4},
+            ModifierType: {BUTTON1_MASK: 256, BUTTON2_MASK: 512, BUTTON3_MASK: 1024}},
         Meta: {LaterType: {BEFORE_REDRAW: 0}, WindowType: {NORMAL: 0}, WindowClientType: {WAYLAND: 0, X11: 1}, GrabOp: {MOVING: 1, KEYBOARD_MOVING: 2,
             RESIZING_N: 3, RESIZING_S: 4, RESIZING_E: 5, RESIZING_W: 6,
             RESIZING_NE: 7, RESIZING_NW: 8, RESIZING_SE: 9, RESIZING_SW: 10}},
@@ -132,7 +133,7 @@ function harness(options = {}) {
     return {app, w, actor, record, requests, scaleWrites, userOps, launches, slot, timers, advance, commit, special,
         shellMain, shellDisplay, notifyWindow: name => signals.get(name)?.(),
         effectsDone, settleInitial, frame: () => frame, actorSignal: name => actorSignals.get(name)?.(), grab: value => { grabbed = value; },
-        monitor: value => { monitor = value; }, pointer: (x, y) => { pointer = [x, y]; }};
+        monitor: value => { monitor = value; }, pointer: (x, y, mods = 0) => { pointer = [x, y, mods]; }};
 }
 
 test('directional focus skips unavailable windows without changing geometry, slots or undo', () => {
@@ -1888,6 +1889,67 @@ test('moving to another slot commits the checkpoint captured before dragging', (
     assert.equal(h.app.groups.get('workspace')[1], null);
     assert.equal(h.app.groups.get('workspace')[2], h.w);
     assert.equal(tiles, 1);
+});
+
+test('Escape during a move or a linked resize applies nothing', () => {
+    // Escape ends a pointer grab with the button still held; a keyboard move
+    // ends with the frame back where it started.
+    for (const keyboard of [false, true]) {
+        const h = harness(); h.settleInitial();
+        const other = {}, frame = h.frame();
+        h.app.key = () => 'workspace';
+        h.app.groups = new Map([['workspace', [h.w, other]]]);
+        h.app.preview = {hide() {}};
+        h.app.previewLabel = {hide() {}};
+        h.app.drag = {window: h.w, monitor: 0, target: {monitor: 0, index: 1, window: other},
+            checkpoint: {before: true}, started: true,
+            startFrame: keyboard ? {x: frame.x, y: frame.y, width: frame.width, height: frame.height} : null};
+        if (!keyboard) h.pointer(500, 80, 256);
+        const pushed = [], placed = [];
+        h.app.pushCheckpoint = state => pushed.push(state);
+        h.app.tile = () => assert.fail('a cancelled move must not retile');
+        h.app.place = (w, rect) => placed.push([w, rect]);
+        h.app.grabEnd();
+        assert.deepEqual(pushed, [], keyboard ? 'keyboard' : 'pointer');
+        assert.deepEqual(h.app.groups.get('workspace'), [h.w, other]);
+        assert.deepEqual(placed, [[h.w, h.record.tileRect]]);
+    }
+
+    const h = harness(), app = h.app;
+    const otherActor = {get_width: () => 383, get_height: () => 576,
+        set_pivot_point() {}, set_scale(x) { this.scale_x = x; }};
+    const other = {get_frame_rect: () => ({x: 405, y: 12, width: 383, height: 576}),
+        get_compositor_private: () => otherActor, move_resize_frame() {}};
+    app.records.set(other, {floating: false});
+    app.groups = new Map([['space-0', [h.w, other]]]);
+    app.profiles = {};
+    app.history = [];
+    let writes = 0;
+    app.writeProfiles = () => writes++;
+    app.key = (_monitor, space = 0) => `space-${space}`;
+    app.profileKey = (_monitor, space = 0) => `profile-${space}`;
+    app.activeSpace = () => 0;
+    app.isSpecialWindow = () => false;
+    app.matchesAppRule = () => false;
+    app.hideWindowActions = () => {};
+    app.queueWindowActions = () => {};
+    app.captureCheckpoint = () => ({before: true});
+    const placements = [];
+    app.place = (w, rect) => placements.push([w, rect]);
+    const base = app.slotRects(0, 2);
+    h.commit(base[0]);
+    h.grab(true);
+    app.grabBegin(h.w, 5);
+    h.pointer(210, 80, 256); h.advance(32);
+    assert.ok(app.resizeGrab.updated, 'the divider moved during the grab');
+    h.grab(false);
+    app.grabEnd();
+    assert.equal(app.history.length, 0);
+    assert.equal(writes, 0);
+    assert.deepEqual(app.profiles, {});
+    assert.deepEqual(app.slotRects(0, 2), base);
+    assert.ok(placements.length, 'the moved tiles are placed again');
+    for (const [w, rect] of placements) assert.deepEqual(rect, base[[h.w, other].indexOf(w)]);
 });
 
 test('dropping on another display inserts the window in that display active Space', () => {
