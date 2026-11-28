@@ -1063,6 +1063,42 @@ test('renaming a saved layout changes only its name and persists it', () => {
     assert.equal(writes, 1);
 });
 
+test('deleting a saved layout and undoing it persist each step', () => {
+    const {app} = harness();
+    app.savedLayouts = [
+        {id: 'first', name: 'Work', preset: 'split', slotCount: 2, apps: [null, null], pinned: [null, null]},
+        {id: 'second', name: 'Other', preset: 'full', slotCount: 1, apps: [null], pinned: [null]},
+    ];
+    app.deletedLayouts = [];
+    const writes = [];
+    app.settings.set_string = (key, value) => writes.push([key, JSON.parse(value).map(item => item.id)]);
+    assert.equal(app.deleteSavedLayout('first'), true);
+    assert.deepEqual(writes, [['saved-layouts', ['second']]]);
+    assert.equal(app.undoDeletedSavedLayout()?.id, 'first');
+    assert.deepEqual(writes, [['saved-layouts', ['second']], ['saved-layouts', ['first', 'second']]]);
+});
+
+test('undoing a delete keeps a long restored name within the saved layout limit', () => {
+    const {app} = harness(), prefs = preferencesStore(app);
+    const long = 'Daily development workspace with browser and docs';
+    app.updateMenuSensitivity = () => {};
+    prefs.store['saved-layouts'] = JSON.stringify(['a', 'b', 'c'].map(key => ({id: key,
+        name: key === 'a' ? long : key.toUpperCase(), preset: 'full', slotCount: 1, apps: [null], pinned: [null]})));
+    app.loadSavedLayouts(); app.deletedLayouts = [];
+    // Each round deletes the layout named `long`, gives that name to another one
+    // and undoes the delete, so the restored name needs a larger suffix each time.
+    for (const [round, [victim, other]] of [['a', 'b'], ['b', 'c'], ['c', 'a'], ['a', 'b']].entries()) {
+        assert.equal(app.deleteSavedLayout(victim), true);
+        assert.equal(app.renameSavedLayout(other, long), true);
+        const restored = app.undoDeletedSavedLayout();
+        assert.ok(restored.name.length <= 60, `round ${round}: ${restored.name}`);
+        assert.equal(app.savedLayouts.length, 3, `round ${round}: restored layout kept after reload`);
+        const stored = JSON.parse(prefs.store['saved-layouts']);
+        assert.equal(stored.length, 3);
+        assert.ok(stored.every(validSavedLayout), `round ${round}: stored layouts stay valid`);
+    }
+});
+
 test('quick presets recover windows hidden by a saved layout without reviving manual minimization', () => {
     const h = harness(), app = h.app;
     app.key = () => 'workspace'; app.profileKey = () => 'profile';

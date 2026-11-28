@@ -921,10 +921,12 @@ export default class SnapTess extends Extension {
         const layout = {...deleted.layout};
         if (this.savedLayouts.some(item => item.id === layout.id)) layout.id = GLib.uuid_string_random();
         if (this.savedLayouts.some(item => item.name.toLowerCase() === layout.name.toLowerCase())) {
-            const base = layout.name.slice(0, 48);
-            let name = `${base} (restored)`, suffix = 2;
+            // Shorten the name by the suffix length so that it stays within the
+            // 60 characters validSavedLayout accepts when the layouts reload.
+            const named = tail => `${layout.name.slice(0, 60 - tail.length)}${tail}`;
+            let name = named(' (restored)'), suffix = 2;
             while (this.savedLayouts.some(item => item.name.toLowerCase() === name.toLowerCase()))
-                name = `${base} (restored ${suffix++})`;
+                name = named(` (restored ${suffix++})`);
             layout.name = name;
         }
         this.savedLayouts.splice(Math.min(deleted.index, this.savedLayouts.length), 0, layout);
