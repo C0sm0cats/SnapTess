@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {layout, autoLayout, capacity, fitMinimumSize, frameScalePivot, nearestSlot, directionalSlot, directionalFocusSlot, reconcileSlots,
+import {layout, autoLayout, capacity, fitMinimumSize, frameScalePivot, nearestSlot, directionalFocusSlot, reconcileSlots,
     activePinnedSlots, reserveAppSlots, edgeNeighbors, swapNeighbor, PRESETS, sortedSavedLayouts,
     resizeDivider, advanceLinkedResize, resizedLayout, resizeOffsets} from '../lib/layout.js';
 
@@ -294,13 +294,10 @@ test('frame scaling pivot anchors the visible frame inside a larger compositor b
 });
 test('directional swap follows geometric neighbors', () => {
     const r=layout({x:0,y:0,width:1000,height:800},4);
-    assert.equal(directionalSlot(r,0,'left'),-1);
-    assert.equal(directionalSlot(r,0,'right'),1);
-    assert.equal(directionalSlot(r,0,'down'),2);
-    assert.equal(directionalSlot(r,3,'up'),1);
     assert.equal(nearestSlot(r,999,799),3);
     assert.equal(swapNeighbor(r,0,'right'),1);
     assert.equal(swapNeighbor(r,0,'down'),2);
+    assert.equal(swapNeighbor(r,3,'up'),1);
     assert.equal(swapNeighbor(r,0,'left'),-1);
     const withHole=[{x:0,y:0,width:100,height:100},{x:110,y:0,width:100,height:100},
         {x:220,y:0,width:100,height:100}];
