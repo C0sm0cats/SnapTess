@@ -854,14 +854,19 @@ test('global history is bounded and skips windows closed between undo and redo',
     const {app, w} = harness();
     app.running = true; app.history = []; app.redoHistory = [];
     app.groups = new Map([['a', [w]]]); app.spaces = new Map(); app.profiles = {};
-    app.snapshot = () => ({}); app.restore = () => {}; app.updateMenuSensitivity = () => {}; app.publishPreviewState = () => {};
+    const restored = [];
+    app.snapshot = () => ({}); app.updateMenuSensitivity = () => {}; app.publishPreviewState = () => {};
+    // Restoring a closed MetaWindow crashes GNOME Shell, so a closed window is never restored.
+    app.restore = win => { assert.ok(app.records.has(win), 'a closed window is never restored'); restored.push(win); };
     for (let i = 0; i < 12; i++) { app.checkpoint(); app.profiles = {step: i}; }
     assert.equal(app.history.length, 10);
     for (let i = 0; i < 10; i++) app.undo();
     assert.equal(app.redoHistory.length, 10);
     assert.equal(app.profiles.step, 1);
+    assert.equal(restored.length, 10, 'undo restores the open window');
     app.records.delete(w);
     for (let i = 0; i < 10; i++) app.redo();
+    assert.equal(restored.length, 10, 'redo skips the closed window');
     assert.equal(app.profiles.step, 11);
     assert.equal(app.groups.get('a')[0], null);
     assert.equal(app.history.length, 10);
