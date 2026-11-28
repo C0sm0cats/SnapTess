@@ -849,7 +849,7 @@ export default class SnapTess extends Extension {
                 let profile = this.profiles[key];
                 if (!profile && sharedWindows.length) {
                     const slots = this.groups.get(this.key(monitor, space)) ?? [];
-                    profile = this.profiles[key] = {preset: 'auto', apps: slots.filter(Boolean).map(w => this.appId(w)), pinned: []};
+                    profile = this.profiles[key] = {preset: 'auto', apps: slots.filter(Boolean).map(w => this.appId(w) || null), pinned: []};
                 }
                 if (!profile) continue;
                 if (sharedWindows.length) profile.sharedWindows = sharedWindows;
@@ -3259,7 +3259,7 @@ export default class SnapTess extends Extension {
             });
             const profileKey = this.profileKey(grab.monitor, grab.space);
             const profile = this.profiles[profileKey] ??= {preset: this.options(grab.monitor, grab.space).preset,
-                apps: grab.slots.filter(Boolean).map(w => this.appId(w))};
+                apps: grab.slots.filter(Boolean).map(w => this.appId(w) || null)};
             profile.resize = {preset: this.options(grab.monitor, grab.space).preset,
                 count: grab.rects.length,
                 offsets: resizeOffsets(layout(this.area(grab.monitor), grab.rects.length,
@@ -3589,8 +3589,8 @@ export default class SnapTess extends Extension {
                     // Tiles that wait for an app keep it by index, so that each
                     // window of a restored layout reaches its own tile.
                     apps: apps || preserveSlots || launching?.some(Boolean)
-                        ? slots.map((w, i) => w ? this.appId(w) : (apps ?? launching)?.[i] ?? null)
-                        : slots.filter(Boolean).map(w => this.appId(w)), pinned,
+                        ? slots.map((w, i) => w ? this.appId(w) || null : (apps ?? launching)?.[i] ?? null)
+                        : slots.filter(Boolean).map(w => this.appId(w) || null), pinned,
                     ...(preserveSlots ? {preserveSlots: true, ...(slots.length ? {slotCount: slots.length} : {})} : {}),
                     ...(slotCount ? {slotCount} : {}),
                     ...(preset === 'custom' ? {tiles: tiles.map(t => ({...t})), slotCount: tiles.length} : {}),

@@ -87,3 +87,24 @@ test('a layout holding and pinning the same app on several tiles survives export
     assert.equal(merged.addedLayouts, 1);
     assert.deepEqual(merged.layouts, [repeated]);
 });
+
+test('profiles the runtime writes for many or unidentified windows stay exportable', () => {
+    const apps = Array.from({length: 31}, (_, i) => `app${i}.desktop`);
+    const many = {preset: 'auto', apps, pinned: Array(31).fill(null), slotCount: 31, preserveSlots: true};
+    // Releases before this fix saved an empty ID for a window without an app.
+    const legacy = {preset: 'split', apps: ['', 'editor.desktop'], pinned: ['', null]};
+    const text = makeArchive([], {'0:DP-1:0': many, '0:DP-1:1': legacy});
+    assert.deepEqual(parseArchive(text).profiles['0:DP-1:0'], many);
+    assert.deepEqual(parseArchive(text).profiles['0:DP-1:1'], {preset: 'split', apps: [null, 'editor.desktop'], pinned: [null, null]});
+    assert.equal(mergeArchive(text, [], {}, () => 'id').addedProfiles, 2, 'the same version imports its own export');
+    assert.deepEqual(legacy.apps, ['', 'editor.desktop'], 'export leaves the stored profile intact');
+    const tiles = Array.from({length: 31}, (_, i) => ({x: i / 31, y: 0, width: 1 / 31, height: 1}));
+    assert.throws(() => makeArchive([], {'0:DP-1:2': {preset: 'custom', tiles, slotCount: 31, apps: []}}));
+});
+
+test('an export refused for one entry names that layout or space', () => {
+    assert.throws(() => makeArchive([], {'1:HDMI-A-1:2': {preset: 'bogus', apps: []}}),
+        {message: 'The profile of HDMI-A-1, workspace 2, Space 3 cannot be exported. Use Reset Space in Layout Studio and try again.'});
+    assert.throws(() => makeArchive([{...layout, slotCount: 3}], {}),
+        {message: 'The layout "Pair" cannot be exported. Delete it in Layout Studio and try again.'});
+});

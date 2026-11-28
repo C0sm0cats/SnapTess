@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
 import * as appearance from '../lib/appearance.js';
-import {validSavedLayout} from '../lib/archive.js';
+import {makeArchive, validSavedLayout} from '../lib/archive.js';
 import * as geometry from '../lib/layout.js';
 import {radiusStyle, radiusFromPixels, plausibleWindowRadius} from '../lib/window-radius.js';
 import * as windowActions from '../lib/window-actions.js';
@@ -820,6 +820,26 @@ test('applying multiple Studio contexts creates one undo checkpoint and preserve
     assert.equal(app.groups.get('0:0:0')[0], first);
     assert.equal(app.groups.get('0:0:1')[0], second);
     assert.equal(Object.keys(app.profiles).length, 0);
+});
+
+test('a profile arranged from many or unidentified windows remains exportable', () => {
+    const h = harness(), app = h.app;
+    const make = id => ({...h.w, id, get_monitor: () => 0, move_to_monitor() {}, minimize() {}, unminimize() {}});
+    const many = Array.from({length: 31}, (_, i) => make(`app${i}.desktop`));
+    const unnamed = [make(''), make('editor.desktop')];
+    app.appId = w => w.id;
+    app.records = new Map([...many, ...unnamed].map(w => [w, {original: null, floating: false, space: 0, parked: false, monitor: 0}]));
+    app.groups = new Map();
+    app.history = []; app.profiles = {};
+    Object.assign(app, {snapshot: () => ({}), restore() {}, workspaceIndex: () => 0, activeSpace: () => 0,
+        key: (display, space) => `0:${display}:${space}`, profileKey: (display, space) => `0:DP-1:${space}`,
+        switchSpace() {}, tile() {}, updatePanelStatus() {}, notifyStatus() {}});
+    app.settings.set_string = () => {};
+    app.applyProfiles([{monitor: 0, space: 0, preset: 'auto', windows: many, pinned: []},
+        {monitor: 0, space: 1, preset: 'split', windows: unnamed, pinned: []}], {monitor: 0, space: 0});
+    assert.equal(app.profiles['0:DP-1:0'].apps.length, 31);
+    assert.deepEqual(app.profiles['0:DP-1:1'].apps, [null, 'editor.desktop']);
+    assert.doesNotThrow(() => makeArchive([], app.profiles));
 });
 
 test('global redo restores all Studio contexts and a new manual checkpoint clears redo', () => {
