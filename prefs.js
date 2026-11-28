@@ -570,10 +570,31 @@ export default class SnapTessPreferences extends ExtensionPreferences {
         };
         const shortcutOwner = (key, keyval, mods) => shortcutActions.find(([otherKey]) => otherKey !== key &&
             settings.get_strv(otherKey).some(accelerator => sameShortcut(keyval, mods, accelerator)))?.[1];
+        // In a narrow window (SnapTess may tile Preferences into a ~360 px
+        // tile) the key caps leave the action name too little room and it
+        // breaks mid-word: show the combination as the row subtitle instead.
+        const narrowShortcuts = new Adw.Breakpoint({condition: Adw.BreakpointCondition.parse('max-width: 480sp')});
+        const shortcutLayouts = [];
+        let narrow = false;
+        const setNarrow = value => { narrow = value; for (const update of shortcutLayouts) update(); };
+        narrowShortcuts.connect('apply', () => setNarrow(true));
+        narrowShortcuts.connect('unapply', () => setNarrow(false));
+        window.add_breakpoint(narrowShortcuts);
+        const shortcutText = accelerator => {
+            const [valid, keyval, mods] = Gtk.accelerator_parse(accelerator);
+            return accelerator && valid ? Gtk.accelerator_get_label(keyval, mods) : 'Off';
+        };
         for (const [key, title] of shortcutActions) {
             const row = new Adw.ActionRow({title});
-            const shortcutLabel = new Gtk.ShortcutLabel({accelerator: settings.get_strv(key)[0] ?? '', disabled_text: 'Off'});
+            const shortcutLabel = new Gtk.ShortcutLabel({accelerator: settings.get_strv(key)[0] ?? '', disabled_text: 'Off',
+                valign: Gtk.Align.CENTER});
             row.add_suffix(shortcutLabel);
+            const updateLayout = () => {
+                shortcutLabel.visible = !narrow;
+                row.subtitle = narrow ? GLib.markup_escape_text(shortcutText(shortcutLabel.accelerator), -1) : '';
+            };
+            shortcutLayouts.push(updateLayout);
+            shortcutLabel.connect('notify::accelerator', updateLayout);
             const entry = new Gtk.Entry({text: shortcutLabel.accelerator, width_chars: 28,
                 placeholder_text: 'Ctrl+Alt+T · empty disables', hexpand: true});
             const applyButton = new Gtk.Button({icon_name: 'object-select-symbolic', tooltip_text: 'Apply shortcut'});
