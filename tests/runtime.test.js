@@ -170,21 +170,34 @@ test('directional focus skips unavailable windows without changing geometry, slo
 
 test('directional focus is inactive outside tiling and during modal interactions', () => {
     const h = harness(), app = h.app;
-    app.groups = new Map();
+    // A real tiled neighbor to the right: each guard below is the only thing
+    // keeping Ctrl+Super+Right from focusing it.
+    const activations = [];
+    const other = {...h.w, activate() { activations.push('other'); }};
+    app.records.set(other, {space: 0, floating: false, parked: false});
+    app.groups = new Map([['active', [h.w, other]]]);
     app.key = () => 'active'; app.activeSpace = () => 0;
-    app.slotRects = () => assert.fail('inactive focus navigation must not inspect or rearrange geometry');
+    app.matchesAppRule = () => false;
+    let inspected = 0;
+    app.slotRects = () => { inspected++; return [{x: 0, y: 0, width: 100, height: 100}, {x: 110, y: 0, width: 100, height: 100}]; };
+    const blocked = guard => {
+        app.focusDirection('right');
+        assert.deepEqual(activations, [], `${guard} keeps directional focus inactive`);
+        assert.equal(inspected, 0, `${guard} does not inspect geometry`);
+    };
     h.shellDisplay.focus_window = h.w;
     for (const [key, value] of [['running', false], ['busy', true], ['drag', {}], ['resizeGrab', {}],
         ['swapMode', true], ['studio', {}], ['layoutSwitcher', {}]]) {
         const previous = app[key]; app[key] = value;
-        app.focusDirection('right'); app[key] = previous;
+        blocked(key); app[key] = previous;
     }
-    h.shellMain.overview.visible = true; app.focusDirection('right'); h.shellMain.overview.visible = false;
-    h.grab(true); app.focusDirection('right'); h.grab(false);
-    h.w.flags = 1; app.focusDirection('right'); h.w.flags = 0;
-    h.shellDisplay.focus_window = null; app.focusDirection('right');
-    h.shellDisplay.focus_window = {}; app.focusDirection('right');
+    h.shellMain.overview.visible = true; blocked('overview'); h.shellMain.overview.visible = false;
+    h.grab(true); blocked('grab'); h.grab(false);
+    h.w.flags = 1; blocked('maximized focus'); h.w.flags = 0;
+    h.shellDisplay.focus_window = null; blocked('no focus');
+    h.shellDisplay.focus_window = {}; blocked('untracked focus');
     h.shellDisplay.focus_window = h.w; app.focusDirection('right');
+    assert.deepEqual(activations, ['other'], 'without a guard the same situation moves the focus');
     assert.equal(h.requests.length, 0);
 });
 
