@@ -1,21 +1,21 @@
 .snaptess-on { color: #78aef0; }
 .snaptess-border { background-color: transparent; background-image: none; border: none; box-shadow: none; }
 .snaptess-target-ghost { background-color: rgba(90,150,215,0.12); border: 2px solid #78aef0; border-radius: 12px; box-shadow: 0 4px 18px rgba(0,0,0,0.18); }
-.snaptess-target-content { background-color: rgba(24,30,37,0.52); border-radius: 8px; padding: 7px 10px; spacing: 8px; color: #eef3f4; font-size: 11px; font-weight: 700; }
+.snaptess-target-content { background-color: rgba(24,30,37,0.52); border-radius: 8px; padding: 7px 10px; spacing: 8px; color: #eef3f4; font-size: 8.25pt; font-weight: 700; }
 .snaptess-source-ghost { background-color: rgba(210,220,225,0.04); border: 1px solid rgba(210,220,225,0.45); border-radius: 12px; }
-.snaptess-preview-label, .snaptess-swap-arrow { background-color: rgba(24,30,37,0.93); border: 1px solid #78aef0; border-radius: 10px; padding: 6px 10px; color: #f0f4f6; font-size: 11px; font-weight: 700; box-shadow: 0 4px 18px rgba(0,0,0,0.22); }
-.snaptess-swap-hint { background-color: rgba(24,30,37,0.94); border: 1px solid #78aef0; border-radius: 13px; color: #78aef0; font-size: 16px; font-weight: 700; box-shadow: 0 3px 12px rgba(0,0,0,0.3); }
+.snaptess-preview-label, .snaptess-swap-arrow { background-color: rgba(24,30,37,0.93); border: 1px solid #78aef0; border-radius: 10px; padding: 6px 10px; color: #f0f4f6; font-size: 8.25pt; font-weight: 700; box-shadow: 0 4px 18px rgba(0,0,0,0.22); }
+.snaptess-swap-hint { background-color: rgba(24,30,37,0.94); border: 1px solid #78aef0; border-radius: 13px; color: #78aef0; font-size: 12pt; font-weight: 700; box-shadow: 0 3px 12px rgba(0,0,0,0.3); }
 /* Panel menu labels take the Shell menu text color, readable in light and dark styles,
    instead of the dimmed color the theme gives non-reactive (insensitive) items. */
-.snaptess-panel-status { font-size: 11px; font-weight: 700; }
-.snaptess-menu-heading { font-size: 10px; font-weight: 700; }
+.snaptess-panel-status { font-size: 8.25pt; font-weight: 700; }
+.snaptess-menu-heading { font-size: 7.5pt; font-weight: 700; }
 .popup-menu-item.snaptess-panel-status:insensitive, .popup-menu-item.snaptess-menu-heading:insensitive { color: inherit; }
 .snaptess-window-actions, .snaptess-window-action-handle { background-color: rgba(27,36,45,0.96); border: 1px solid #7893a3; color: #edf5f9; box-shadow: 0 3px 10px rgba(0,0,0,0.35); }
 .snaptess-window-actions { border-radius: 10px; padding: 7px 3px; spacing: 3px; }
 .snaptess-window-actions.horizontal { padding: 3px 7px; }
 .snaptess-window-action-handle { border-radius: 9px; padding: 0; }
 .snaptess-window-action-handle:hover, .snaptess-window-action-handle:focus { background-color: #344d60; border-color: #b2d7ee; color: #ffffff; }
-.snaptess-window-action-tooltip { background-color: rgba(24,30,37,0.96); border: 1px solid #55636b; border-radius: 8px; padding: 6px 9px; color: #f0f4f6; font-size: 11px; font-weight: 700; }
+.snaptess-window-action-tooltip { background-color: rgba(24,30,37,0.96); border: 1px solid #55636b; border-radius: 8px; padding: 6px 9px; color: #f0f4f6; font-size: 8.25pt; font-weight: 700; }
 .snaptess-window-action { background-color: transparent; border-radius: 8px; color: #d5e0e3; padding: 8px; }
 .snaptess-window-action:hover, .snaptess-window-action:focus { background-color: #38464d; color: white; }
 .snaptess-window-action.selected { background-color: rgba(90,150,215,0.24); color: #ecf5ff; }
@@ -25,29 +25,29 @@
 .snaptess-pin-placeholder.unavailable { opacity: 0.55; }
 .snaptess-pin-placeholder-content { spacing: 9px; }
 .snaptess-pin-placeholder-labels { spacing: 4px; }
-.snaptess-pin-placeholder-name { color: #edf4ef; font-size: 12px; font-weight: 700; text-align: center; }
-.snaptess-pin-placeholder-state { color: #9bd6aa; font-size: 10px; font-weight: 700; text-align: center; }
+.snaptess-pin-placeholder-name { color: #edf4ef; font-size: 9pt; font-weight: 700; text-align: center; }
+.snaptess-pin-placeholder-state { color: #9bd6aa; font-size: 7.5pt; font-weight: 700; text-align: center; }
 .snaptess-pin-placeholder.compact { padding: 5px; }
 .snaptess-pin-placeholder.compact .snaptess-pin-placeholder-content { spacing: 3px; }
-.snaptess-pin-placeholder.compact .snaptess-pin-placeholder-name { font-size: 10px; }
-.snaptess-pin-placeholder.compact .snaptess-pin-placeholder-state { font-size: 8px; }
-.snaptess-placement-ghost { background-color: rgba(35,45,53,0.58); border: 1px solid rgba(205,220,225,0.42); border-radius: 12px; spacing: 8px; color: #eef3f4; font-size: 11px; font-weight: 700; }
+.snaptess-pin-placeholder.compact .snaptess-pin-placeholder-name { font-size: 7.5pt; }
+.snaptess-pin-placeholder.compact .snaptess-pin-placeholder-state { font-size: 6pt; }
+.snaptess-placement-ghost { background-color: rgba(35,45,53,0.58); border: 1px solid rgba(205,220,225,0.42); border-radius: 12px; spacing: 8px; color: #eef3f4; font-size: 8.25pt; font-weight: 700; }
 .snaptess-space-backdrop { background-color: rgba(16,22,29,0.28); }
 .snaptess-space-osd { background-color: rgba(24,30,37,0.86); border: 1px solid rgba(210,220,225,0.28); border-radius: 12px; box-shadow: 0 4px 18px rgba(0,0,0,0.24); }
 .snaptess-space-osd-content { spacing: 7px; }
 .snaptess-space-dots { spacing: 8px; }
 .snaptess-space-dot { background-color: #68767d; border-radius: 4px; }
-.snaptess-space-osd-label { color: #eef3f4; font-size: 11px; font-weight: 700; text-align: center; }
+.snaptess-space-osd-label { color: #eef3f4; font-size: 8.25pt; font-weight: 700; text-align: center; }
 .snaptess-layout-switcher { background-color: #171e26; border: 1px solid #35454c; border-radius: 22px; padding: 20px; color: #ecf4f2; }
 .snaptess-quick-header { spacing: 14px; margin-bottom: 14px; }
-.snaptess-quick-eyebrow { color: #8ce8c3; font-size: 9px; font-weight: 800; letter-spacing: 2px; }
-.snaptess-quick-title { color: #f0f6f4; font-size: 23px; font-weight: 800; padding-top: 3px; }
-.snaptess-quick-context { color: #a6b9bd; font-size: 11px; padding-top: 3px; }
+.snaptess-quick-eyebrow { color: #8ce8c3; font-size: 6.75pt; font-weight: 800; letter-spacing: 2px; }
+.snaptess-quick-title { color: #f0f6f4; font-size: 17.25pt; font-weight: 800; padding-top: 3px; }
+.snaptess-quick-context { color: #a6b9bd; font-size: 8.25pt; padding-top: 3px; }
 .snaptess-quick-brand { color: #8ce8c3; }
 .snaptess-quick-scroll { background-color: #10161d; border: 1px solid #304049; border-radius: 13px; }
 .snaptess-quick-list { spacing: 5px; padding: 9px; }
-.snaptess-quick-section { color: #8ce8c3; font-size: 9px; font-weight: 800; letter-spacing: 1px; padding: 9px 7px 4px; }
-.snaptess-quick-empty { color: #99aeb5; font-size: 11px; padding: 12px 8px; }
+.snaptess-quick-section { color: #8ce8c3; font-size: 6.75pt; font-weight: 800; letter-spacing: 1px; padding: 9px 7px 4px; }
+.snaptess-quick-empty { color: #99aeb5; font-size: 8.25pt; padding: 12px 8px; }
 .snaptess-quick-row { background-color: #222e36; border: 1px solid transparent; border-radius: 11px; padding: 9px; }
 .snaptess-quick-primary { background-color: #254039; border-color: #69cfa4; margin-bottom: 12px; }
 .snaptess-quick-row:hover, .snaptess-quick-row:focus { background-color: #30443f; border-color: #8ce8c3; }
@@ -60,16 +60,16 @@
 .snaptess-quick-cell.pinned { border-color: #9be9b2; }
 .snaptess-quick-row-labels { spacing: 2px; }
 .snaptess-quick-row-metadata { spacing: 7px; }
-.snaptess-quick-row-name { color: #edf5f2; font-size: 12px; font-weight: 700; }
-.snaptess-quick-count { color: #abefcb; font-size: 9px; font-weight: 800; }
-.snaptess-quick-row-meta { color: #a2b8b9; font-size: 10px; }
-.snaptess-quick-row-effects { color: #c1d7d2; font-size: 10px; }
-.snaptess-quick-active { color: #aaf0cb; font-size: 9px; font-weight: 800; padding: 18px 3px 0; }
+.snaptess-quick-row-name { color: #edf5f2; font-size: 9pt; font-weight: 700; }
+.snaptess-quick-count { color: #abefcb; font-size: 6.75pt; font-weight: 800; }
+.snaptess-quick-row-meta { color: #a2b8b9; font-size: 7.5pt; }
+.snaptess-quick-row-effects { color: #c1d7d2; font-size: 7.5pt; }
+.snaptess-quick-active { color: #aaf0cb; font-size: 6.75pt; font-weight: 800; padding: 18px 3px 0; }
 .snaptess-quick-arrow { color: #a2b8b9; padding: 18px 4px 0; }
-.snaptess-quick-expand { color: #b9d1d0; font-size: 11px; border-radius: 8px; padding: 9px; }
+.snaptess-quick-expand { color: #b9d1d0; font-size: 8.25pt; border-radius: 8px; padding: 9px; }
 .snaptess-quick-expand:hover, .snaptess-quick-expand:focus { background-color: #30443f; color: white; }
 .snaptess-quick-presets { spacing: 5px; }
-.snaptess-quick-hidden-note { color: #91a5a9; font-size: 10px; padding: 3px 9px 6px; }
+.snaptess-quick-hidden-note { color: #91a5a9; font-size: 7.5pt; padding: 3px 9px 6px; }
 .snaptess-studio { background-color: #171e26; border: 1px solid #35454c; border-radius: 24px; padding: 22px; color: #ecf4f2; }
 /* Studio and Change layout stay dark under every Shell color scheme: their footer buttons use the dark Shell button colors. */
 .snaptess-studio .modal-dialog-button-box .modal-dialog-button,
@@ -91,40 +91,40 @@
 .snaptess-header { spacing: 18px; margin-bottom: 14px; }
 .snaptess-history-controls { spacing: 7px; }
 .snaptess-context-controls { spacing: 7px; }
-.snaptess-shared-badge { color: #a8cfff; background-color: #284055; border-radius: 5px; padding: 2px 5px; font-size: 9px; font-weight: bold; }
+.snaptess-shared-badge { color: #a8cfff; background-color: #284055; border-radius: 5px; padding: 2px 5px; font-size: 6.75pt; font-weight: bold; }
 .snaptess-history-controls .snaptess-chip:insensitive { color: #667980; background-color: #1a232b; }
 .snaptess-context-separator { color: #9bafb3; margin: 0 6px; }
-.snaptess-eyebrow { color: #8ce8c3; font-size: 11px; font-weight: 800; letter-spacing: 3px; margin-bottom: 8px; }
-.snaptess-title { font-size: 27px; font-weight: 800; }
+.snaptess-eyebrow { color: #8ce8c3; font-size: 8.25pt; font-weight: 800; letter-spacing: 3px; margin-bottom: 8px; }
+.snaptess-title { font-size: 20.25pt; font-weight: 800; }
 .snaptess-brand { color: #8ce8c3; }
 .snaptess-toolbar { spacing: 7px; margin-bottom: 10px; }
 .snaptess-saved-section { spacing: 4px; margin-bottom: 5px; }
 .snaptess-saved-header { spacing: 8px; margin-bottom: 5px; }
-.snaptess-saved-title { color: #8ce8c3; font-size: 10px; font-weight: 800; letter-spacing: 2px; padding-top: 9px; padding-right: 7px; }
+.snaptess-saved-title { color: #8ce8c3; font-size: 7.5pt; font-weight: 800; letter-spacing: 2px; padding-top: 9px; padding-right: 7px; }
 .snaptess-saved-name-row, .snaptess-saved-actions { spacing: 7px; }
 .snaptess-saved-name-row, .snaptess-saved-actions { margin-bottom: 7px; }
 .snaptess-saved-rename { spacing: 5px; margin-bottom: 7px; }
 .snaptess-saved-rename-controls { spacing: 7px; }
-.snaptess-saved-rename-error { color: #f3bd72; font-size: 11px; }
+.snaptess-saved-rename-error { color: #f3bd72; font-size: 8.25pt; }
 .snaptess-saved-replace { spacing: 8px; margin-bottom: 7px; padding: 7px 9px; background-color: #392d2f; border: 1px solid #825157; border-radius: 9px; }
-.snaptess-saved-replace-label { color: #f5d8d8; font-size: 11px; padding-top: 8px; }
+.snaptess-saved-replace-label { color: #f5d8d8; font-size: 8.25pt; padding-top: 8px; }
 .snaptess-saved-chooser { background-color: #10161d; border: 1px solid #2d3b44; border-radius: 12px; }
 .snaptess-saved-chooser-list { spacing: 5px; padding: 8px; }
-.snaptess-saved-group-title { color: #8ce8c3; font-size: 11px; font-weight: 700; padding: 9px 5px 4px; }
+.snaptess-saved-group-title { color: #8ce8c3; font-size: 8.25pt; font-weight: 700; padding: 9px 5px 4px; }
 .snaptess-saved-row { background-color: #242e38; border: 1px solid transparent; border-radius: 9px; padding: 11px 12px; }
 .snaptess-saved-row:hover, .snaptess-saved-row:focus { background-color: #35454c; border-color: #73cfa8; }
 .snaptess-saved-row.selected { background-color: #28483f; border-color: #73cfa8; }
 .snaptess-saved-row-content { spacing: 12px; }
-.snaptess-saved-row-name { color: #ecf4f2; font-size: 12px; font-weight: 700; }
+.snaptess-saved-row-name { color: #ecf4f2; font-size: 9pt; font-weight: 700; }
 .snaptess-saved-row-metadata { spacing: 7px; }
-.snaptess-saved-row-count { color: #abefcb; font-size: 10px; font-weight: 800; }
-.snaptess-saved-row-meta { color: #93a6ad; font-size: 10px; }
-.snaptess-saved-summary { color: #b5c9c8; font-size: 11px; padding-top: 8px; }
+.snaptess-saved-row-count { color: #abefcb; font-size: 7.5pt; font-weight: 800; }
+.snaptess-saved-row-meta { color: #93a6ad; font-size: 7.5pt; }
+.snaptess-saved-summary { color: #b5c9c8; font-size: 8.25pt; padding-top: 8px; }
 .snaptess-saved-slot { border-color: #73cfa8; }
 .snaptess-presets { spacing: 5px; margin-bottom: 3px; }
-.snaptess-preset-status { color: #9bafb3; font-size: 10px; margin-bottom: 8px; }
+.snaptess-preset-status { color: #9bafb3; font-size: 7.5pt; margin-bottom: 8px; }
 .snaptess-preset-status.warning { color: #f3bd72; }
-.snaptess-chip { background-color: #242e38; border: 1px solid transparent; border-radius: 9px; padding: 7px 10px; font-size: 11px; color: #c1cdd1; }
+.snaptess-chip { background-color: #242e38; border: 1px solid transparent; border-radius: 9px; padding: 7px 10px; font-size: 8.25pt; color: #c1cdd1; }
 .snaptess-chip:hover, .snaptess-chip:focus { background-color: #35454c; color: white; }
 .snaptess-chip.selected { background-color: #28483f; border-color: #73cfa8; color: #b5f7db; }
 .snaptess-chip.danger:hover, .snaptess-chip.danger:focus { background-color: #56323a; color: #ffd7d7; }
@@ -138,42 +138,42 @@
 .snaptess-slot.empty { background-color: #182129; border: 1px dashed #53646d; }
 .snaptess-slot.drop-target { background-color: #356358; border: 2px solid #b5f7db; }
 .snaptess-slot.dragging { background-color: #182129; border: 1px dashed #8ce8c3; }
-.snaptess-source-placeholder { color: #8ce8c3; font-size: 10px; font-weight: 800; }
-.snaptess-drop-preview { background-color: rgba(24,46,43,0.92); border: 1px solid #8ce8c3; border-radius: 9px; padding: 8px 10px; spacing: 5px; color: #ecf4f2; font-size: 11px; font-weight: 700; }
-.snaptess-drop-name { color: #ecf4f2; font-size: 11px; font-weight: 700; text-align: center; }
-.snaptess-drop-caption { color: #b5f7db; font-size: 8px; font-weight: 800; }
+.snaptess-source-placeholder { color: #8ce8c3; font-size: 7.5pt; font-weight: 800; }
+.snaptess-drop-preview { background-color: rgba(24,46,43,0.92); border: 1px solid #8ce8c3; border-radius: 9px; padding: 8px 10px; spacing: 5px; color: #ecf4f2; font-size: 8.25pt; font-weight: 700; }
+.snaptess-drop-name { color: #ecf4f2; font-size: 8.25pt; font-weight: 700; text-align: center; }
+.snaptess-drop-caption { color: #b5f7db; font-size: 6pt; font-weight: 800; }
 .snaptess-slot-content { spacing: 7px; }
 .snaptess-slot-content.compact { spacing: 2px; }
 .snaptess-preview-heading { spacing: 5px; }
 .snaptess-save-action { spacing: 6px; }
 .snaptess-layout-toolbar { spacing: 10px; }
-.snaptess-current-layout { color: #8ce3c1; font-size: 13px; font-weight: bold; }
+.snaptess-current-layout { color: #8ce3c1; font-size: 9.75pt; font-weight: bold; }
 .snaptess-mode-controls { spacing: 8px; margin-right: 8px; }
 .snaptess-header .snaptess-chip:insensitive { color: #667980; background-color: #1a232b; }
 .snaptess-slot-content.dense { spacing: 5px; }
-.snaptess-slot-content.dense .snaptess-slot-number { font-size: 10px; }
+.snaptess-slot-content.dense .snaptess-slot-number { font-size: 7.5pt; }
 .snaptess-slot-content.dense .snaptess-app-name, .snaptess-slot-content.dense .snaptess-reserved-name,
-.snaptess-slot-content.dense .snaptess-empty { font-size: 10px; }
-.snaptess-slot-content.compact .snaptess-slot-number { font-size: 11px; }
+.snaptess-slot-content.dense .snaptess-empty { font-size: 7.5pt; }
+.snaptess-slot-content.compact .snaptess-slot-number { font-size: 8.25pt; }
 .snaptess-slot-content.reserved { spacing: 7px; }
 .snaptess-slot-content.reserved.compact { spacing: 3px; }
 .snaptess-reserved-icon { color: #dce9e5; }
-.snaptess-reserved-name { color: #dce9e5; font-size: 11px; font-weight: 700; text-align: center; }
-.snaptess-reserved-status { color: #8ce8c3; font-size: 9px; font-weight: 800; text-align: center; }
-.snaptess-slot-content.reserved.compact .snaptess-reserved-name { font-size: 10px; }
-.snaptess-slot-content.reserved.compact .snaptess-reserved-status { font-size: 8px; }
-.snaptess-slot-number { color: #8ce8c3; font-size: 14px; font-weight: 800; text-align: center; }
-.snaptess-app-name { font-size: 12px; font-weight: 700; text-align: center; color: #ecf4f2; }
-.snaptess-window-title { font-size: 10px; text-align: center; color: #a8b8be; }
+.snaptess-reserved-name { color: #dce9e5; font-size: 8.25pt; font-weight: 700; text-align: center; }
+.snaptess-reserved-status { color: #8ce8c3; font-size: 6.75pt; font-weight: 800; text-align: center; }
+.snaptess-slot-content.reserved.compact .snaptess-reserved-name { font-size: 7.5pt; }
+.snaptess-slot-content.reserved.compact .snaptess-reserved-status { font-size: 6pt; }
+.snaptess-slot-number { color: #8ce8c3; font-size: 10.5pt; font-weight: 800; text-align: center; }
+.snaptess-app-name { font-size: 9pt; font-weight: 700; text-align: center; color: #ecf4f2; }
+.snaptess-window-title { font-size: 7.5pt; text-align: center; color: #a8b8be; }
 .snaptess-state-badges { spacing: 4px; }
-.snaptess-scale-badge { background-color: #563a68; border: 1px solid #d7a7ff; border-radius: 7px; padding: 2px 6px; color: #f0d9ff; font-size: 9px; font-weight: 700; }
-.snaptess-active-badge { background-color: #244b59; border-radius: 7px; padding: 2px 6px; color: #aeeaff; font-size: 8px; font-weight: 800; }
-.snaptess-pinned-badge { background-color: #24553a; border: 1px solid #57e389; border-radius: 7px; padding: 2px 6px; color: #bfffd2; font-size: 8px; font-weight: 800; }
-.snaptess-empty { color: #83969e; font-size: 11px; text-align: center; }
-.snaptess-hint { color: #a8b8be; font-size: 12px; margin-top: 15px; }
+.snaptess-scale-badge { background-color: #563a68; border: 1px solid #d7a7ff; border-radius: 7px; padding: 2px 6px; color: #f0d9ff; font-size: 6.75pt; font-weight: 700; }
+.snaptess-active-badge { background-color: #244b59; border-radius: 7px; padding: 2px 6px; color: #aeeaff; font-size: 6pt; font-weight: 800; }
+.snaptess-pinned-badge { background-color: #24553a; border: 1px solid #57e389; border-radius: 7px; padding: 2px 6px; color: #bfffd2; font-size: 6pt; font-weight: 800; }
+.snaptess-empty { color: #83969e; font-size: 8.25pt; text-align: center; }
+.snaptess-hint { color: #a8b8be; font-size: 9pt; margin-top: 15px; }
 .snaptess-drag-ghost { background-color: #28483f; border: 1px solid #8ce8c3; border-radius: 12px; padding: 12px 16px; spacing: 9px; color: white; box-shadow: 0 10px 30px rgba(0,0,0,0.4); }
 .snaptess-legend { spacing: 14px; margin-bottom: 9px; }
-.snaptess-legend-item { spacing: 5px; color: #93a6ad; font-size: 10px; }
+.snaptess-legend-item { spacing: 5px; color: #93a6ad; font-size: 7.5pt; }
 .snaptess-legend-dot { width: 8px; height: 8px; border-radius: 4px; background-color: #53646d; }
 .snaptess-legend-item.active .snaptess-legend-dot { background-color: #68d9ff; }
 .snaptess-legend-item.selected .snaptess-legend-dot { background-color: #ff9b91; }
@@ -195,15 +195,15 @@
 .snaptess-library-row.scaled { border-color: #d7a7ff; }
 .snaptess-library-row-content { spacing: 12px; }
 .snaptess-library-row-labels { spacing: 3px; }
-.snaptess-library-title { color: #ecf4f2; font-size: 12px; font-weight: 700; }
-.snaptess-library-meta { color: #93a6ad; font-size: 10px; }
+.snaptess-library-title { color: #ecf4f2; font-size: 9pt; font-weight: 700; }
+.snaptess-library-meta { color: #93a6ad; font-size: 7.5pt; }
 
 .snaptess-custom-controls { spacing: 7px; margin-bottom: 10px; }
 .snaptess-custom-actions { spacing: 7px; }
 .snaptess-custom-values { spacing: 14px; }
 .snaptess-custom-value { spacing: 5px; }
-.snaptess-custom-title { color: #b5c9c8; font-size: 11px; padding-top: 8px; }
-.snaptess-custom-entry { width: 62px; padding: 5px 7px; font-size: 11px; border-radius: 7px; }
+.snaptess-custom-title { color: #b5c9c8; font-size: 8.25pt; padding-top: 8px; }
+.snaptess-custom-entry { width: 62px; padding: 5px 7px; font-size: 8.25pt; border-radius: 7px; }
 .snaptess-custom-divider { background-color: #73cfa8; border-radius: 3px; }
 .snaptess-custom-divider:hover { background-color: #b5f7db; }
 .snaptess-slot.merge-target { border: 3px dashed #f3bd72; background-color: #51412a; }
