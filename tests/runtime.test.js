@@ -513,6 +513,32 @@ test('Arrange again clears only the focused space resize and keeps its preset', 
     assert.ok(JSON.parse(app.history[0].profiles)['profile-0'].resize, 'Undo retains the prior proportions');
 });
 
+test('Arrange again without a change keeps Redo and adds no Undo step', () => {
+    const h = harness(); h.settleInitial();
+    const app = h.app, w = h.w;
+    app.groups = new Map([['0:0:0', [w]]]); app.profiles = {'profile-0': {preset: 'full', apps: ['test.desktop'], pinned: []}};
+    app.keyboardMonitor = () => 0;
+    app.profileKey = () => 'profile-0';
+    app.writeProfiles = () => {};
+    const redo = {redo: true};
+    app.history = []; app.redoHistory = [redo];
+    let tiles = 0;
+    app.tile = () => { tiles++; };
+    app.arrangeAgain();
+    assert.equal(tiles, 1);
+    assert.equal(app.history.length, 0, 'an unchanged arrangement adds no Undo step');
+    assert.deepEqual(app.redoHistory, [redo], 'Redo survives');
+    app.tile = () => { app.groups.set('0:0:0', [null, w]); };
+    app.arrangeAgain();
+    assert.equal(app.history.length, 1, 'a changed arrangement is undoable');
+    assert.deepEqual(Array.from(app.history[0].groups.get('0:0:0')), [w]);
+    assert.equal(app.redoHistory.length, 0);
+    app.redoHistory = [redo];
+    app.tile = () => { app.records.get(w).tileRect = {x: 0, y: 0, width: 10, height: 10}; };
+    app.arrangeAgain();
+    assert.equal(app.history.length, 2, 'a moved tile is undoable');
+});
+
 test('a titlebar click leaves drag feedback hidden and does not retile', () => {
     const h = harness(); h.settleInitial(); h.grab(true);
     h.app.captureCheckpoint = () => ({});

@@ -48,6 +48,27 @@ const MAX_LAUNCH_RELEASES = 3;
 const copyPendingLaunches = pending => new Map([...(pending ?? [])].map(([id, requests]) => [id,
     requests.map(request => ({...request, targets: request.targets?.map(target => ({...target})),
         ...(request.known ? {known: new Set(request.known)} : {})}))]));
+// Deep equality of checkpoint values: maps, sets, arrays and plain objects by
+// content, windows and other objects by identity.
+const sameState = (a, b) => {
+    if (a === b) return true;
+    if (!a || !b || typeof a !== 'object' || typeof b !== 'object') return false;
+    const tag = Object.prototype.toString.call(a);
+    if (tag !== Object.prototype.toString.call(b)) return false;
+    if (tag === '[object Map]') return a.size === b.size &&
+        [...a].every(([key, value]) => b.has(key) && sameState(value, b.get(key)));
+    if (tag === '[object Set]') return a.size === b.size && [...a].every(value => b.has(value));
+    if (Array.isArray(a)) return a.length === b.length && a.every((value, i) => sameState(value, b[i]));
+    const plain = value => { const proto = Object.getPrototypeOf(value); return !proto || !Object.getPrototypeOf(proto); };
+    if (!plain(a) || !plain(b)) return false;
+    const keys = Object.keys(a);
+    return keys.length === Object.keys(b).length &&
+        keys.every(key => Object.prototype.hasOwnProperty.call(b, key) && sameState(a[key], b[key]));
+};
+// Whether two checkpoints hold the same arrangement, so that a step between
+// them would undo nothing.
+const sameCheckpoint = (a, b) => Boolean(a && b) && a.profiles !== undefined && b.profiles !== undefined &&
+    sameState({...a, profiles: JSON.parse(a.profiles)}, {...b, profiles: JSON.parse(b.profiles)});
 const VISUAL = Object.freeze({quick: 140, move: 210, space: 230, osd: 1300, inset: 7});
 
 export default class SnapTess extends Extension {
@@ -1532,15 +1553,21 @@ export default class SnapTess extends Extension {
         this.redoItem?.setSensitive(false);
     }
     checkpoint() { this.pushCheckpoint(this.captureCheckpoint()); }
+    // Pushes the state from before an explicit arrangement only when it changed
+    // something: an empty step would erase Redo and undo nothing.
+    pushCheckpointIfChanged(state) {
+        if (state && !sameCheckpoint(state, this.captureCheckpoint())) this.pushCheckpoint(state);
+    }
     arrangeAgain() {
         if (!this.running || this.resizeGrab) return;
         const profile = this.profiles[this.profileKey(this.keyboardMonitor())];
-        this.checkpoint();
+        const before = this.captureCheckpoint();
         if (profile?.resize) {
             delete profile.resize;
             this.writeProfiles();
         }
         this.tile(true);
+        this.pushCheckpointIfChanged(before);
     }
     // The original geometry with the window's current minimized state, so a window
     // the user minimized stays minimized; windows SnapTess hid for a Space are shown.
@@ -3649,7 +3676,7 @@ export default class SnapTess extends Extension {
         // as in tile(); only invalid tiles refuse the change.
         if (!changes.length || changes.some(c => c.preset === 'custom' && !validCustomTiles(c.tiles))) return false;
         if (!this.running) this.setRunning(true);
-        this.checkpoint();
+        const before = this.captureCheckpoint();
         this.switchSpace(focus.space, focus.monitor);
         const workspace = global.workspace_manager.get_active_workspace();
         const claimed = new Map();
@@ -3776,6 +3803,7 @@ export default class SnapTess extends Extension {
             if (tiles.some(Boolean)) this.launchLayoutApps(tiles.filter(Boolean), monitor, space, workspace, tiles);
         }
         this.tile(true, true);
+        this.pushCheckpointIfChanged(before);
         this.updatePanelStatus();
         this.deletedLayouts?.splice(0);
     }

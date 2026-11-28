@@ -28,10 +28,19 @@ export async function run() {
     };
     assert(app.settings.get_strv('redo')[0] === '<Control><Alt>y' && app.bindings.redo,
         'Redo has a registered Ctrl+Alt+Y binding');
+    const display = app.currentMonitor();
+    app.applyQuickPreset(display, app.activeSpace(display), 'auto'); await pause();
     app.toggleFloating(); await pause();
     assert(app.records.get(w).floating, 'manual arrangement changes floating membership');
     await chord(Clutter.KEY_z);
     assert(!app.records.get(w).floating && app.redoItem.sensitive, 'Ctrl+Alt+Z enables Redo');
+    const steps = app.history.length;
+    await chord(Clutter.KEY_r);
+    assert(app.redoItem.sensitive && app.redoHistory.length === 1 && app.history.length === steps,
+        'Ctrl+Alt+R without a change keeps Redo and adds no Undo step');
+    app.applyQuickPreset(display, app.activeSpace(display), 'auto'); await pause();
+    assert(app.redoItem.sensitive && app.redoHistory.length === 1 && app.history.length === steps,
+        'Arrange open windows without a change keeps Redo and adds no Undo step');
     await chord(Clutter.KEY_y);
     assert(app.records.get(w).floating && !app.redoItem.sensitive, 'Ctrl+Alt+Y restores the manual arrangement');
     await chord(Clutter.KEY_z);
