@@ -63,6 +63,32 @@ export async function run() {
     quick.savedSearch.set_text('missing-name');
     assert(quick.noMatches.visible && !visibleRows().length && quick.autoRow.visible, 'quick search explains no matches');
     quick.savedSearch.set_text(''); assert(visibleRows().length === 2, 'quick search can be cleared');
-    quick.dialog.close();
+    quick.dialog.close(); await pause();
+    // Apply only opens apps that a tile still waits for: never one whose
+    // window is open, nor one whose window the user closed since.
+    const launches = [], originalLaunch = app.launchLayoutApps;
+    app.launchLayoutApps = (...args) => { launches.push(args); return true; };
+    try {
+        await Scripting.createTestWindow({width: 300, height: 220});
+        await Scripting.createTestWindow({width: 310, height: 230});
+        await Scripting.waitTestWindows(); await pause();
+        app.setRunning(true); await pause();
+        const applyStudio = async change => {
+            app.openStudio(); await pause();
+            change?.(app.studio); app.studio.apply(); await pause();
+        };
+        await applyStudio(s => { s.selected = s.draft.length - 1; s.clearTile(); });
+        await applyStudio();
+        assert(!launches.length, 'Apply never relaunches apps whose windows are open');
+        const group = app.groups.get(app.key(Main.layoutManager.primaryIndex));
+        const closed = group?.find(win => win && app.records.has(win));
+        assert(closed, 'the arrangement holds a window to close');
+        closed.delete(global.get_current_time()); await pause();
+        await applyStudio();
+        assert(!launches.length, 'Apply never reopens an app whose window was closed');
+    } finally {
+        app.launchLayoutApps = originalLaunch;
+        app.setRunning(false); await pause();
+    }
     console.log('SNAPTESS_STUDIO_LIBRARY_TESTS_PASSED');
 }
