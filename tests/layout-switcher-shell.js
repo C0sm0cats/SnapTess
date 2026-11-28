@@ -1,4 +1,5 @@
 import Gio from 'gi://Gio';
+import Clutter from 'gi://Clutter';
 import GLib from 'gi://GLib';
 import Shell from 'gi://Shell';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
@@ -34,6 +35,30 @@ async function open(app) {
     return switcher;
 }
 
+// Presses Down then an Enter key on a real virtual keyboard and returns the saved
+// layout ids the switcher asked the runtime to restore.
+async function pressEnter(app, keyboard, enterKey, savedId) {
+    const switcher = await open(app);
+    const original = app.restoreSavedLayout, restored = [];
+    app.restoreSavedLayout = id => { restored.push(id); };
+    try {
+        for (const key of [Clutter.KEY_Down, enterKey]) {
+            keyboard.notify_keyval(GLib.get_monotonic_time(), key, Clutter.KeyState.PRESSED);
+            await Scripting.sleep(70);
+            keyboard.notify_keyval(GLib.get_monotonic_time(), key, Clutter.KeyState.RELEASED);
+            await pause();
+            if (key === Clutter.KEY_Down)
+                assert(global.stage.get_key_focus()?._savedName === 'layout 1', 'Down focuses the saved layout');
+        }
+        await pause(600);
+    } finally {
+        app.restoreSavedLayout = original;
+    }
+    assert(restored.length === 1 && restored[0] === savedId,
+        `Enter restores the focused saved layout (got ${JSON.stringify(restored)})`);
+    assert(!app.layoutSwitcher, 'Enter closes the switcher');
+}
+
 async function close(app, switcher) {
     switcher.dialog.close(); await pause(600);
     assert(!app.layoutSwitcher, 'closed');
@@ -67,6 +92,10 @@ export async function run() {
         switcher.savedSearch.set_text(''); await pause();
         checkFits(switcher, 'search cleared');
         await close(app, switcher);
+        const keyboard = global.stage.context.get_backend().get_default_seat()
+            .create_virtual_device(Clutter.InputDeviceType.KEYBOARD_DEVICE);
+        await pressEnter(app, keyboard, Clutter.KEY_Return, ids[0]);
+        await pressEnter(app, keyboard, Clutter.KEY_KP_Enter, ids[0]);
 
         for (let n = 2; n <= 12; n++) ids.push(app.saveLayout(`Layout ${n}`, '2x2', [], []));
         assert(ids.every(Boolean), 'twelve layouts saved');
