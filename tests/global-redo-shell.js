@@ -74,6 +74,31 @@ export async function run() {
     assert(!app.swapMode && slots().indexOf(left) === 0, 'Escape cancels the swap');
     await swapStep([Clutter.KEY_Right, Clutter.KEY_Return], 1, 'Enter keeps the swap');
     await swapStep([Clutter.KEY_Left, Clutter.KEY_s], 0, 'Ctrl+Alt+S again keeps the swap');
+    // Each palette button runs its own action on the focused window.
+    const click = async (window, button) => {
+        window.activate(global.get_current_time()); await pause();
+        button.emit('clicked', 1); await pause();
+    };
+    await click(left, app.floatAction);
+    assert(app.records.get(left).floating, 'the float button floats the tiled window');
+    await click(left, app.floatAction);
+    assert(!app.records.get(left).floating && slots().includes(left), 'the float button tiles it again');
+    await click(left, app.maximizeAction);
+    assert(left.get_maximize_flags() && app.records.get(left).userSpecial,
+        'the maximize button maximizes the window as a user request');
+    await click(left, app.maximizeAction);
+    assert(!left.get_maximize_flags(), 'the maximize button restores the window');
+    await click(left, app.minimizeAction);
+    assert(left.minimized && app.records.has(left), 'the minimize button minimizes without closing');
+    left.unminimize(); await pause();
+    const before = new Set(app.records.keys());
+    await Scripting.createTestWindow({width: 320, height: 240});
+    await Scripting.waitTestWindows(); await pause();
+    const doomed = [...app.records.keys()].find(window => !before.has(window));
+    assert(doomed, 'a third window is tracked for the close button');
+    await click(doomed, app.closeAction);
+    for (let n = 0; n < 20 && app.records.has(doomed); n++) await Scripting.sleep(100);
+    assert(!app.records.has(doomed) && app.records.has(left), 'the close button closes only the focused window');
     await chord(Clutter.KEY_q);
     assert(!app.running, 'Ctrl+Alt+Q stops tiling');
     await chord(Clutter.KEY_t);
