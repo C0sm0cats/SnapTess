@@ -412,5 +412,40 @@ recordButtons[0].emit('clicked');
 recorder.emit('key-pressed', Gdk.KEY_BackSpace, 0, 0);
 if (settings.get_strv('toggle').length !== 0)
     throw new Error('Shortcut capture could not disable a binding');
+{
+    // A combination another action already uses would leave this one dead:
+    // refuse it, typed or recorded, and name the action that keeps it.
+    const toasts = [];
+    const addToast = window.add_toast;
+    window.add_toast = toast => { toasts.push(toast.title); return addToast.call(window, toast); };
+    const studio = shortcutEditor('Open Layout Studio');
+    const studioDefault = settings.get_strv('studio')[0];
+    studio.entry.text = '<Control><Alt>S'; studio.apply.emit('clicked');
+    if (settings.get_strv('studio')[0] !== studioDefault || settings.get_strv('swap')[0] !== '<Control><Alt>s')
+        throw new Error('A typed shortcut already used by Swap mode was saved');
+    if (!studio.entry.has_css_class('error') || toasts.at(-1) !== 'Already used by Swap mode.')
+        throw new Error(`A typed duplicate shortcut was not explained: ${JSON.stringify(toasts)}`);
+    const studioRecord = recordButtons.find(button => button.tooltip_text === 'Record open layout studio');
+    const studioControllers = studioRecord.observe_controllers();
+    const studioRecorder = Array.from({length: studioControllers.get_n_items()}, (_, i) => studioControllers.get_item(i))
+        .find(controller => controller instanceof Gtk.EventControllerKey);
+    studioRecord.emit('clicked');
+    studioRecorder.emit('key-pressed', Gdk.KEY_f, 0, Gdk.ModifierType.CONTROL_MASK | Gdk.ModifierType.ALT_MASK);
+    if (settings.get_strv('studio')[0] !== studioDefault)
+        throw new Error('A recorded shortcut already used by Float focused window was saved');
+    if (toasts.at(-1) !== 'Already used by Float focused window.')
+        throw new Error(`A recorded duplicate shortcut was not explained: ${JSON.stringify(toasts)}`);
+    studio.entry.text = studioDefault; studio.apply.emit('clicked');
+    if (studio.entry.has_css_class('error')) throw new Error('Re-applying the current shortcut was refused');
+    studio.entry.text = '<Control><Alt>k'; studio.apply.emit('clicked');
+    if (settings.get_strv('studio')[0] !== '<Control><Alt>k' || studio.entry.has_css_class('error'))
+        throw new Error('A free shortcut was refused');
+    // A disabled action frees its combination.
+    settings.set_strv('swap', []);
+    studio.entry.text = '<Control><Alt>s'; studio.apply.emit('clicked');
+    if (settings.get_strv('studio')[0] !== '<Control><Alt>s') throw new Error('The shortcut of a disabled action stayed taken');
+    for (const key of ['studio', 'swap']) settings.reset(key);
+    delete window.add_toast;
+}
 window.destroy();
 print('SNAPTESS_PREFS_TESTS_PASSED');

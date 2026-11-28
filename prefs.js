@@ -489,12 +489,23 @@ export default class SnapTessPreferences extends ExtensionPreferences {
         const shortcuts = new Adw.PreferencesGroup({title: 'Keyboard shortcuts',
             description: 'Record a combination or use the pencil to edit it. Clear it to disable.'});
         page.add(shortcuts);
-        for (const [key, title] of [['toggle', 'Start or stop tiling'], ['retile', 'Arrange again'], ['studio', 'Open Layout Studio'],
+        const shortcutActions = [['toggle', 'Start or stop tiling'], ['retile', 'Arrange again'], ['studio', 'Open Layout Studio'],
             ['layout-switcher', 'Change layout'],
             ['floating', 'Float focused window'], ['swap', 'Swap mode'], ['undo', 'Undo'], ['redo', 'Redo'],
             ['focus-left', 'Focus window to the left'], ['focus-right', 'Focus window to the right'],
             ['focus-up', 'Focus window above'], ['focus-down', 'Focus window below'],
-            ['space-1', 'Monitor space 1'], ['space-2', 'Monitor space 2'], ['space-3', 'Monitor space 3'], ['stop', 'Stop and restore']]) {
+            ['space-1', 'Monitor space 1'], ['space-2', 'Monitor space 2'], ['space-3', 'Monitor space 3'], ['stop', 'Stop and restore']];
+        // Two actions on one combination leave one of them dead: name the
+        // action that already holds it. GNOME's own shortcuts are not checked.
+        const sameShortcut = (keyval, mods, accelerator) => {
+            const [valid, otherKeyval, otherMods] = Gtk.accelerator_parse(accelerator);
+            const mask = Gtk.accelerator_get_default_mod_mask();
+            return valid && Gdk.keyval_to_lower(otherKeyval) === Gdk.keyval_to_lower(keyval) &&
+                (otherMods & mask) === (mods & mask);
+        };
+        const shortcutOwner = (key, keyval, mods) => shortcutActions.find(([otherKey]) => otherKey !== key &&
+            settings.get_strv(otherKey).some(accelerator => sameShortcut(keyval, mods, accelerator)))?.[1];
+        for (const [key, title] of shortcutActions) {
             const row = new Adw.ActionRow({title});
             const shortcutLabel = new Gtk.ShortcutLabel({accelerator: settings.get_strv(key)[0] ?? '', disabled_text: 'Off'});
             row.add_suffix(shortcutLabel);
@@ -516,6 +527,10 @@ export default class SnapTessPreferences extends ExtensionPreferences {
                 if (value && (!valid || !Gtk.accelerator_valid(keyval, mods) || !(mods &
                     (Gdk.ModifierType.CONTROL_MASK | Gdk.ModifierType.ALT_MASK | Gdk.ModifierType.SUPER_MASK)))) {
                     entry.add_css_class('error'); window.add_toast(new Adw.Toast({title: 'Use a valid shortcut with Ctrl, Alt or Super.'})); return false;
+                }
+                const owner = value && shortcutOwner(key, keyval, mods);
+                if (owner) {
+                    entry.add_css_class('error'); window.add_toast(new Adw.Toast({title: `Already used by ${owner}.`})); return false;
                 }
                 entry.remove_css_class('error'); settings.set_strv(key, value ? [value] : []);
                 shortcutLabel.accelerator = value;
