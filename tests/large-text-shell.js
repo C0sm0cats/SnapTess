@@ -19,9 +19,9 @@ const fontPx = label => {
     return font.get_size() / 1024 * (font.get_size_is_absolute() ? 1 : 96 / 72);
 };
 
-function labels(root, prefix, out) {
+function labels(root, prefix, out, skip = null) {
     const walk = actor => {
-        if (!actor.visible) return;
+        if (!actor.visible || actor === skip) return;
         if (actor instanceof St.Label && actor.text) {
             let key = `${prefix}: "${actor.text.slice(0, 40)}"`;
             while (out.has(key)) key += "'";
@@ -39,8 +39,12 @@ function checkFits(dialog, where) {
     const [, top] = box.get_transformed_position();
     const [, buttonsTop] = dialog.buttonLayout.get_transformed_position();
     const [, buttonsHeight] = dialog.buttonLayout.get_transformed_size();
-    if (top < m.y || buttonsTop + buttonsHeight > m.y + m.height)
-        failures.push(`${where}: dialog fits the ${m.width}x${m.height} screen (top ${top}, buttons end at ${buttonsTop + buttonsHeight})`);
+    // The frame around the buttons must not be cut either.
+    const [, frameTop] = dialog.dialogLayout.get_transformed_position();
+    const [, frameHeight] = dialog.dialogLayout.get_transformed_size();
+    const bottom = Math.max(buttonsTop + buttonsHeight, frameTop + frameHeight);
+    if (top < m.y || bottom > m.y + m.height)
+        failures.push(`${where}: dialog fits the ${m.width}x${m.height} screen (top ${top}, buttons end at ${buttonsTop + buttonsHeight}, frame at ${frameTop + frameHeight})`);
 }
 
 async function screenshot(name) {
@@ -69,12 +73,24 @@ async function measure(app, factor) {
         ['Studio saved layouts', () => { studio.showSavedChooser = true; studio.render(); }],
         ['Studio New layout', () => { studio.showSavedChooser = false; studio.openNewLayout(); }],
         ['Studio New layout tile selected', () => { studio.newLayout.selected = 0; studio.render(); }],
+        // Custom adds its split, merge and percent rows above the canvas
+        // (README "Build a custom layout"): Save layout and Back stay on screen.
+        ['Studio Custom tile selected', () => {
+            studio.choosePreset('custom'); studio.splitCustom('vertical');
+            studio.newLayout.selected = 1; studio.splitCustom('horizontal');
+        }],
+        ['Studio Custom merge', () => { studio.mergeChoosing = true; studio.render(); }],
     ];
     for (const [where, step] of views) {
         step(); await pause();
-        labels(studio.dialog, where, sizes);
+        // Custom's tiles get smaller with large text, so their cards switch
+        // to a compact style: compare the text around the canvas only.
+        labels(studio.dialog, where, sizes, where.includes('Custom') ? studio.canvas : null);
         checkFits(studio.dialog, `${factor}: ${where}`);
         if (factor !== 1 && where === 'Studio current space') await screenshot('studio');
+        if (where === 'Studio Custom merge')
+            assert(studio.customCards.some(card => card.has_style_class_name('merge-target')), 'merge targets marked');
+        if (where === 'Studio Custom tile selected') await screenshot(factor === 1 ? 'custom' : 'custom-large');
     }
     studio.dialog.close(); await pause(600);
     assert(!app.studio, 'Studio closed');
