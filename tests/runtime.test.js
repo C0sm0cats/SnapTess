@@ -685,6 +685,31 @@ test('closing a window whose actor is already disposed does not touch the actor'
     assert.equal(h.app.records.has(h.w), false);
 });
 
+test('closing a window leaves compaction to the close setting', () => {
+    for (const compactClose of [false, true]) {
+        const h = harness(), calls = [];
+        h.app.schedule = compact => calls.push(compact);
+        h.app.settings.get_boolean = key => key === 'compact-close' ? compactClose : false;
+        // Mutter takes a closing window off its workspace before unmanaged.
+        h.w.get_workspace = () => null;
+        h.notifyWindow('workspace-changed');
+        h.notifyWindow('unmanaged');
+        assert.deepEqual(calls, [compactClose]);
+        assert.equal(h.app.records.has(h.w), false);
+    }
+});
+
+test('a window sent to another workspace joins its active Space', () => {
+    const h = harness(), calls = [];
+    h.app.schedule = compact => calls.push(compact);
+    h.app.activeSpace = () => 2;
+    h.record.space = 1; h.record.spaces = new Set([0, 1]);
+    h.notifyWindow('workspace-changed');
+    assert.equal(h.record.space, 2);
+    assert.equal(h.record.spaces, null);
+    assert.deepEqual(calls, [true]);
+});
+
 test('closing a window with a live actor disconnects every actor handler once', () => {
     const h = harness();
     h.app.schedule = () => {};

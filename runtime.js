@@ -537,8 +537,10 @@ export default class SnapTess extends Extension {
                 this.traceWindow(w, signal);
                 this.specialWindowChanged(w, record);
             });
+        // Mutter takes a closing window off its workspace before unmanaged;
+        // untrack then applies the close setting instead of a forced compact.
         watch('workspace-changed', () => {
-            if (!this.busy) {
+            if (!this.busy && w.get_workspace()) {
                 record.space = this.activeSpace(w.get_monitor(), w.get_workspace());
                 record.spaces = null;
                 this.schedule(true);
