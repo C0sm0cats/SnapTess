@@ -2397,7 +2397,7 @@ export default class SnapTess extends Extension {
         const w = global.display.focus_window, record = this.records.get(w);
         const usable = Boolean(this.running && record && !w.minimized && !this.isSpecialWindow(w));
         this.arrangeItem?.setSensitive(this.running);
-        this.floatItem?.setSensitive(usable);
+        this.floatItem?.setSensitive(usable && !this.matchesAppRule(w, 'excluded-apps'));
         const slots = usable && !record.floating ? this.groups.get(this.key(w.get_monitor())) ?? [] : [];
         this.swapItem?.setSensitive(slots.filter(Boolean).length > 1);
         this.undoItem?.setSensitive(this.running && this.history.length > 0);
@@ -2929,10 +2929,16 @@ export default class SnapTess extends Extension {
         this.applyWindowActionStyle(w);
         const {x, y} = this.windowActionPosition(w, rect, actionPaletteSize(this.actionPosition));
         this.windowActions.set_position(x, y);
-        this.floatAction[record.floating ? 'add_style_class_name' : 'remove_style_class_name']('selected');
-        this.floatAction.set_style(record.floating ? `background-color: ${this.accentFill(0.24)};` : null);
-        this.floatAction.child.icon_name = record.floating ? 'view-grid-symbolic' : 'window-pop-out-symbolic';
-        this.floatAction._snaptessTooltip = record.floating ? 'Tile window' : 'Float window';
+        // An app ruled "Always floating" shows the button pressed and dimmed: it
+        // keeps its tooltip, but a click changes nothing.
+        const ruled = this.matchesAppRule(w, 'excluded-apps'), floating = record.floating || ruled;
+        this.floatAction[floating ? 'add_style_class_name' : 'remove_style_class_name']('selected');
+        this.floatAction.set_style(floating ? `background-color: ${this.accentFill(0.24)};` : null);
+        this.floatAction.opacity = ruled ? 128 : 255;
+        this.floatAction.child.icon_name = floating ? 'view-grid-symbolic' : 'window-pop-out-symbolic';
+        this.floatAction._snaptessTooltip = ruled ? 'Always floating (app rule)'
+            : record.floating ? 'Tile window' : 'Float window';
+        this.floatAction.accessible_name = ruled ? 'Always floating (app rule)' : 'Float or tile window';
         this.maximizeAction.child.icon_name = w.get_maximize_flags() ? 'window-restore-symbolic' : 'window-maximize-symbolic';
         this.maximizeAction._snaptessTooltip = w.get_maximize_flags() ? 'Restore window' : 'Maximize window';
         this.stackWindowOverlays(w);
@@ -3027,7 +3033,9 @@ export default class SnapTess extends Extension {
 
     toggleFloating() {
         const w = global.display.focus_window, record = this.records.get(w);
-        if (!record || !this.running) return;
+        // An "Always floating" app rule decides for this window: toggling would
+        // only recentre it and add an Undo step that does nothing.
+        if (!record || !this.running || this.matchesAppRule(w, 'excluded-apps')) return;
         this.checkpoint(); record.floating = !record.floating;
         if (record.floating) {
             this.busy = true;

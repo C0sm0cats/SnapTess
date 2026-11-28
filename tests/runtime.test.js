@@ -3907,6 +3907,33 @@ test('an X11 window fades its handle and palette like any other window', () => {
     assert.ok(names(1).length > 0);
 });
 
+test('an always-floating app offers no Float or Tile toggle and adds no Undo step', () => {
+    const run = ruled => {
+        const {app, record, requests} = windowActionsHarness(0);
+        app.settings.get_strv = key => key === 'excluded-apps' && ruled ? ['test.desktop'] : [];
+        let checkpoints = 0, sensitive = null;
+        app.checkpoint = () => { checkpoints++; };
+        app.tile = () => {}; app.validateTransformsAfterGrab = () => {};
+        app.hideWindowActions = () => {}; app.showWindowActionHandle = () => {};
+        app.groups = new Map(); app.history = []; app.redoHistory = [];
+        app.floatItem = {setSensitive(value) { sensitive = value; }};
+        app.showWindowActions();
+        const palette = {tooltip: app.floatAction._snaptessTooltip, name: app.floatAction.accessible_name,
+            opacity: app.floatAction.opacity, icon: app.floatAction.child.icon_name};
+        app.updateMenuSensitivity();
+        app.toggleFloating();
+        return {palette, sensitive, checkpoints, floating: record.floating, moved: requests.length};
+    };
+    assert.deepEqual(run(true), {palette: {tooltip: 'Always floating (app rule)', name: 'Always floating (app rule)',
+        opacity: 128, icon: 'view-grid-symbolic'}, sensitive: false, checkpoints: 0, floating: false, moved: 0});
+    const plain = run(false);
+    assert.deepEqual(plain.palette, {tooltip: 'Float window', name: 'Float or tile window', opacity: 255,
+        icon: 'window-pop-out-symbolic'});
+    assert.equal(plain.sensitive, true);
+    assert.equal(plain.checkpoints, 1);
+    assert.equal(plain.floating, true);
+});
+
 test('fadeWindowActions and setRunning are called with the arguments they read', () => {
     // fadeWindowActions no longer depends on the window, and setRunning has no
     // silent mode: a leftover argument would suggest a rule that does not exist.
