@@ -26,6 +26,20 @@ function setAppRule(settings, key, ids, enabled) {
 
 const HANDLE_POSITIONS = [['left', 'Left'], ['right', 'Right'], ['top', 'Top'], ['bottom', 'Bottom']];
 
+// The README writes shortcuts as Ctrl+Alt+T; GTK only parses <Control><Alt>t.
+const PLUS_MODIFIERS = {ctrl: 'Control', control: 'Control', alt: 'Alt', super: 'Super', shift: 'Shift'};
+
+function parseShortcut(value) {
+    const parsed = Gtk.accelerator_parse(value);
+    if (parsed[0] || !value.includes('+')) return [...parsed, value];
+    const parts = value.split('+').map(part => part.trim());
+    const key = parts.pop();
+    const mods = parts.map(part => PLUS_MODIFIERS[part.toLowerCase()]);
+    if (!key || !mods.length || mods.some(mod => !mod)) return [...parsed, value];
+    const [valid, keyval, modMask] = Gtk.accelerator_parse(mods.map(mod => `<${mod}>`).join('') + key);
+    return [valid, keyval, modMask, valid ? Gtk.accelerator_name(keyval, modMask) : value];
+}
+
 // Unpacking these dictionaries for every application made the window take
 // seconds to open, so each one is read once per settings change.
 const appMapCache = new WeakMap();
@@ -514,7 +528,7 @@ export default class SnapTessPreferences extends ExtensionPreferences {
             const shortcutLabel = new Gtk.ShortcutLabel({accelerator: settings.get_strv(key)[0] ?? '', disabled_text: 'Off'});
             row.add_suffix(shortcutLabel);
             const entry = new Gtk.Entry({text: shortcutLabel.accelerator, width_chars: 28,
-                placeholder_text: 'Clear to disable', hexpand: true});
+                placeholder_text: 'Ctrl+Alt+T · empty disables', hexpand: true});
             const applyButton = new Gtk.Button({icon_name: 'object-select-symbolic', tooltip_text: 'Apply shortcut'});
             const editor = new Gtk.Box({spacing: 6, margin_top: 12, margin_bottom: 12, margin_start: 12, margin_end: 12});
             editor.append(entry); editor.append(applyButton);
@@ -526,11 +540,11 @@ export default class SnapTessPreferences extends ExtensionPreferences {
                 valign: Gtk.Align.CENTER, tooltip_text: `Record ${title.toLowerCase()}`});
             row.add_suffix(recordButton);
             const applyShortcut = value => {
-                value = value.trim();
-                const [valid, keyval, mods] = Gtk.accelerator_parse(value);
+                const [valid, keyval, mods, parsedValue] = parseShortcut(value.trim());
+                value = parsedValue;
                 if (value && (!valid || !Gtk.accelerator_valid(keyval, mods) || !(mods &
                     (Gdk.ModifierType.CONTROL_MASK | Gdk.ModifierType.ALT_MASK | Gdk.ModifierType.SUPER_MASK)))) {
-                    entry.add_css_class('error'); window.add_toast(new Adw.Toast({title: 'Use a valid shortcut with Ctrl, Alt or Super.'})); return false;
+                    entry.add_css_class('error'); window.add_toast(new Adw.Toast({title: 'Use a shortcut with Ctrl, Alt or Super, like Ctrl+Alt+T.'})); return false;
                 }
                 const owner = value && shortcutOwner(key, keyval, mods);
                 if (owner) {

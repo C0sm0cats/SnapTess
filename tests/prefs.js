@@ -482,6 +482,25 @@ if (settings.get_strv('toggle').length !== 0)
     for (const key of ['studio', 'swap']) settings.reset(key);
     delete window.add_toast;
 }
+{
+    // The README writes shortcuts as Ctrl+Alt+T: typing that form used to be
+    // refused with "Use a valid shortcut with Ctrl, Alt or Super."
+    const toasts = [];
+    const addToast = window.add_toast;
+    window.add_toast = toast => { toasts.push(toast.title); return addToast.call(window, toast); };
+    const studio = shortcutEditor('Open Layout Studio');
+    for (const [typed, saved] of [['Ctrl+Alt+K', '<Control><Alt>k'], ['super + shift + Left', '<Shift><Super>Left']]) {
+        studio.entry.text = typed; studio.entry.emit('activate');
+        if (settings.get_strv('studio')[0] !== saved || studio.entry.has_css_class('error') || studio.entry.text !== saved)
+            throw new Error(`Typed ${typed} was not saved as ${saved}: ${JSON.stringify([settings.get_strv('studio'), toasts])}`);
+    }
+    studio.entry.text = 'Ctrl+Alt'; studio.apply.emit('clicked');
+    if (settings.get_strv('studio')[0] !== '<Shift><Super>Left' || !studio.entry.has_css_class('error') ||
+        !toasts.at(-1)?.includes('Ctrl+Alt+T'))
+        throw new Error(`An incomplete shortcut was not explained with the expected form: ${JSON.stringify(toasts)}`);
+    settings.reset('studio');
+    delete window.add_toast;
+}
 // Closing Preferences mid-capture gives SnapTess its shortcuts back.
 recordButtons[0].emit('clicked');
 window.emit('close-request');
