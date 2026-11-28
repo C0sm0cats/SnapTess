@@ -43,5 +43,28 @@ export async function run() {
     app.setRunning(false); await pause();
     assert(!app.history.length && !app.redoHistory.length && !app.redoItem.sensitive,
         'stopping clears and disables both histories');
+    app.setRunning(true); await pause();
+    const monitor = app.currentMonitor();
+    for (const [key, space] of [[Clutter.KEY_2, 1], [Clutter.KEY_3, 2], [Clutter.KEY_1, 0]]) {
+        await chord(key);
+        assert(app.activeSpace(monitor) === space, `Ctrl+Alt+${space + 1} opens Space ${space + 1}`);
+    }
+    await chord(Clutter.KEY_q);
+    assert(!app.running, 'Ctrl+Alt+Q stops tiling');
+    await chord(Clutter.KEY_t);
+    assert(app.running, 'Ctrl+Alt+T starts tiling');
+    await chord(Clutter.KEY_t);
+    assert(!app.running, 'Ctrl+Alt+T stops tiling again');
+    await Main.extensionManager.disableExtension(entry.uuid); await pause();
+    await Main.extensionManager.enableExtension(entry.uuid);
+    for (let n = 0; n < 30 && (!entry.stateObj?.runtime || entry.stateObj.runtime === app); n++)
+        await Scripting.sleep(100);
+    const reloaded = entry.stateObj.runtime;
+    await Scripting.sleep(1000); // The first press right after enable can be missed; let the bindings settle.
+    assert(reloaded && reloaded !== app && !reloaded.running, 'enable loads a new stopped runtime');
+    await chord(Clutter.KEY_t);
+    assert(reloaded.running, 'shortcuts reach the runtime after disable and enable');
+    await chord(Clutter.KEY_t);
+    assert(!reloaded.running, 'Ctrl+Alt+T stops the new runtime');
     console.log('SNAPTESS_GLOBAL_REDO_TESTS_PASSED');
 }
