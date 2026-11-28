@@ -5,8 +5,11 @@
 .snaptess-source-ghost { background-color: rgba(210,220,225,0.04); border: 1px solid rgba(210,220,225,0.45); border-radius: 12px; }
 .snaptess-preview-label, .snaptess-swap-arrow { background-color: rgba(24,30,37,0.93); border: 1px solid #78aef0; border-radius: 10px; padding: 6px 10px; color: #f0f4f6; font-size: 11px; font-weight: 700; box-shadow: 0 4px 18px rgba(0,0,0,0.22); }
 .snaptess-swap-hint { background-color: rgba(24,30,37,0.94); border: 1px solid #78aef0; border-radius: 13px; color: #78aef0; font-size: 16px; font-weight: 700; box-shadow: 0 3px 12px rgba(0,0,0,0.3); }
-.snaptess-panel-status { color: #dce5e8; font-size: 11px; font-weight: 700; }
-.snaptess-menu-heading { color: #9baeb6; font-size: 10px; font-weight: 700; }
+/* Panel menu labels take the Shell menu text color, readable in light and dark styles,
+   instead of the dimmed color the theme gives non-reactive (insensitive) items. */
+.snaptess-panel-status { font-size: 11px; font-weight: 700; }
+.snaptess-menu-heading { font-size: 10px; font-weight: 700; }
+.popup-menu-item.snaptess-panel-status:insensitive, .popup-menu-item.snaptess-menu-heading:insensitive { color: inherit; }
 .snaptess-window-actions, .snaptess-window-action-handle { background-color: rgba(27,36,45,0.96); border: 1px solid #7893a3; color: #edf5f9; box-shadow: 0 3px 10px rgba(0,0,0,0.35); }
 .snaptess-window-actions { border-radius: 10px; padding: 7px 3px; spacing: 3px; }
 .snaptess-window-actions.horizontal { padding: 3px 7px; }
@@ -68,6 +71,23 @@
 .snaptess-quick-presets { spacing: 5px; }
 .snaptess-quick-hidden-note { color: #91a5a9; font-size: 10px; padding: 3px 9px 6px; }
 .snaptess-studio { background-color: #171e26; border: 1px solid #35454c; border-radius: 24px; padding: 22px; color: #ecf4f2; }
+/* Studio and Change layout stay dark under every Shell color scheme: their footer buttons use the dark Shell button colors. */
+.snaptess-studio .modal-dialog-button-box .modal-dialog-button,
+.snaptess-layout-switcher .modal-dialog-button-box .modal-dialog-button { color: #ffffff; background-color: rgba(255,255,255,0.1); }
+.snaptess-studio .modal-dialog-button-box .modal-dialog-button:hover,
+.snaptess-layout-switcher .modal-dialog-button-box .modal-dialog-button:hover { color: #ffffff; background-color: rgba(255,255,255,0.13); }
+.snaptess-studio .modal-dialog-button-box .modal-dialog-button:active,
+.snaptess-layout-switcher .modal-dialog-button-box .modal-dialog-button:active { color: #ffffff; background-color: rgba(255,255,255,0.16); }
+.snaptess-studio .modal-dialog-button-box .modal-dialog-button:active:hover,
+.snaptess-layout-switcher .modal-dialog-button-box .modal-dialog-button:active:hover { background-color: rgba(255,255,255,0.19); }
+.snaptess-studio .modal-dialog-button-box .modal-dialog-button:focus,
+.snaptess-layout-switcher .modal-dialog-button-box .modal-dialog-button:focus { color: #ffffff; box-shadow: inset 0 0 0 2px st-transparentize(st-mix(-st-accent-color, #ffffff, 60%), 0.2) !important; background-color: st-mix(st-mix(-st-accent-color, #ffffff, 60%), rgba(255,255,255,0.1), 5%); }
+.snaptess-studio .modal-dialog-button-box .modal-dialog-button:focus:hover,
+.snaptess-layout-switcher .modal-dialog-button-box .modal-dialog-button:focus:hover { background-color: st-mix(st-mix(-st-accent-color, #ffffff, 60%), rgba(255,255,255,0.13), 5%); }
+.snaptess-studio .modal-dialog-button-box .modal-dialog-button:active:focus,
+.snaptess-layout-switcher .modal-dialog-button-box .modal-dialog-button:active:focus { background-color: st-mix(st-mix(-st-accent-color, #ffffff, 60%), rgba(255,255,255,0.16), 5%); }
+.snaptess-studio .modal-dialog-button-box .modal-dialog-button:insensitive,
+.snaptess-layout-switcher .modal-dialog-button-box .modal-dialog-button:insensitive { color: rgba(255,255,255,0.5); background-color: rgba(255,255,255,0.1); }
 .snaptess-header { spacing: 18px; margin-bottom: 14px; }
 .snaptess-history-controls { spacing: 7px; }
 .snaptess-context-controls { spacing: 7px; }
@@ -164,8 +184,10 @@
 
 .snaptess-library { spacing: 8px; padding: 12px; }
 .snaptess-app-catalog { spacing: 8px; }
-.snaptess-app-search { background-color: #202d35; border: 1px solid #526570; border-radius: 10px; padding: 9px 12px; color: #ecf4f2; }
-.snaptess-app-search:focus { border-color: #8ce8c3; }
+.snaptess-app-search { background-color: #202d35; border: 1px solid #526570; border-radius: 10px; padding: 9px 12px; color: #ecf4f2; selected-color: #ffffff; }
+.snaptess-app-search:hover { background-color: #202d35; color: #ecf4f2; }
+.snaptess-app-search:focus { background-color: #202d35; border-color: #8ce8c3; color: #ecf4f2; }
+.snaptess-app-search StLabel.hint-text { color: rgba(255,255,255,0.7); }
 .snaptess-new-slot.empty:hover, .snaptess-new-slot.empty:focus { background-color: #23403d; border-color: #8ce8c3; }
 .snaptess-library-row { background-color: #26343e; border: 1px solid #435761; border-radius: 10px; padding: 14px; text-align: left; }
 .snaptess-library-row:hover, .snaptess-library-row:focus { background-color: #314d4b; border-color: #8ce8c3; }
