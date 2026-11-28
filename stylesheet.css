@@ -213,3 +213,6 @@
 .snaptess-custom-entry { background-color: #202b34; color: #edf5f2; border: 1px solid #435761; }
 .snaptess-custom-entry:focus { border-color: #73cfa8; }
 .snaptess-custom-entry.fixed { color: #91a5a9; background-color: #171e26; border-color: #303e45; }
+/* Keyboard focus on the active or selected element: keep its selection color and add a white ring. */
+.snaptess-quick-row.active:focus, .snaptess-chip.selected:focus, .snaptess-saved-row.selected:focus { border-color: #ffffff; background-color: #30524a; }
+.snaptess-slot.selected:focus { border-color: #ffffff; background-color: #5e454b; }
