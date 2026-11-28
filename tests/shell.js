@@ -14,6 +14,25 @@ const assert = (condition, message) => {
 };
 const pause = () => Scripting.sleep(400);
 const geometry = w => { const r=w.get_frame_rect(); return [r.x,r.y,r.width,r.height].join(','); };
+async function pickPixel(x,y) {
+    const result=await new Shell.Screenshot().pick_color(Math.round(x),Math.round(y));
+    const color=[result].flat().find(value=>typeof value?.to_string==='function');
+    return [1,3,5].map(i=>parseInt(color.to_string().slice(i,i+2),16));
+}
+// Reads the middle of the left stroke, made opaque for the read so the
+// pixel is the painted color itself rather than a blend with the desktop.
+async function paintedOutline(border) {
+    const opacity=border.opacity;
+    border.remove_all_transitions();
+    border.opacity=255; await Scripting.sleep(100);
+    const pixel=await pickPixel(border.x+border.haloWidth+border.bandWidth+border.strokeWidth/2,
+        border.y+border.height/2);
+    border.opacity=opacity;
+    return {
+        near: color=>[1,3,5].every((i,c)=>Math.abs(parseInt(color.slice(i,i+2),16)-pixel[c])<=16),
+        toString: ()=>`#${pixel.map(v=>v.toString(16).padStart(2,'0')).join('')}`,
+    };
+}
 async function waitRuntime(loader) {
     for (let i=0;i<30 && !loader.runtime;i++) await Scripting.sleep(100);
     return loader.runtime;
@@ -216,6 +235,9 @@ export async function run() {
         'custom outline preserves independently measured corners');
     assert(Math.abs(app.border.x-(restored.x-16))<=1,
         'halo adds an outside outset without shifting the window');
+    await Scripting.sleep(300);
+    const painted=await paintedOutline(app.border);
+    assert(painted.near('#ff8800'), `custom outline color is painted on screen: ${painted}`);
     if (GLib.getenv('SNAPTESS_APPEARANCE_SCREENSHOT')) {
         const stream=Gio.File.new_for_path(GLib.getenv('SNAPTESS_APPEARANCE_SCREENSHOT'))
             .replace(null,false,Gio.FileCreateFlags.NONE,null);
@@ -224,6 +246,23 @@ export async function run() {
         stream.close(null);
     }
     for (const key of ['border-custom-color','border-color','border-width','border-style']) app.settings.reset(key);
+    // Without a custom color the outline follows the accent computed by the Shell.
+    // The accent switch is a theme change, which would remeasure the corners
+    // this test has pinned: keep them for the assertions that follow.
+    const invalidateRadius=app.invalidateWindowRadius;
+    app.invalidateWindowRadius=()=>{};
+    const desktop=new Gio.Settings({schema_id:'org.gnome.desktop.interface'});
+    desktop.set_string('accent-color','green');
+    await Scripting.sleep(600);
+    app.updateBorder(); await Scripting.sleep(300);
+    const shellAccent=St.ThemeContext.get_for_stage(global.stage).get_accent_color()[0];
+    const accentHex=`#${[shellAccent.red,shellAccent.green,shellAccent.blue].map(v=>v.toString(16).padStart(2,'0')).join('')}`;
+    const accentStroke=app.border.strokeColor, accentPainted=await paintedOutline(app.border);
+    desktop.reset('accent-color');
+    await Scripting.sleep(300);
+    app.invalidateWindowRadius=invalidateRadius;
+    assert(accentStroke===accentHex && accentPainted.near(accentHex),
+        `GNOME accent outline color ${accentHex} is painted on screen: ${accentPainted} (stroke ${accentStroke})`);
     app.settings.set_string('animation-speed','custom'); app.settings.set_int('animation-duration',320);
     app.settings.set_string('animation-curve','linear');
     assert(app.visualDuration()===320 && app.visualDuration(210)===480 && app.visualMode()===Clutter.AnimationMode.LINEAR,
