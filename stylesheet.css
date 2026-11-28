@@ -66,10 +66,6 @@
 .snaptess-quick-row-effects { color: #c1d7d2; font-size: 7.5pt; }
 .snaptess-quick-active { color: #aaf0cb; font-size: 6.75pt; font-weight: 800; padding: 18px 3px 0; }
 .snaptess-quick-arrow { color: #a2b8b9; padding: 18px 4px 0; }
-.snaptess-quick-expand { color: #b9d1d0; font-size: 8.25pt; border-radius: 8px; padding: 9px; }
-.snaptess-quick-expand:hover, .snaptess-quick-expand:focus { background-color: #30443f; color: white; }
-.snaptess-quick-presets { spacing: 5px; }
-.snaptess-quick-hidden-note { color: #91a5a9; font-size: 7.5pt; padding: 3px 9px 6px; }
 .snaptess-studio { background-color: #171e26; border: 1px solid #35454c; border-radius: 24px; padding: 22px; color: #ecf4f2; }
 /* Studio and Change layout stay dark under every Shell color scheme: their footer buttons use the dark Shell button colors. */
 .snaptess-studio .modal-dialog-button-box .modal-dialog-button,
@@ -100,7 +96,6 @@
 .snaptess-toolbar { spacing: 7px; margin-bottom: 10px; }
 .snaptess-saved-section { spacing: 4px; margin-bottom: 5px; }
 .snaptess-saved-header { spacing: 8px; margin-bottom: 5px; }
-.snaptess-saved-title { color: #8ce8c3; font-size: 7.5pt; font-weight: 800; letter-spacing: 2px; padding-top: 9px; padding-right: 7px; }
 .snaptess-saved-name-row, .snaptess-saved-actions { spacing: 7px; }
 .snaptess-saved-name-row, .snaptess-saved-actions { margin-bottom: 7px; }
 .snaptess-saved-rename { spacing: 5px; margin-bottom: 7px; }
@@ -148,7 +143,6 @@
 .snaptess-save-action { spacing: 6px; }
 .snaptess-layout-toolbar { spacing: 10px; }
 .snaptess-current-layout { color: #8ce3c1; font-size: 9.75pt; font-weight: bold; }
-.snaptess-mode-controls { spacing: 8px; margin-right: 8px; }
 .snaptess-header .snaptess-chip:insensitive { color: #667980; background-color: #1a232b; }
 .snaptess-slot-content.dense { spacing: 5px; }
 .snaptess-slot-content.dense .snaptess-slot-number { font-size: 7.5pt; }
