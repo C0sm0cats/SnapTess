@@ -26,8 +26,19 @@ function setAppRule(settings, key, ids, enabled) {
 
 const HANDLE_POSITIONS = [['left', 'Left'], ['right', 'Right'], ['top', 'Top'], ['bottom', 'Bottom']];
 
+// Unpacking these dictionaries for every application made the window take
+// seconds to open, so each one is read once per settings change.
+const appMapCache = new WeakMap();
+
 function appMap(settings, key) {
-    return settings.get_value(key).deepUnpack();
+    let cache = appMapCache.get(settings);
+    if (!cache) {
+        cache = new Map();
+        appMapCache.set(settings, cache);
+        settings.connect('changed', (_settings, changed) => cache.delete(changed));
+    }
+    if (!cache.has(key)) cache.set(key, settings.get_value(key).deepUnpack());
+    return {...cache.get(key)};
 }
 
 // Replace every alias of an app with one canonical entry, or remove it.
@@ -315,10 +326,11 @@ export default class SnapTessPreferences extends ExtensionPreferences {
             return id && (info.should_show() ||
                 appAliases(id, info.get_startup_wm_class?.()).some(alias => selected.has(alias)));
         });
-        appInfos.sort((a, b) => {
-            const chosen = info => isConfigured(appAliases(info.get_id(), info.get_startup_wm_class?.()));
-            return Number(chosen(b)) - Number(chosen(a)) || a.get_display_name().localeCompare(b.get_display_name());
-        });
+        // Rank each application once: the comparator runs n log n times.
+        const chosen = new Map(appInfos.map(info =>
+            [info, isConfigured(appAliases(info.get_id(), info.get_startup_wm_class?.()))]));
+        appInfos.sort((a, b) =>
+            Number(chosen.get(b)) - Number(chosen.get(a)) || a.get_display_name().localeCompare(b.get_display_name()));
         const listed = new Set();
         const searchable = [];
         const refreshGroups = () => {

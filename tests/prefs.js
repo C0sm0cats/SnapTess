@@ -23,7 +23,33 @@ const appId = appInfo.get_id(), legacyId = appId.slice(0, -8);
 const startupAlias = appInfo.get_startup_wm_class?.();
 settings.set_strv('scaled-apps', [legacyId, appId, ...(startupAlias ? [startupAlias] : []), 'custom-test.window']);
 const window = new Adw.PreferencesWindow();
-prefs.fillPreferencesWindow(window);
+{
+    // Opening used to take ~10 s with 300 applications: the sort comparator
+    // ranked both apps on every comparison and each rank unpacked both handle
+    // dictionaries. Count the work instead of timing it.
+    const appCount = Gio.AppInfo.get_all().length;
+    const getValue = Gio.Settings.prototype.get_value;
+    const wmClass = Gio.DesktopAppInfo.prototype.get_startup_wm_class;
+    let mapReads = 0, wmClassReads = 0;
+    Gio.Settings.prototype.get_value = function (key) {
+        if (key === 'window-action-positions' || key === 'window-action-colors') mapReads++;
+        return getValue.call(this, key);
+    };
+    Gio.DesktopAppInfo.prototype.get_startup_wm_class = function () {
+        wmClassReads++;
+        return wmClass.call(this);
+    };
+    try {
+        prefs.fillPreferencesWindow(window);
+    } finally {
+        Gio.Settings.prototype.get_value = getValue;
+        Gio.DesktopAppInfo.prototype.get_startup_wm_class = wmClass;
+    }
+    if (mapReads > 2)
+        throw new Error(`Opening preferences read the handle rule dictionaries ${mapReads} times for ${appCount} apps`);
+    if (wmClassReads > 3 * appCount)
+        throw new Error(`Opening preferences ranked ${appCount} apps with ${wmClassReads} alias lookups`);
+}
 if (window.title !== 'SnapTess Preferences') throw new Error('Preferences window identity is missing');
 const entries = [], apps = [], groups = [], rows = [], spins = [], previews = [], resetButtons = [], shortcutLabels = [], recordButtons = [], editButtons = [];
 function visit(widget) {
