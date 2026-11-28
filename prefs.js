@@ -351,8 +351,50 @@ export default class SnapTessPreferences extends ExtensionPreferences {
             const configuredCount = searchable.filter(item => item.configured).length;
             configuredGroup.title = `Configured applications · ${configuredCount}`;
             availableGroup.title = `Other applications · ${searchable.length - configuredCount}`;
-            configuredGroup.visible = searchable.some(item => item.configured && item.row.visible);
-            availableGroup.visible = searchable.some(item => !item.configured && item.row.visible);
+            configuredGroup.visible = searchable.some(item => item.group === configuredGroup && item.row.visible);
+            availableGroup.visible = searchable.some(item => item.group === availableGroup && item.row.visible);
+        };
+        // Rows of each group in display order: installed apps by name, then saved app IDs.
+        const members = new Map([[configuredGroup, []], [availableGroup, []]]);
+        const sortsBefore = (a, b) => Number(a.custom) - Number(b.custom) || a.name.localeCompare(b.name);
+        const append = (item, group) => {
+            members.get(group).push(item);
+            group.add(item.row);
+            item.group = group;
+        };
+        const unplace = item => {
+            const list = members.get(item.group);
+            list.splice(list.indexOf(item), 1);
+            item.group.remove(item.row);
+            item.group = null;
+        };
+        // Preferences groups only append: re-add the rows that follow the new one.
+        const place = (item, group) => {
+            const list = members.get(group);
+            const index = list.findIndex(other => sortsBefore(item, other) < 0);
+            const after = index < 0 ? [] : list.splice(index);
+            for (const other of after) group.remove(other.row);
+            append(item, group);
+            for (const other of after) append(other, group);
+        };
+        const holdsFocus = row => {
+            const focus = window.get_focus();
+            return !!focus && (focus === row || focus.is_ancestor(row));
+        };
+        // Move a row whose rule changed to its group, keeping keyboard focus on it.
+        const settle = item => {
+            const target = item.configured ? configuredGroup : availableGroup;
+            if (!item.group || item.group === target || item.moving) return;
+            const focused = holdsFocus(item.row);
+            item.moving = true;
+            try {
+                unplace(item);
+                place(item, target);
+            } finally {
+                item.moving = false;
+            }
+            if (focused) item.row.grab_focus();
+            refreshGroups();
         };
         const addApp = (id, name, icon = null, custom = false, startupWmClass = null) => {
             const ids = custom ? [id] : appAliases(id, startupWmClass);
@@ -365,17 +407,20 @@ export default class SnapTessPreferences extends ExtensionPreferences {
                 tooltip_text: `Remove ${name} configuration`});
             removeButton.add_css_class('flat');
             row.add_suffix(removeButton);
+            // While the row is open or holds the keyboard focus, the counts
+            // follow at once but the row stays put; it moves once collapsed,
+            // left, or when the search changes.
             const ruleChanged = () => {
                 if (clearing) return;
-                const configured = isConfigured(ids);
-                if (configured !== item.configured) {
-                    (item.configured ? configuredGroup : availableGroup).remove(row);
-                    (configured ? configuredGroup : availableGroup).add(row);
-                    item.configured = configured;
-                }
-                removeButton.visible = configured;
+                item.configured = isConfigured(ids);
+                removeButton.visible = item.configured;
+                if (!row.expanded && !holdsFocus(row)) settle(item);
                 refreshGroups();
             };
+            row.connect('notify::expanded', () => { if (!row.expanded) settle(item); });
+            const focusController = new Gtk.EventControllerFocus();
+            focusController.connect('leave', () => { if (!row.expanded) settle(item); });
+            row.add_controller(focusController);
             for (const [key, title, subtitle] of [
                 ['excluded-apps', 'Always floating', 'Keep its windows outside the tiled grid'],
                 ['scaled-apps', 'Allow scale-to-fit', 'Fit constrained windows; XWayland clicks may be offset'],
@@ -422,7 +467,7 @@ export default class SnapTessPreferences extends ExtensionPreferences {
             colorRow.add_suffix(colorPicker); colorRow.add_suffix(colorSwitch);
             colorRow.activatable_widget = colorSwitch;
             row.add_row(colorRow);
-            item = {row, text: `${name} ${id}`.toLocaleLowerCase(), configured: isConfigured(ids)};
+            item = {row, name, custom, text: `${name} ${id}`.toLocaleLowerCase(), configured: isConfigured(ids)};
             removeButton.visible = item.configured;
             // Clear every rule of this app under all its identifiers, including
             // shipped defaults and rules copied from another computer.
@@ -462,8 +507,8 @@ export default class SnapTessPreferences extends ExtensionPreferences {
                             {...appMap(settings, key), ...Object.fromEntries(removed[key])}));
                     syncControls();
                     if (custom && !searchable.includes(item)) {
-                        configuredGroup.add(row);
                         item.configured = true;
+                        place(item, configuredGroup);
                         searchable.push(item);
                     }
                     ruleChanged();
@@ -471,19 +516,20 @@ export default class SnapTessPreferences extends ExtensionPreferences {
                 item.toast = toast;
                 window.add_toast(toast);
                 if (custom) {
-                    configuredGroup.remove(row);
+                    item.configured = false;
+                    unplace(item);
                     searchable.splice(searchable.indexOf(item), 1);
                     refreshGroups();
                     return;
                 }
                 ruleChanged();
             });
-            (item.configured ? configuredGroup : availableGroup).add(row);
+            append(item, item.configured ? configuredGroup : availableGroup);
             searchable.push(item);
         };
         for (const info of appInfos) addApp(info.get_id(), info.get_display_name(), info.get_icon(),
             false, info.get_startup_wm_class?.());
-        for (const id of selected) if (!listed.has(normalizeAppId(id))) {
+        for (const id of [...selected].sort((a, b) => a.localeCompare(b))) if (!listed.has(normalizeAppId(id))) {
             listed.add(normalizeAppId(id));
             addApp(id, id, null, true);
         }
@@ -491,6 +537,7 @@ export default class SnapTessPreferences extends ExtensionPreferences {
         appGroup.add(noResults);
         refreshGroups();
         search.connect('notify::text', () => {
+            for (const item of searchable) settle(item);
             const query = search.text.trim().toLocaleLowerCase();
             let matches = 0;
             for (const item of searchable) {

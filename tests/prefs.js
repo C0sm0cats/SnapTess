@@ -381,6 +381,47 @@ if (!settings.get_strv('scaled-apps').includes('custom-test.window') || !belongs
     throw new Error('Undo did not restore an uninstalled saved app ID');
 if (!/· \d+$/.test(configuredGroup.title)) throw new Error('Application counts were not refreshed');
 for (const key of ['excluded-apps', 'scaled-apps', 'window-action-positions', 'window-action-colors']) settings.reset(key);
+{
+    // An open row whose rule changes stays in view: the counts follow at once,
+    // the row moves when collapsed or when the search changes, and lands at
+    // its alphabetical place.
+    const rowsIn = group => {
+        const found = [];
+        const walk = widget => {
+            if (widget instanceof Adw.ExpanderRow) found.push(widget);
+            else for (let child = widget.get_first_child(); child; child = child.get_next_sibling()) walk(child);
+        };
+        walk(group);
+        return found.filter(row => !row.subtitle.includes('Saved app ID'));
+    };
+    const alphabetical = group => rowsIn(group).every((row, i, all) => !i || all[i - 1].title.localeCompare(row.title) <= 0);
+    const count = group => Number(group.title.match(/· (\d+)$/)[1]);
+    if (!belongsTo(appRow, availableGroup)) throw new Error('Rule move test needs an unconfigured application');
+    const configuredBefore = count(configuredGroup);
+    appRow.expanded = true;
+    floating.active = true;
+    if (!belongsTo(appRow, availableGroup) || count(configuredGroup) !== configuredBefore + 1)
+        throw new Error('Enabling a rule moved the open row away or left the counts stale');
+    appRow.expanded = false;
+    if (!belongsTo(appRow, configuredGroup) || !alphabetical(configuredGroup))
+        throw new Error('A collapsed configured row did not move to its alphabetical place');
+    appRow.expanded = true;
+    removeApp.emit('clicked');
+    if (!belongsTo(appRow, configuredGroup) || count(configuredGroup) !== configuredBefore)
+        throw new Error('Removing a rule moved the open row away or left the counts stale');
+    appRow.expanded = false;
+    if (!belongsTo(appRow, availableGroup) || !alphabetical(availableGroup))
+        throw new Error('A removed application did not return to its alphabetical place');
+    appRow.expanded = true;
+    floating.active = true;
+    search.text = appInfo.get_display_name();
+    if (!belongsTo(appRow, configuredGroup)) throw new Error('A search change did not regroup the edited row');
+    search.text = '';
+    floating.active = false;
+    appRow.expanded = false;
+    if (!belongsTo(appRow, availableGroup) || !alphabetical(availableGroup))
+        throw new Error('Clearing the last rule did not return the row to its place');
+}
 search.text = 'not-an-installed-app';
 if (appRow.visible) throw new Error('Application search did not filter rows');
 search.text = appInfo.get_display_name();
