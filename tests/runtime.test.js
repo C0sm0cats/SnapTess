@@ -710,6 +710,21 @@ test('a window sent to another workspace joins its active Space', () => {
     assert.deepEqual(calls, [true]);
 });
 
+test('a parked window recalled from the dock joins the active Space', () => {
+    const h = harness(), calls = [];
+    h.app.schedule = compact => calls.push(compact);
+    h.app.groups = new Map();
+    h.app.activeSpace = () => 1;
+    h.record.space = 0; h.record.parked = true; h.record.spaces = new Set([0, 2]);
+    // The dock and Alt+Tab only unminimize the parked window.
+    h.w.minimized = false;
+    h.notifyWindow('notify::minimized');
+    assert.equal(h.record.parked, false);
+    assert.equal(h.record.space, 1);
+    assert.ok(h.record.spaces.has(1));
+    assert.equal(calls.length, 1);
+});
+
 test('closing a window with a live actor disconnects every actor handler once', () => {
     const h = harness();
     h.app.schedule = () => {};
