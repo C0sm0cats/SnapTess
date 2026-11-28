@@ -542,6 +542,56 @@ if (settings.get_strv('toggle').length !== 0)
     settings.reset('studio');
     delete window.add_toast;
 }
+{
+    // The page title names the version that runs and a "Version status" group
+    // says when it is not the installed one, or when SnapTess is stopped.
+    const readRoot = name => new TextDecoder().decode(root.get_child(name).load_contents(null)[1]);
+    const releaseVersion = JSON.parse(readRoot('package.json')).version;
+    const {loaderVersionFromSource} = await import('../lib/version-notice.js');
+    const loaderVersion = loaderVersionFromSource(readRoot('extension.js'));
+    const statusDir = GLib.build_filenamev([GLib.get_user_runtime_dir(), 'snaptess']);
+    const statusFile = Gio.File.new_for_path(GLib.build_filenamev([statusDir, 'runtime-status.json']));
+    let savedStatus = null;
+    try { savedStatus = statusFile.load_contents(null)[1]; } catch { /* no status yet */ }
+    GLib.mkdir_with_parents(statusDir, 0o700);
+    const readPage = status => {
+        statusFile.replace_contents(new TextEncoder().encode(JSON.stringify(status)), null, false,
+            Gio.FileCreateFlags.REPLACE_DESTINATION, null);
+        const other = new Adw.PreferencesWindow();
+        try {
+            prefs.fillPreferencesWindow(other);
+            const found = [];
+            const walk = widget => {
+                if (widget instanceof Adw.PreferencesPage || widget instanceof Adw.PreferencesGroup) found.push(widget);
+                for (let child = widget.get_first_child(); child; child = child.get_next_sibling()) walk(child);
+            };
+            walk(other);
+            return {page: found.find(item => item instanceof Adw.PreferencesPage)?.title,
+                notice: found.find(item => item instanceof Adw.PreferencesGroup && item.title === 'Version status')?.description ?? null};
+        } finally {
+            other.destroy();
+        }
+    };
+    const runningUri = root.get_child('metadata.json').get_uri();
+    try {
+        // The loader deletes its runtime copy on disable; the status it leaves
+        // behind must read as a stopped SnapTess.
+        const stopped = readPage({loader_version: loaderVersion, release_version: releaseVersion,
+            runtime_uri: root.get_child('missing-runtime-copy.js').get_uri()});
+        if (stopped.page !== `SnapTess v${releaseVersion}` || stopped.notice !== 'SnapTess is not running.')
+            throw new Error(`A stale runtime status was not reported as stopped: ${JSON.stringify(stopped)}`);
+        const current = readPage({loader_version: loaderVersion, release_version: releaseVersion, runtime_uri: runningUri});
+        if (current.page !== `SnapTess v${releaseVersion}` || current.notice !== null)
+            throw new Error(`The running installed version showed a notice: ${JSON.stringify(current)}`);
+        const older = readPage({loader_version: loaderVersion, release_version: '0.2.60', runtime_uri: runningUri});
+        if (older.page !== 'SnapTess v0.2.60' ||
+            older.notice !== `v${releaseVersion} is installed. Run ./scripts/install.sh or log out and back in to activate it.`)
+            throw new Error(`An older running version was not reported: ${JSON.stringify(older)}`);
+    } finally {
+        if (savedStatus) statusFile.replace_contents(savedStatus, null, false, Gio.FileCreateFlags.REPLACE_DESTINATION, null);
+        else statusFile.delete(null);
+    }
+}
 // Closing Preferences mid-capture gives SnapTess its shortcuts back.
 recordButtons[0].emit('clicked');
 window.emit('close-request');
