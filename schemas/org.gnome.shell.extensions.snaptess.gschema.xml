@@ -22,6 +22,8 @@
 </key>
 <key name="preview-state" type="s"><default>'{}'</default><summary>Current tiling preview state shared with preferences</summary>
 </key>
+<key name="shortcut-recording" type="b"><default>false</default><summary>Preferences is recording a shortcut</summary>
+<description>SnapTess suspends its shortcuts while this is true and resets it when the focus leaves the recording window.</description></key>
 <key name="saved-layouts" type="s"><default>'[]'</default><summary>Named layouts restored on demand</summary>
 </key>
 <key name="excluded-apps" type="as"><default>[]</default><summary>Application IDs excluded from tiling</summary>

@@ -413,6 +413,41 @@ recorder.emit('key-pressed', Gdk.KEY_BackSpace, 0, 0);
 if (settings.get_strv('toggle').length !== 0)
     throw new Error('Shortcut capture could not disable a binding');
 {
+    // The stop icon stops capture; Tab and leaving the button stop it too, and
+    // SnapTess shortcuts stay suspended only while a capture runs.
+    settings.set_strv('toggle', ['<Control><Alt>t']);
+    const button = recordButtons[0], tooltip = button.tooltip_text;
+    const focus = Array.from({length: controllers.get_n_items()}, (_, i) => controllers.get_item(i))
+        .find(controller => controller instanceof Gtk.EventControllerFocus);
+    button.emit('clicked');
+    button.emit('clicked');
+    if (button.icon_name !== 'media-record-symbolic')
+        throw new Error('Clicking the stop icon did not stop shortcut capture');
+    recorder.emit('key-pressed', Gdk.KEY_q, 0, Gdk.ModifierType.CONTROL_MASK);
+    if (settings.get_strv('toggle')[0] !== '<Control><Alt>t')
+        throw new Error('A shortcut was recorded after the stop icon was clicked');
+    if (button.tooltip_text !== tooltip || settings.get_boolean('shortcut-recording'))
+        throw new Error('Stopping shortcut capture did not restore the recorder');
+    button.emit('clicked');
+    if (button.tooltip_text !== 'Stop recording' || !settings.get_boolean('shortcut-recording'))
+        throw new Error('Shortcut capture did not offer to stop or did not suspend SnapTess shortcuts');
+    if (recorder.emit('key-pressed', Gdk.KEY_Tab, 0, 0) ||
+        recorder.emit('key-pressed', Gdk.KEY_ISO_Left_Tab, 0, Gdk.ModifierType.SHIFT_MASK))
+        throw new Error('Tab was swallowed by the shortcut recorder');
+    if (!focus) throw new Error('Shortcut recorder does not follow the keyboard focus');
+    focus.emit('leave');
+    if (button.icon_name !== 'media-record-symbolic' || settings.get_boolean('shortcut-recording'))
+        throw new Error('Leaving the recorder did not stop shortcut capture');
+    recorder.emit('key-pressed', Gdk.KEY_f, 0, Gdk.ModifierType.CONTROL_MASK);
+    if (settings.get_strv('toggle')[0] !== '<Control><Alt>t')
+        throw new Error('A shortcut was recorded after the focus left the recorder');
+    button.emit('clicked');
+    recorder.emit('key-pressed', Gdk.KEY_t, 0, Gdk.ModifierType.CONTROL_MASK);
+    if (settings.get_boolean('shortcut-recording'))
+        throw new Error('SnapTess shortcuts stayed suspended after a recorded shortcut');
+    settings.reset('toggle');
+}
+{
     // A combination another action already uses would leave this one dead:
     // refuse it, typed or recorded, and name the action that keeps it.
     const toasts = [];
@@ -447,5 +482,10 @@ if (settings.get_strv('toggle').length !== 0)
     for (const key of ['studio', 'swap']) settings.reset(key);
     delete window.add_toast;
 }
+// Closing Preferences mid-capture gives SnapTess its shortcuts back.
+recordButtons[0].emit('clicked');
+window.emit('close-request');
+if (settings.get_boolean('shortcut-recording'))
+    throw new Error('Closing Preferences while recording left SnapTess shortcuts suspended');
 window.destroy();
 print('SNAPTESS_PREFS_TESTS_PASSED');

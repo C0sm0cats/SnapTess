@@ -503,6 +503,10 @@ export default class SnapTessPreferences extends ExtensionPreferences {
             return valid && Gdk.keyval_to_lower(otherKeyval) === Gdk.keyval_to_lower(keyval) &&
                 (otherMods & mask) === (mods & mask);
         };
+        const setShortcutRecording = value => {
+            settings.set_boolean('shortcut-recording', value);
+            Gio.Settings.sync();
+        };
         const shortcutOwner = (key, keyval, mods) => shortcutActions.find(([otherKey]) => otherKey !== key &&
             settings.get_strv(otherKey).some(accelerator => sameShortcut(keyval, mods, accelerator)))?.[1];
         for (const [key, title] of shortcutActions) {
@@ -544,11 +548,18 @@ export default class SnapTessPreferences extends ExtensionPreferences {
                 shortcutLabel.accelerator = settings.get_strv(key)[0] ?? '';
             });
             window.connect('destroy', () => settings.disconnect(changed));
+            // While recording, SnapTess suspends its own shortcuts so the
+            // combination reaches the recorder instead of running its action.
             let recording = false;
+            const recordTooltip = recordButton.tooltip_text;
             const finishRecording = () => {
+                if (recording) setShortcutRecording(false);
                 recording = false;
                 recordButton.icon_name = 'media-record-symbolic';
+                recordButton.tooltip_text = recordTooltip;
             };
+            window.connect('close-request', () => { finishRecording(); return false; });
+            window.connect('destroy', finishRecording);
             popover.connect('notify::visible', () => {
                 if (!popover.visible) return;
                 finishRecording();
@@ -557,14 +568,21 @@ export default class SnapTessPreferences extends ExtensionPreferences {
                 entry.grab_focus();
             });
             recordButton.connect('clicked', () => {
-                recording = true;
-                recordButton.icon_name = 'media-playback-stop-symbolic';
+                if (recording) { finishRecording(); return; }
                 recordButton.grab_focus();
+                recording = true;
+                setShortcutRecording(true);
+                recordButton.icon_name = 'media-playback-stop-symbolic';
+                recordButton.tooltip_text = 'Stop recording';
                 window.add_toast(new Adw.Toast({title: 'Press a shortcut · Esc cancels · Backspace disables'}));
             });
+            const focusController = new Gtk.EventControllerFocus();
+            focusController.connect('leave', finishRecording);
+            recordButton.add_controller(focusController);
             const controller = new Gtk.EventControllerKey();
             controller.connect('key-pressed', (_controller, keyval, _keycode, state) => {
                 if (!recording) return false;
+                if (keyval === Gdk.KEY_Tab || keyval === Gdk.KEY_ISO_Left_Tab) return false;
                 if (keyval === Gdk.KEY_Escape) { finishRecording(); return true; }
                 if (keyval === Gdk.KEY_BackSpace || keyval === Gdk.KEY_Delete) {
                     applyShortcut(''); finishRecording(); return true;

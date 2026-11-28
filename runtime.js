@@ -60,6 +60,9 @@ export default class SnapTess extends Extension {
         }
         this.settings = this.getSettings();
         this.settings.reset('preview-state');
+        // A Preferences window that closed mid-recording cannot leave the shortcuts off.
+        this.settings.reset('shortcut-recording');
+        this.shortcutsSuspended = false;
         this.running = false;
         this.records = new Map();
         this.groups = new Map();
@@ -210,8 +213,7 @@ export default class SnapTess extends Extension {
             'space-2': () => this.switchSpace(1, this.keyboardMonitor()),
             'space-3': () => this.switchSpace(2, this.keyboardMonitor()),
         };
-        for (const [name, callback] of Object.entries(this.bindings))
-            Main.wm.addKeybinding(name, this.settings, Meta.KeyBindingFlags.NONE, Shell.ActionMode.NORMAL, callback);
+        this.addKeybindings();
         this.connect(global.display, 'window-created', (_d, w) => {
             this.track(w, true);
             for (const delay of [160, 500, 1200]) this.later(delay, () => {
@@ -271,8 +273,29 @@ export default class SnapTess extends Extension {
         return id;
     }
 
+    addKeybindings() {
+        for (const [name, callback] of Object.entries(this.bindings))
+            Main.wm.addKeybinding(name, this.settings, Meta.KeyBindingFlags.NONE, Shell.ActionMode.NORMAL, callback);
+    }
+
+    // Preferences records a shortcut: let the combination reach it instead of
+    // running the action. The focus leaving the recording window resumes them.
+    syncShortcutRecording() {
+        const recording = this.settings.get_boolean('shortcut-recording');
+        if (recording === this.shortcutsSuspended) return;
+        this.shortcutsSuspended = recording;
+        if (recording) {
+            this.recordingWindow = global.display.focus_window;
+            for (const name of Object.keys(this.bindings)) Main.wm.removeKeybinding(name);
+        } else {
+            this.recordingWindow = null;
+            this.addKeybindings();
+        }
+    }
+
     settingsChanged(key) {
         if (key === 'preview-state') return;
+        if (key === 'shortcut-recording') { this.syncShortcutRecording(); return; }
         if (key === 'active-border' || key.startsWith('border-')) { this.updateBorder(); return; }
         if (key === 'animations' || key.startsWith('animation-')) return;
         if (key === 'profiles') {
@@ -2910,6 +2933,8 @@ export default class SnapTess extends Extension {
         // display keeps that display as the shortcut target; any other
         // window focused afterwards ends it.
         const focused = global.display.focus_window;
+        if (this.shortcutsSuspended && focused !== this.recordingWindow)
+            this.settings.set_boolean('shortcut-recording', false);
         if (this.spaceTarget && focused) {
             if (this.spaceTarget.focus === undefined) this.spaceTarget.focus = focused;
             else if (this.spaceTarget.focus !== focused) this.spaceTarget = null;
@@ -3729,7 +3754,8 @@ export default class SnapTess extends Extension {
         this.setRunning(false);
         this.clearPinnedPlaceholders();
         this.exitSwap();
-        for (const name of Object.keys(this.bindings)) Main.wm.removeKeybinding(name);
+        if (!this.shortcutsSuspended) for (const name of Object.keys(this.bindings)) Main.wm.removeKeybinding(name);
+        this.shortcutsSuspended = false; this.recordingWindow = null;
         for (const id of this.sources) GLib.Source.remove(id);
         this.sources.clear();
         for (const [object, id] of this.connections) object.disconnect(id);
@@ -3760,6 +3786,7 @@ export default class SnapTess extends Extension {
         this.swapHints.clear();
         this.indicator.destroy();
         this.settings.reset('preview-state');
+        this.settings.reset('shortcut-recording');
         this.settings = null;
     }
 }

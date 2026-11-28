@@ -38,6 +38,8 @@ jobs:
         run: ./scripts/test-shell.sh tests/large-text-shell.js
       - name: Swap arrows and panel icon follow the Shell accent color
         run: ./scripts/test-shell.sh tests/accent-color-shell.js
+      - name: Recording a shortcut in Preferences suspends SnapTess shortcuts
+        run: ./scripts/test-shell.sh tests/shortcut-recorder-shell.js
       - name: Pinned tile cards stay readable on a light wallpaper
         run: ./scripts/test-shell.sh tests/pin-card-contrast-shell.js
       - name: Keyboard focus shows on the active or selected element
