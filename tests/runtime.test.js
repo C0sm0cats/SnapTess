@@ -2572,6 +2572,19 @@ test('stopping keeps a window shown when it was minimized only before tiling', (
     assert.equal(w.minimized, false);
 });
 
+test('starting parks a shared window whose Spaces exclude the active one', () => {
+    for (const [spaces, parked] of [[[1, 2], true], [[0, 2], false]]) {
+        const {app, w, record} = stopHarness();
+        app.indicator.add_style_class_name = () => {};
+        app.restoreTiles = () => {}; app.restoreWindowSharing = () => {};
+        app.activeSpace = () => 0;
+        app.running = false; record.space = spaces[0]; record.spaces = new Set(spaces);
+        app.setRunning(true);
+        assert.equal(record.parked, parked, `spaces ${spaces}`);
+        assert.equal(w.minimized, parked, `spaces ${spaces}`);
+    }
+});
+
 test('Reset keeps a user-minimized local window minimized while floating it', () => {
     const {app, w, record} = stopHarness();
     record.space = 1;
