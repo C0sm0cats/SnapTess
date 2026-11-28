@@ -49,6 +49,31 @@ export async function run() {
         await chord(key);
         assert(app.activeSpace(monitor) === space, `Ctrl+Alt+${space + 1} opens Space ${space + 1}`);
     }
+    const press = async key => {
+        keyboard.notify_keyval(GLib.get_monotonic_time(), key, Clutter.KeyState.PRESSED);
+        await Scripting.sleep(70);
+        keyboard.notify_keyval(GLib.get_monotonic_time(), key, Clutter.KeyState.RELEASED);
+        await pause();
+    };
+    const slots = () => app.groups.get(app.key(monitor)) ?? [];
+    w.activate(global.get_current_time()); await pause();
+    if (app.records.get(w).floating) { app.toggleFloating(); await pause(); }
+    const left = slots()[0];
+    assert(left && slots().filter(Boolean).length === 2, 'swap test starts with two tiled windows');
+    left.activate(global.get_current_time()); await pause();
+    const swapStep = async (keys, index, message) => {
+        app.toggleSwap(); await pause();
+        assert(app.swapMode, `${message}: Ctrl+Alt+S enters swap mode`);
+        for (const key of keys) await (key === Clutter.KEY_s ? chord(key) : press(key));
+        assert(!app.swapMode && slots().indexOf(left) === index, message);
+    };
+    app.toggleSwap(); await pause();
+    await press(Clutter.KEY_Right);
+    assert(app.swapMode && slots().indexOf(left) === 1, 'Right moves the window right in swap mode');
+    await press(Clutter.KEY_Escape);
+    assert(!app.swapMode && slots().indexOf(left) === 0, 'Escape cancels the swap');
+    await swapStep([Clutter.KEY_Right, Clutter.KEY_Return], 1, 'Enter keeps the swap');
+    await swapStep([Clutter.KEY_Left, Clutter.KEY_s], 0, 'Ctrl+Alt+S again keeps the swap');
     await chord(Clutter.KEY_q);
     assert(!app.running, 'Ctrl+Alt+Q stops tiling');
     await chord(Clutter.KEY_t);
