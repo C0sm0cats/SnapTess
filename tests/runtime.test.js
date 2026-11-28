@@ -1876,6 +1876,33 @@ test('moving to another slot commits the checkpoint captured before dragging', (
     assert.equal(tiles, 1);
 });
 
+test('dropping on another display inserts the window in that display active Space', () => {
+    const h = harness(); h.settleInitial();
+    const other = {}, moves = [];
+    h.w.move_to_monitor = monitor => moves.push(monitor);
+    h.app.key = monitor => 'k' + monitor;
+    h.app.activeSpace = monitor => monitor === 1 ? 2 : 0;
+    h.record.space = 0; h.record.spaces = new Set([0, 1]);
+    h.app.groups = new Map([['k0', [h.w]], ['k1', [other]]]);
+    h.app.preview = {hide() {}};
+    h.app.previewLabel = {hide() {}};
+    const checkpoint = {before: true};
+    h.app.drag = {window: h.w, monitor: 0, target: {monitor: 1, index: 0, window: other}, checkpoint, started: true};
+    const pushed = [];
+    h.app.pushCheckpoint = state => pushed.push(state);
+    h.app.tile = () => {};
+    h.app.grabEnd();
+    assert.deepEqual(moves, [1], 'the window is moved to the display it was dropped on');
+    const target = h.app.groups.get('k1');
+    assert.equal(target.length, 2);
+    assert.equal(target[0], h.w, 'the window is inserted at the aimed tile');
+    assert.equal(target[1], other, 'the window already there is kept, not swapped');
+    assert.equal(h.record.monitor, 1);
+    assert.equal(h.record.space, 2, 'the window joins the active Space of the target display');
+    assert.equal(h.record.spaces, null);
+    assert.deepEqual(pushed, [checkpoint]);
+});
+
 test('appearance changes update the border without rearranging windows', () => {
     const {app} = harness();
     let borders = 0, arrangements = 0;
