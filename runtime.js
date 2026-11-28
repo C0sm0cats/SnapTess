@@ -32,6 +32,9 @@ const SIZE_MISMATCH_STABLE_MS = 600;
 const RAPID_LAYOUT_WINDOW_MS = 5000;
 const RAPID_LAYOUT_SETTLE_MS = 6000;
 const LAUNCH_RELEASE_GRACE_MS = 5000;
+// The action handle opens its palette only after the pointer rests on it, so
+// a pointer passing over the window edge never leaves Close under it.
+const ACTION_HANDLE_HOVER_MS = 300;
 // A single-instance app with a window already open may never open another:
 // a pinned tile then shows its card as ready to click again, and an unpinned
 // tile, which waits longer, is released.
@@ -135,7 +138,8 @@ export default class SnapTess extends Extension {
             visible: false, ...actionHandleSize('left'),
             child: new St.Icon({icon_name: actionHandleIcon('left'), icon_size: 12})});
         this.actionPosition = 'left';
-        this.windowActionHandle.connect('enter-event', () => this.showWindowActions());
+        this.windowActionHandle.connect('enter-event', () => this.scheduleWindowActionsReveal());
+        this.windowActionHandle.connect('leave-event', () => this.cancelWindowActionsReveal());
         this.windowActionHandle.connect('clicked', () => this.showWindowActions());
         const actionButton = (name, icon, callback, style = '') => {
             const actor = new St.Button({style_class: `snaptess-window-action ${style}`.trim(),
@@ -2692,6 +2696,16 @@ export default class SnapTess extends Extension {
         if (w && w !== this.actionWindow && !this.windowActions.visible && !this.windowActionHandle.visible)
             this.queueWindowActions(w);
     }
+    scheduleWindowActionsReveal() {
+        this.cancelWindowActionsReveal();
+        this.actionsRevealTimer = this.later(ACTION_HANDLE_HOVER_MS, () => {
+            this.actionsRevealTimer = 0;
+            if (this.windowActionHandle.visible) this.showWindowActions();
+        });
+    }
+    cancelWindowActionsReveal() {
+        this.cancel(this.actionsRevealTimer); this.actionsRevealTimer = 0;
+    }
     scheduleWindowActionsHide(delay = 1600) {
         this.cancel(this.actionsTimer);
         this.actionsTimer = this.later(delay, () => {
@@ -2727,6 +2741,7 @@ export default class SnapTess extends Extension {
         });
     }
     hideWindowActions() {
+        this.cancelWindowActionsReveal();
         this.cancel(this.actionsShowTimer); this.actionsShowTimer = 0;
         this.pendingActionWindow = null;
         this.cancel(this.actionsTimer); this.actionsTimer = 0;
@@ -2831,6 +2846,7 @@ export default class SnapTess extends Extension {
             w.fullscreen) {
             this.hideWindowActions(); return;
         }
+        this.cancelWindowActionsReveal();
         const rect = this.windowActionsRect(w, record);
         this.actionWindow = w;
         this.windowActionHandle.remove_all_transitions();

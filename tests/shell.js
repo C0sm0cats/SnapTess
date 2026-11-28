@@ -397,6 +397,36 @@ export async function run() {
     app.scheduleWindowActionsHide(0); await Scripting.sleep(20);
     assert(!app.windowActions.visible && app.windowActionHandle.visible,
         'hidden window actions leave a hoverable edge handle');
+    {
+        // Real pointer motion: crossing the handle must not open the palette
+        // (Close would land under the pointer); resting on it does. A new
+        // virtual pointer starts in the hot corner, which opens the overview.
+        const desktop=new Gio.Settings({schema_id: 'org.gnome.desktop.interface'});
+        const hotCorners=desktop.get_boolean('enable-hot-corners');
+        desktop.set_boolean('enable-hot-corners', false); await Scripting.sleep(60);
+        const pointer=global.stage.context.get_backend().get_default_seat()
+            .create_virtual_device(Clutter.InputDeviceType.POINTER_DEVICE);
+        const moveTo=async (x, y) => {
+            pointer.notify_absolute_motion(GLib.get_monotonic_time(),x,y);
+            await Scripting.sleep(30);
+        };
+        const handleX=Math.round(app.windowActionHandle.x+app.windowActionHandle.width/2);
+        const handleY=Math.round(app.windowActionHandle.y+app.windowActionHandle.height/2);
+        const away=[handleX+240,handleY];
+        await moveTo(...away); await Scripting.sleep(60);
+        await moveTo(handleX,handleY); await Scripting.sleep(80);
+        const crossedOpen=app.windowActions.visible;
+        await moveTo(...away); await Scripting.sleep(400);
+        assert(!crossedOpen && !app.windowActions.visible && app.windowActionHandle.visible,
+            `passing the pointer over the edge handle keeps the palette closed (crossed=${crossedOpen}, ` +
+            `palette=${app.windowActions.visible}, handle=${app.windowActionHandle.visible} ${handleX},${handleY}, ` +
+            `overview=${Main.overview.visible}, pointer=${global.get_pointer()})`);
+        await moveTo(handleX,handleY); await Scripting.sleep(500);
+        assert(app.windowActions.visible && !app.windowActionHandle.visible,
+            `resting the pointer on the edge handle opens window actions (pointer=${global.get_pointer()})`);
+        await moveTo(...away);
+        desktop.set_boolean('enable-hot-corners', hotCorners);
+    }
     app.showWindowActions();
     assert(app.windowActions.visible && !app.windowActionHandle.visible,
         'hovering the edge handle restores window actions');
