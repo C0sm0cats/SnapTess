@@ -48,6 +48,8 @@ jobs:
         run: ./scripts/test-shell.sh tests/close-gaps-shell.js
       - name: Shared windows across Spaces and displays
         run: SNAPTESS_TWO_MONITORS=1 ./scripts/test-shell.sh tests/shared-spaces-shell.js
+      - name: Space shortcuts keep the display they empty
+        run: SNAPTESS_TWO_MONITORS=1 ./scripts/test-shell.sh tests/space-shortcuts-shell.js
       - name: Linked resizing with native windows and delayed clients
         run: ./scripts/test-shell.sh tests/linked-resize-shell.js
       - name: GNOME Shell 50 two-monitor integration test

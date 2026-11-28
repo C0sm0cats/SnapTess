@@ -31,7 +31,8 @@ function harness(options = {}) {
     };
     const workspace = {get_work_area_for_monitor: () => ({x: 0, y: 0, width: 800, height: 600})};
     const shellMain = {layoutManager: {monitors: [{}]}, overview: {visible: false}, notify() {}};
-    const shellDisplay = {is_grabbed: () => grabbed, get_current_monitor: () => monitor, focus_window: null};
+    const shellDisplay = {is_grabbed: () => grabbed, get_current_monitor: () => monitor, focus_window: null,
+        sort_windows_by_stacking: windows => [...windows]};
     const w = {
         fullscreen: false, flags: 0, minimized: false,
         get_frame_rect: () => ({...frame}),
@@ -2346,6 +2347,7 @@ function sharingHarness() {
     h.w.minimize = () => { h.w.minimized = true; };
     h.w.unminimize = () => { h.w.minimized = false; };
     h.w.get_stable_sequence = () => 42; h.w.get_pid = () => 1234;
+    h.w.activate = () => { h.shellDisplay.focus_window = h.w; };
     return h;
 }
 
@@ -3108,6 +3110,38 @@ test('Apply shows the tile of an app that opens from its first arrangement', () 
 });
 
 // Stop then Start, as an extension reload does, with the real tile().
+test('Space shortcuts keep the display a switch emptied when GNOME focuses another display', () => {
+    const h = sharingHarness(), {app} = h, display = h.shellDisplay;
+    h.shellMain.layoutManager.monitors = [{}, {}];
+    app.hideWindowActions = () => {}; app.queueWindowActions = () => {}; app.publishPreviewState = () => {};
+    app.records.clear();
+    const make = (name, monitor) => {
+        const win = {...h.w, name, minimized: false, get_monitor: () => monitor,
+            minimize() { win.minimized = true; }, unminimize() { win.minimized = false; },
+            activate() { display.focus_window = win; app.focusChanged(); }};
+        app.records.set(win, {space: 0});
+        return win;
+    };
+    const left = make('left', 0), right = make('right', 1), other = make('other', 0);
+    // GNOME focuses a window of display 1 once the focused window of display 2 is parked.
+    right.minimize = () => { right.minimized = true; display.focus_window = left; app.focusChanged(); };
+    right.activate();
+    assert.equal(app.keyboardMonitor(), 1);
+    app.switchSpace(1, app.keyboardMonitor());
+    assert.equal(right.minimized, true);
+    assert.equal(display.focus_window, left);
+    assert.equal(app.keyboardMonitor(), 1, 'the emptied display stays the shortcut target');
+    assert.equal(app.keyboardMonitor(), 1, 'asking again keeps it');
+    app.switchSpace(0, app.keyboardMonitor());
+    assert.equal(app.activeSpace(1), 0, 'the reverse shortcut returns display 2');
+    assert.equal(left.minimized, false, 'display 1 keeps its windows');
+    assert.equal(display.focus_window, right, 'the returning window takes the focus back');
+    assert.equal(app.keyboardMonitor(), 1);
+    app.switchSpace(1, app.keyboardMonitor());
+    other.activate();
+    assert.equal(app.keyboardMonitor(), 0, 'focusing another window makes its display the target');
+});
+
 function restartHarness() {
     const h = restoreHarness('master', []), {app} = h;
     app.switchItem = {setToggleState() {}};
@@ -3119,6 +3153,7 @@ function restartHarness() {
         const win = open(id, name);
         win.minimized = false;
         win.minimize = () => { win.minimized = true; }; win.unminimize = () => { win.minimized = false; };
+        win.activate = () => { h.shellDisplay.focus_window = win; };
         return win;
     };
     h.restart = () => { app.setRunning(false, true); app.setRunning(true, true); };

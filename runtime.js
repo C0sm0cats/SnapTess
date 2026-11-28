@@ -201,7 +201,9 @@ export default class SnapTess extends Extension {
             'focus-left': () => this.focusDirection('left'), 'focus-right': () => this.focusDirection('right'),
             'focus-up': () => this.focusDirection('up'), 'focus-down': () => this.focusDirection('down'),
             swap: () => this.toggleSwap(), undo: () => this.undo(), redo: () => this.redo(), stop: () => this.setRunning(false),
-            'space-1': () => this.switchSpace(0), 'space-2': () => this.switchSpace(1), 'space-3': () => this.switchSpace(2),
+            'space-1': () => this.switchSpace(0, this.keyboardMonitor()),
+            'space-2': () => this.switchSpace(1, this.keyboardMonitor()),
+            'space-3': () => this.switchSpace(2, this.keyboardMonitor()),
         };
         for (const [name, callback] of Object.entries(this.bindings))
             Main.wm.addKeybinding(name, this.settings, Meta.KeyBindingFlags.NONE, Shell.ActionMode.NORMAL, callback);
@@ -1442,6 +1444,18 @@ export default class SnapTess extends Extension {
     }
     area(monitor) { return global.workspace_manager.get_active_workspace().get_work_area_for_monitor(monitor); }
     currentMonitor() { return global.display.focus_window?.get_monitor() ?? global.display.get_current_monitor(); }
+    // The display the keyboard shortcuts act on. After a Space switch empties
+    // the focused display, GNOME moves the focus to a window of another
+    // display; that display is not the one the user is working on, so the
+    // shortcuts keep the emptied display until the user focuses another window.
+    keyboardMonitor() {
+        const target = this.spaceTarget, focus = global.display.focus_window;
+        if (target && target.monitor < Main.layoutManager.monitors.length &&
+            target.workspace === global.workspace_manager.get_active_workspace() &&
+            (!focus || focus === target.focus)) return target.monitor;
+        this.spaceTarget = null;
+        return this.currentMonitor();
+    }
 
     windows(monitor, space = this.activeSpace(monitor), includeMinimized = false) {
         const workspace = global.workspace_manager.get_active_workspace();
@@ -1480,7 +1494,7 @@ export default class SnapTess extends Extension {
     checkpoint() { this.pushCheckpoint(this.captureCheckpoint()); }
     arrangeAgain() {
         if (!this.running || this.resizeGrab) return;
-        const profile = this.profiles[this.profileKey(this.currentMonitor())];
+        const profile = this.profiles[this.profileKey(this.keyboardMonitor())];
         this.checkpoint();
         if (profile?.resize) {
             delete profile.resize;
@@ -2862,6 +2876,14 @@ export default class SnapTess extends Extension {
     }
 
     focusChanged() {
+        // The first window GNOME focuses after a Space switch empties a
+        // display keeps that display as the shortcut target; any other
+        // window focused afterwards ends it.
+        const focused = global.display.focus_window;
+        if (this.spaceTarget && focused) {
+            if (this.spaceTarget.focus === undefined) this.spaceTarget.focus = focused;
+            else if (this.spaceTarget.focus !== focused) this.spaceTarget = null;
+        }
         if (this.focusRadiusLater) global.compositor.get_laters().remove(this.focusRadiusLater);
         this.focusRadiusLater = 0;
         this.focusRadiusWindow = null;
@@ -3140,6 +3162,10 @@ export default class SnapTess extends Extension {
             if (this.windowInSpace(w, space) && r.parked) incoming.push(w);
         }
         const transition = this.createSpaceTransition(monitor, old, space, outgoing, incoming);
+        // Parking the focused window lets GNOME focus a window of another
+        // display; when the focus was on this display, keep it the target.
+        const focusHere = !global.display.focus_window || this.keyboardMonitor() === monitor;
+        if (focusHere) this.spaceTarget = {monitor, workspace, focus: undefined};
         this.busy = true;
         try {
             for (const [w, r] of this.records) {
@@ -3153,6 +3179,17 @@ export default class SnapTess extends Extension {
             this.spaces.get(workspace).set(monitor, space);
         } finally { this.busy = false; }
         this.tile(false);
+        if (focusHere) {
+            // Give the focus to the topmost window of the new Space, so that
+            // the focus stays on this display instead of on another one.
+            const visible = [...this.records.keys()].filter(w => w.get_monitor() === monitor &&
+                w.get_workspace() === workspace && !w.minimized && this.eligible(w));
+            const top = visible.length ? global.display.sort_windows_by_stacking(visible).at(-1) : null;
+            if (top) {
+                this.spaceTarget = null;
+                if (global.display.focus_window !== top) top.activate(global.get_current_time());
+            }
+        }
         this.updatePanelStatus();
         this.playSpaceTransition(transition);
     }
@@ -3501,7 +3538,7 @@ export default class SnapTess extends Extension {
     openLayoutSwitcher() {
         if (this.studio) return;
         if (this.layoutSwitcher) { this.layoutSwitcher.dialog.close(); return; }
-        const monitor = this.currentMonitor(), space = this.activeSpace(monitor);
+        const monitor = this.keyboardMonitor(), space = this.activeSpace(monitor);
         this.exitSwap(); this.hideGuides(); this.hideWindowActions(); this.clearPinnedPlaceholders();
         const switcher = new LayoutSwitcher(this, monitor, space);
         this.layoutSwitcher = switcher;
