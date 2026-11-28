@@ -35,6 +35,27 @@ test('split and merge preserve topology with exact integer boundaries and bounde
     assert.equal(splitCustomTile(tiles, 0, 'vertical'), null);
 });
 
+test('each split limit refuses on its own', () => {
+    // The 3% minimum alone: five halvings leave a valid 3.12% column, a sixth would be 1.56%.
+    let tiles = full;
+    for (let i = 0; i < 5; i++) tiles = splitCustomTile(tiles, 0, 'vertical');
+    assert.equal(tiles.length, 6); assert.equal(tiles[0].width, .0312);
+    assert.ok(validCustomTiles(tiles));
+    assert.equal(splitCustomTile(tiles, 0, 'vertical'), null);
+    assert.ok(splitCustomTile(tiles, 0, 'horizontal'));
+    // The 30 tile cap alone: every tile of a 6 x 5 grid is wide enough to halve.
+    const cols = [0, 1667, 3333, 5000, 6667, 8333, 10000], rows = [0, 2000, 4000, 6000, 8000, 10000];
+    const grid = [];
+    for (let r = 0; r < 5; r++) for (let c = 0; c < 6; c++)
+        grid.push({x: cols[c] / 1e4, y: rows[r] / 1e4,
+            width: (cols[c + 1] - cols[c]) / 1e4, height: (rows[r + 1] - rows[r]) / 1e4});
+    assert.equal(grid.length, 30); assert.ok(validCustomTiles(grid));
+    for (let i = 0; i < grid.length; i++)
+        for (const axis of ['vertical', 'horizontal'])
+            assert.equal(splitCustomTile(grid, i, axis), null);
+    assert.equal(splitCustomTile(mergeCustomTiles(grid, 28, 29).tiles, 0, 'vertical').length, 30);
+});
+
 test('numeric edge edits and drag pressure update every neighbor at a T junction', () => {
     const changed = setCustomTileValue(focus, 0, 'width', .7);
     assert.ok(validCustomTiles(changed));
