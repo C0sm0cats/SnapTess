@@ -867,6 +867,12 @@ export default class SnapTess extends Extension {
         name = name.trim().slice(0, 60);
         const existing = this.savedLayouts.find(layout => layout.name.toLowerCase() === name.toLowerCase());
         if (!name || (replaceId ? existing?.id !== replaceId : Boolean(existing))) return false;
+        // A fixed or custom layout keeps its own tiles; the windows beyond them
+        // are those of its Auto fallback and are not part of the layout.
+        if (preset !== 'auto') {
+            windows = windows.slice(0, capacity(preset, tiles));
+            pins = pins.slice(0, capacity(preset, tiles));
+        }
         const slotCount = Math.max(windows.length, pins.length, capacity(preset, tiles), 1);
         if (slotCount > 30 || (preset !== 'auto' && slotCount > capacity(preset, tiles))) return false;
         const apps = Array.from({length: slotCount}, (_, i) =>
@@ -3484,8 +3490,9 @@ export default class SnapTess extends Extension {
     }
 
     applyProfiles(changes, focus = changes.at(-1)) {
-        if (!changes.length || changes.some(c => c.preset === 'custom' &&
-            (!validCustomTiles(c.tiles) || c.windows.length > c.tiles.length))) return false;
+        // Windows beyond the custom tiles follow the Auto fallback of layout(),
+        // as in tile(); only invalid tiles refuse the change.
+        if (!changes.length || changes.some(c => c.preset === 'custom' && !validCustomTiles(c.tiles))) return false;
         if (!this.running) this.setRunning(true);
         this.checkpoint();
         this.switchSpace(focus.space, focus.monitor);

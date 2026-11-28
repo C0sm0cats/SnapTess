@@ -842,6 +842,44 @@ test('a profile arranged from many or unidentified windows remains exportable', 
     assert.doesNotThrow(() => makeArchive([], app.profiles));
 });
 
+test('a custom space with more windows than tiles can be applied and saved', () => {
+    const h = harness(), app = h.app;
+    const make = id => ({...h.w, id, get_monitor: () => 0, move_to_monitor() {}, minimize() {}, unminimize() {}});
+    const quad = [{x: 0, y: 0, width: .5, height: .5}, {x: .5, y: 0, width: .5, height: .5},
+        {x: 0, y: .5, width: .5, height: .5}, {x: .5, y: .5, width: .5, height: .5}];
+    const five = Array.from({length: 5}, (_, i) => make(`app${i}.desktop`));
+    app.appId = w => w.id;
+    app.records = new Map(five.map(w => [w, {original: null, floating: false, space: 0, parked: false, monitor: 0}]));
+    app.groups = new Map([['0:0:0', [...five]]]);
+    app.history = []; app.profiles = {}; app.savedLayouts = []; app.deletedLayouts = [];
+    let tiled = 0;
+    Object.assign(app, {snapshot: () => ({}), restore() {}, workspaceIndex: () => 0, activeSpace: () => 0,
+        key: (display, space) => `0:${display}:${space}`, profileKey: (display, space) => `0:DP-1:${space}`,
+        switchSpace() {}, tile() { tiled++; }, updatePanelStatus() {}, notifyStatus() {}});
+    app.settings.set_string = () => {};
+    // Studio sends every window of the space, fallback windows included.
+    const order = [five[1], five[0], ...five.slice(2)];
+    assert.notEqual(app.applyProfiles([{monitor: 0, space: 0, preset: 'custom', windows: order,
+        pinned: [null, null, null, null], tiles: quad}], {monitor: 0, space: 0}), false);
+    assert.equal(tiled, 1);
+    assert.equal(app.history.length, 1);
+    assert.deepEqual(app.groups.get('0:0:0'), order);
+    assert.equal(app.profiles['0:DP-1:0'].preset, 'custom');
+    assert.doesNotThrow(() => makeArchive([], app.profiles));
+    assert.equal(app.applyProfiles([{monitor: 0, space: 0, preset: 'custom', windows: order,
+        pinned: [], tiles: [{x: 0, y: 0, width: .5, height: 1}]}]), false, 'invalid tiles are still refused');
+
+    const id = app.saveLayout('Quad work', 'custom', order, [null, null, null, null, null], null, quad);
+    assert.equal(id, 'saved-layout-id');
+    assert.deepEqual(Array.from(app.savedLayouts[0].apps), ['app1.desktop', 'app0.desktop', 'app2.desktop', 'app3.desktop']);
+    assert.equal(app.savedLayouts[0].slotCount, 4);
+    assert.ok(validSavedLayout(app.savedLayouts[0]));
+    assert.equal(app.saveLayout('Grid', '2x2', order, []), 'saved-layout-id', 'a fixed preset keeps its own tiles too');
+    assert.equal(app.savedLayouts[1].slotCount, 4);
+    const many = Array.from({length: 31}, (_, i) => make(`many${i}.desktop`));
+    assert.equal(app.saveLayout('Everything', 'auto', many, []), false, 'Auto still holds at most 30 windows');
+});
+
 test('global redo restores all Studio contexts and a new manual checkpoint clears redo', () => {
     const {app, w} = harness();
     app.running = true; app.history = []; app.redoHistory = [];

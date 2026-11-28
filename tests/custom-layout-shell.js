@@ -293,6 +293,45 @@ export async function run() {
         app.groups.get(app.key(0))[2] === windows[2] && windows[2].get_frame_rect().x === customFrame.x,
         'Custom retains its empty tile and neighboring positions when a window is minimized');
     windows[0].unminimize(); await pause();
+    // A custom space with more windows than tiles uses the Auto fallback;
+    // Studio Apply and Save must still act on it.
+    const halves = [{x: 0, y: 0, width: .5, height: 1}, {x: .5, y: 0, width: .5, height: 1}];
+    assert(app.applyProfiles([{monitor: 0, space: 0, preset: 'custom', tiles: halves,
+        windows, pinned: [null, null, null]}]) !== false, 'custom tiles accept the windows of the Auto fallback');
+    await pause();
+    assert(app.groups.get(app.key(0)).length === 3, 'every window stays tiled beyond the custom tiles');
+    app.openStudio(); await pause();
+    const fallbackStudio = app.studio;
+    assert(fallbackStudio.draft.length === 3, 'Studio shows the fallback windows of a custom space');
+    fallbackStudio.drop({studio: fallbackStudio, index: 0}, 1); await pause();
+    const swapped = [...fallbackStudio.draft];
+    fallbackStudio.apply(); await pause();
+    assert(!app.studio && app.groups.get(app.key(0)).every((w, i) => w === swapped[i]),
+        'Studio Apply arranges a custom space with fallback windows');
+    app.openStudio(); await pause();
+    const savingStudio = app.studio;
+    savingStudio.nameRow.show(); savingStudio.nameEntry.set_text('Halves with fallback');
+    savingStudio.saveNamedLayout(); await pause();
+    const halvesSaved = app.savedLayouts.find(item => item.name === 'Halves with fallback');
+    assert(halvesSaved?.slotCount === 2 && halvesSaved.apps.length === 2,
+        'Studio saves a custom layout with fallback windows as its own tiles');
+    savingStudio.choosePreset('auto');
+    savingStudio.drafts.set(savingStudio.contextKey(), Array(31).fill(null));
+    savingStudio.nameRow.show(); savingStudio.nameEntry.set_text('Too many windows');
+    savingStudio.saveNamedLayout(); await pause();
+    assert(!app.savedLayouts.some(item => item.name === 'Too many windows') &&
+        savingStudio.hint.text.includes('at most 30 windows'), 'Studio says why a large Auto layout is not saved');
+    savingStudio.dialog.close(); await pause();
+    app.openStudio(); await pause();
+    const invalidStudio = app.studio;
+    invalidStudio.draftTiles.set(invalidStudio.contextKey(), [{x: 0, y: 0, width: .5, height: 1}]);
+    invalidStudio.markDirty(); invalidStudio.apply(); await pause();
+    assert(app.studio === invalidStudio && invalidStudio.hint.text.includes('cannot be applied'),
+        'Studio stays open and says why a refused arrangement is not applied');
+    invalidStudio.dialog.close(); await pause();
+    app.deleteSavedLayout(halvesSaved.id);
+    app.applyProfiles([{monitor: 0, space: 0, preset: 'custom', tiles: saved.tiles,
+        windows, pinned: [null, null, null]}]); await pause();
     app.openStudio(); await pause();
     const resetStudio = app.studio; resetStudio.reset();
     assert(resetStudio.preset === 'auto' && resetStudio.draftTiles.get('0:0').length === 0 && resetStudio.draft.length === 0,

@@ -102,6 +102,13 @@ test('profiles the runtime writes for many or unidentified windows stay exportab
     assert.throws(() => makeArchive([], {'0:DP-1:2': {preset: 'custom', tiles, slotCount: 31, apps: []}}));
 });
 
+test('a custom profile whose space holds more windows than tiles stays exportable', () => {
+    const tiles = [{x: 0, y: 0, width: .5, height: 1}, {x: .5, y: 0, width: .5, height: 1}];
+    const apps = Array.from({length: 31}, (_, i) => `app${i}.desktop`);
+    const profile = {preset: 'custom', tiles, slotCount: 2, apps, pinned: Array(31).fill(null)};
+    assert.deepEqual(parseArchive(makeArchive([], {'0:DP-1:0': profile})).profiles['0:DP-1:0'], profile);
+});
+
 test('an export refused for one entry names that layout or space', () => {
     assert.throws(() => makeArchive([], {'1:HDMI-A-1:2': {preset: 'bogus', apps: []}}),
         {message: 'The profile of HDMI-A-1, workspace 2, Space 3 cannot be exported. Use Reset Space in Layout Studio and try again.'});
