@@ -2516,6 +2516,22 @@ test('stopping keeps a window the user minimized after tiling minimized', () => 
     assert.equal(restored[0][1].minimized, true);
 });
 
+test('stopping re-maximizes a window that was maximized before tiling', () => {
+    const {app, w, record} = stopHarness();
+    delete app.restore;
+    const flags = [], requested = [];
+    app.resetWindowScale = () => {};
+    app.place = () => assert.fail('a maximized original is not placed in a tile');
+    app.requestWindowGeometry = (win, reason, state) => requested.push([win, state]);
+    w.unmaximize = () => {};
+    w.set_maximize_flags = value => flags.push(value);
+    record.original = {...record.original, maximized: 3};
+    app.setRunning(false);
+    assert.deepEqual(flags, [3]);
+    assert.equal(requested.length, 1, 'the original geometry is still requested');
+    assert.equal(w.minimized, false);
+});
+
 test('stopping shows windows SnapTess minimized for an inactive Space', () => {
     for (const flag of ['parked', 'restoreParked']) {
         const {app, w, record} = stopHarness();
