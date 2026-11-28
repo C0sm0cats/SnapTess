@@ -3816,6 +3816,29 @@ test('the spring curve never drives an opacity fade but keeps the palette slide'
     assert.equal(app.fadeMode(), app.visualMode());
 });
 
+test('every opacity ease uses the non-overshooting fade curve', () => {
+    // Guards the fades the window action test cannot reach (Space transition,
+    // move guide, border, swap guides, Studio): a spring overshoots 255.
+    for (const file of ['../runtime.js', '../lib/studio.js']) {
+        const text = fs.readFileSync(new URL(file, import.meta.url), 'utf8');
+        let fades = 0;
+        for (let start = text.indexOf('.ease({'); start >= 0; start = text.indexOf('.ease({', start + 1)) {
+            let depth = 0, end = start + '.ease('.length;
+            for (; end < text.length; end++) {
+                if (text[end] === '{') depth++;
+                else if (text[end] === '}' && --depth === 0) break;
+            }
+            const params = text.slice(start, end + 1);
+            if (!/\bopacity\s*:/.test(params)) continue;
+            fades++;
+            const line = text.slice(0, start).split('\n').length;
+            assert.match(params, /\bmode:\s*this\.(?:extension\.)?fadeMode\(\)/,
+                `${file}:${line} fades with the non-overshooting curve`);
+        }
+        assert.ok(fades > 0, `${file} has opacity fades`);
+    }
+});
+
 test('a Wayland window keeps its handle and palette fades', () => {
     const {app, eases} = windowActionsHarness(0);
     app.showWindowActionHandle(true);
