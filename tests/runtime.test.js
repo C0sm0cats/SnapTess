@@ -2544,6 +2544,37 @@ test('Apply opens an assigned app and claims its exact unpinned tile', () => {
     assert.equal(app.launchingTiles(0, 1).size, 0);
 });
 
+test('a launch for an inactive Space arrives parked', () => {
+    const h = sharingHarness(), {app, w, launches} = h, arrive = opensLater(h);
+    app.pendingLayoutApps = new Map(); app.updatePinnedPlaceholders = () => {};
+    app.running = true; app.activeSpace = () => 0;
+    app.applyProfiles([{monitor: 0, space: 1, preset: 'master', windows: [null, null, null],
+        apps: [null, null, 'test.desktop'], pinned: [], preserveSlots: true}]);
+    assert.deepEqual(launches, ['test.desktop']);
+    app.eligible = () => true; app.schedule = () => {};
+    w.minimized = false;
+    arrive();
+    assert.equal(app.claimLayoutWindow(w), true);
+    assert.equal(app.records.get(w).space, 1);
+    assert.equal(app.records.get(w).parked, true, 'parked flag');
+    assert.equal(w.minimized, true, 'the window stays hidden behind the active Space');
+    assert.equal(app.groups.get('0:0:1')[2], w);
+});
+
+test('a pending launch ignores a window on another workspace', () => {
+    const h = sharingHarness(), {app, w} = h, arrive = opensLater(h);
+    app.pendingLayoutApps = new Map(); app.updatePinnedPlaceholders = () => {};
+    const otherWorkspace = {};
+    assert.notEqual(otherWorkspace, w.get_workspace());
+    app.launchLayoutApps(['test.desktop'], 0, 1, otherWorkspace);
+    app.eligible = () => true; app.schedule = () => {};
+    arrive();
+    assert.equal(app.claimLayoutWindow(w), false);
+    assert.equal(app.pendingLayoutApps.get('test')?.length, 1, 'the request keeps waiting for its own workspace');
+    assert.equal(app.pendingLayoutApps.get('test')[0].workspace, otherWorkspace);
+    assert.equal(app.records.get(w).space, 0);
+});
+
 test('a launch appearing after a minute retains its exact Space and tile without a timeout notification', () => {
     const h = sharingHarness(), {app, w, advance, timers, shellMain, launches} = h, arrive = opensLater(h);
     timers.clear();
