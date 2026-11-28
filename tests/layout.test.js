@@ -345,6 +345,30 @@ test('directional focus follows unequal tiles and resized divider geometry', () 
     assert.equal(directionalFocusSlot(resized, 0, 'right'), 2);
     assert.equal(directionalFocusSlot(resized, 2, 'up'), 1);
 });
+test('directional focus reaches a full-width tile between two rows of narrower tiles', () => {
+    const tiles = [{x:0,y:0,width:.5,height:.3333}, {x:.5,y:0,width:.5,height:.3333},
+        {x:0,y:.3333,width:1,height:.3334},
+        {x:0,y:.6667,width:.5,height:.3333}, {x:.5,y:.6667,width:.5,height:.3333}];
+    const rects = layout({x:0,y:32,width:1920,height:1048}, 5, {preset:'custom', tiles});
+    for (const i of [0, 1]) assert.equal(directionalFocusSlot(rects, i, 'down'), 2);
+    for (const i of [3, 4]) assert.equal(directionalFocusSlot(rects, i, 'up'), 2);
+    assert.equal(directionalFocusSlot(rects, 2, 'up'), 0);
+    assert.equal(directionalFocusSlot(rects, 2, 'down'), 3);
+    // Same with the columns: a full-height tile between two stacks.
+    const columns = tiles.map(t => ({x:t.y, y:t.x, width:t.height, height:t.width}));
+    const cols = layout({x:0,y:32,width:1920,height:1048}, 5, {preset:'custom', tiles:columns, gap:12, padding:12});
+    for (const i of [0, 1]) assert.equal(directionalFocusSlot(cols, i, 'right'), 2);
+    for (const i of [3, 4]) assert.equal(directionalFocusSlot(cols, i, 'left'), 2);
+});
+test('directional focus stays in the same row across empty tiles of a wide grid', () => {
+    for (const [preset, count, area] of [['5x3', 15, {x:0,y:0,width:3440,height:1440}],
+        ['5x5', 25, {x:0,y:0,width:1920,height:1048}]]) {
+        const rects = layout(area, count, {preset, gap:12, padding:12});
+        rects[1] = rects[2] = null;
+        assert.equal(directionalFocusSlot(rects, 0, 'right'), 3, preset);
+        assert.equal(directionalFocusSlot(rects, 3, 'left'), 0, preset);
+    }
+});
 test('compaction retains order and non-compact mode retains holes', () => {
     const a={},b={},c={},d={};
     assert.deepEqual(reconcileSlots([a,b,c],[a,c],false),[a,null,c]);
