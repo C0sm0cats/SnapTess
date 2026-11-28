@@ -228,7 +228,8 @@ export default class SnapTess extends Extension {
             this.exitSwap(); this.hideGuides(); this.clearPinnedPlaceholders(); this.schedule(true);
         });
         this.connect(Main.layoutManager, 'monitors-changed', () => this.monitorsChanged());
-        this.connect(Main.overview, 'showing', () => { this.hideGuides(); this.clearPinnedPlaceholders(); });
+        // Swap mode holds a modal grab that would sit under the overview and keep the keyboard.
+        this.connect(Main.overview, 'showing', () => { this.exitSwap(); this.hideGuides(); this.clearPinnedPlaceholders(); });
         this.connect(Main.overview, 'hidden', () => { this.schedule(false); this.updateBorder(); });
         this.connect(this.settings, 'changed', (_s, key) => this.settingsChanged(key));
         // metadata.json keeps SnapTess enabled on the lock screen, so locking

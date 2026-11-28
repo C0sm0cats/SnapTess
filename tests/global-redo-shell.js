@@ -74,6 +74,16 @@ export async function run() {
     assert(!app.swapMode && slots().indexOf(left) === 0, 'Escape cancels the swap');
     await swapStep([Clutter.KEY_Right, Clutter.KEY_Return], 1, 'Enter keeps the swap');
     await swapStep([Clutter.KEY_Left, Clutter.KEY_s], 0, 'Ctrl+Alt+S again keeps the swap');
+    app.toggleSwap(); await pause();
+    await press(Clutter.KEY_Right);
+    await press(Clutter.KEY_Super_L); await Scripting.sleep(700);
+    assert(Main.overview.visible && !app.swapMode && slots().indexOf(left) === 1,
+        'Super leaves swap mode, keeps the swap and opens the overview');
+    await press(Clutter.KEY_Escape); await Scripting.sleep(700);
+    assert(!Main.overview.visible, 'Escape closes the overview opened from swap mode');
+    await press(Clutter.KEY_Left);
+    assert(slots().indexOf(left) === 1, 'arrow keys no longer move the window after the overview');
+    left.activate(global.get_current_time()); await pause();
     // Each palette button runs its own action on the focused window.
     const click = async (window, button) => {
         window.activate(global.get_current_time()); await pause();
