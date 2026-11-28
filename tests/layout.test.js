@@ -202,6 +202,18 @@ test('saved resize offsets follow work-area changes', () => {
     assert.equal(resizedLayout(base, area, {offsets: [[Infinity, 0, 0, 0], [0, 0, 0, 0]]}), base);
 });
 
+test('saved proportions survive a tile grown into the empty cell', () => {
+    const area = {x: 0, y: 0, width: 800, height: 600};
+    const base = layout(area, 5, {preset: 'auto', gap: 12, padding: 12, adaptive: true});
+    const wider = advanceLinkedResize({rects: base, index: 1, edges: ['E'], pointer: [531, 100]}, [491, 100]);
+    const lower = advanceLinkedResize({rects: wider, index: 1, edges: ['S'], pointer: [324, 300]}, [324, 340]);
+    assert.equal(lower[2].y + lower[2].height, 334, 'the top-right tile reaches into the empty cell');
+    assert.deepEqual(resizedLayout(base, area, {offsets: resizeOffsets(base, lower, area)}), lower);
+    const overlapping = lower.map((r, i) => i === 2 ? {...r, height: r.height + 200} : r);
+    assert.deepEqual(resizedLayout(base, area, {offsets: resizeOffsets(base, overlapping, area)}), base,
+        'a tile overlapping another is still rejected');
+});
+
 test('restoring compound resizes never overlaps tiles after an aspect-ratio change', () => {
     const options = {preset: 'split', gap: 12, padding: 12};
     const originalArea = {x: 0, y: 0, width: 819, height: 816};
