@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {makeArchive, mergeArchive, parseArchive} from '../lib/archive.js';
+import {makeArchive, mergeArchive, parseArchive, validSavedLayout} from '../lib/archive.js';
 
 const layout = {id: 'pair', name: 'Pair', preset: 'split', slotCount: 2,
     apps: ['editor.desktop', 'browser.desktop'], pinned: [null, 'browser.desktop']};
@@ -38,6 +38,49 @@ test('import merges without replacing existing layouts or profiles', () => {
 test('identical layouts are not imported twice', () => {
     const merged = mergeArchive(makeArchive([layout], {}), [layout], {}, () => 'unused');
     assert.equal(merged.addedLayouts, 0);
+});
+
+test('reimporting a backup skips the layouts an earlier import renamed', () => {
+    let count = 0;
+    const newId = () => `new-${++count}`;
+    const work = {...layout, id: 'work', name: 'Work'};
+    const home = {...layout, id: 'home', name: 'Home'};
+    const backup = makeArchive([work, home, layout], {});
+    let layouts = [{...work, id: 'mine', apps: [null, null]}, {...layout, apps: ['other.desktop', null]}];
+    const first = mergeArchive(backup, layouts, {}, newId);
+    assert.equal(first.addedLayouts, 3);
+    layouts = first.layouts;
+    for (const time of [2, 3]) {
+        const again = mergeArchive(backup, layouts, {}, newId);
+        assert.equal(again.addedLayouts, 0, `import ${time} adds nothing`);
+        assert.deepEqual(again.layouts, layouts);
+    }
+    assert.deepEqual(layouts.map(item => item.name), ['Work', 'Pair', 'Work (imported)', 'Home', 'Pair (imported)']);
+    const changed = makeArchive([{...work, apps: ['changed.desktop', null]}], {});
+    assert.deepEqual(mergeArchive(changed, layouts, {}, newId).layouts.at(-1).name, 'Work (imported 2)',
+        'a changed layout under a taken name is still imported');
+    assert.equal(mergeArchive(makeArchive([{...work, id: 'other', name: 'Office'}], {}), layouts, {}, newId).addedLayouts, 1,
+        'the same content under another name is still imported');
+});
+
+test('conflicting imported names stay unique, valid and exportable', () => {
+    let count = 0;
+    const newId = () => `new-${++count}`;
+    const long = {...layout, id: 'long', name: 'Development workspace with browser editor and terminal'};
+    const merged = mergeArchive(makeArchive([long], {}), [{...long, id: 'mine', apps: [null, null]}], {}, newId);
+    const imported = merged.layouts.at(-1);
+    assert.equal(imported.name, `${long.name.slice(0, 45)} (imported)`);
+    assert.ok(imported.name.length <= 60);
+    assert.ok(validSavedLayout(imported));
+    assert.doesNotThrow(() => makeArchive(merged.layouts, {}));
+    const second = mergeArchive(makeArchive([{...long, apps: ['changed.desktop', null]}], {}), merged.layouts, {}, newId);
+    assert.equal(second.layouts.at(-1).name, `${long.name.slice(0, 45)} (imported 2)`);
+    assert.doesNotThrow(() => makeArchive(second.layouts, {}));
+    const pairs = [{...layout, apps: [null, null]}];
+    for (const apps of [['one.desktop', null], ['two.desktop', null]])
+        pairs.push(mergeArchive(makeArchive([{...layout, id: 'x', name: 'pair', apps}], {}), pairs, {}, newId).layouts.at(-1));
+    assert.deepEqual(pairs.map(item => item.name), ['Pair', 'pair (imported)', 'pair (imported 2)'],
+        'a name differing only by case is renamed too');
 });
 
 test('invalid or oversized files leave import state untouched', () => {
