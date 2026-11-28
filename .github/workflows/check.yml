@@ -36,6 +36,8 @@ jobs:
         run: ./scripts/test-shell.sh tests/light-theme-shell.js
       - name: Large Text grows SnapTess text and Studio still fits the screen
         run: ./scripts/test-shell.sh tests/large-text-shell.js
+      - name: Swap arrows and panel icon follow the Shell accent color
+        run: ./scripts/test-shell.sh tests/accent-color-shell.js
       - name: Change layout list shows its whole content without scrolling
         run: ./scripts/test-shell.sh tests/layout-switcher-shell.js
       - name: Live window catalog, independent drafts and saved-layout search

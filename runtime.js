@@ -193,9 +193,10 @@ export default class SnapTess extends Extension {
             this.connect(this.interfaceSettings, 'changed::accent-color', () => this.refreshAccentStyles());
         } catch { this.interfaceSettings = null; }
         try {
+            // Also emitted once the Shell has recomputed its accent color.
             this.connect(St.ThemeContext.get_for_stage(global.stage), 'changed', () => {
                 for (const w of this.records.keys()) this.invalidateWindowRadius(w, true);
-                this.updateBorder();
+                this.refreshAccentStyles();
             });
         } catch { /* theme context may not expose a change signal */ }
         this.bindings = {
@@ -2281,11 +2282,23 @@ export default class SnapTess extends Extension {
         else if (preserveScale) this.applyWindowScale(w, actor, interimScale, rect);
         if (actor) this.scheduleWindowScale(w);
     }
+    // The Shell's own accent and accent text colors, which follow the style and
+    // stay readable; the pale palette is only a fallback.
+    accentColors() {
+        const hex = c => `#${[c.red, c.green, c.blue].map(v => v.toString(16).padStart(2, '0')).join('')}`;
+        try {
+            const [accent, text] = St.ThemeContext.get_for_stage(global.stage).get_accent_color();
+            return {accent: hex(accent), text: hex(text)};
+        } catch {
+            const colors = {blue: '#62a0ea', teal: '#5bc8af', green: '#57e389', yellow: '#f8e45c',
+                orange: '#ffbe6f', red: '#ed333b', pink: '#f66151', purple: '#c061cb', slate: '#99c1f1'};
+            let accent = '#3584e4';
+            try { accent = colors[this.interfaceSettings?.get_string('accent-color')] ?? accent; } catch { /* default */ }
+            return {accent, text: '#ffffff'};
+        }
+    }
     accentColor() {
-        const colors = {blue: '#62a0ea', teal: '#5bc8af', green: '#57e389', yellow: '#f8e45c',
-            orange: '#ffbe6f', red: '#ed333b', pink: '#f66151', purple: '#c061cb', slate: '#99c1f1'};
-        try { return colors[this.interfaceSettings?.get_string('accent-color')] ?? '#3584e4'; }
-        catch { return '#3584e4'; }
+        return this.accentColors().accent;
     }
     accentFill(alpha = 0.12) {
         const hex = this.accentColor();
@@ -2385,7 +2398,7 @@ export default class SnapTess extends Extension {
         const source = rects[from], frame = this.visualWindowRect(w);
         if (!source || !frame) { this.hideSwapHints(); return; }
         // Filled: the window the arrow key swaps with; outlined: other neighbors on that side.
-        const accent = this.accentColor(), available = i => this.swapTarget(w, slots, i);
+        const {accent, text: accentText} = this.accentColors(), available = i => this.swapTarget(w, slots, i);
         for (const [direction, hints] of this.swapHints) {
             const horizontal = direction === 'left' || direction === 'right';
             const neighbors = edgeNeighbors(rects, from, direction, available);
@@ -2397,7 +2410,7 @@ export default class SnapTess extends Extension {
                 const x = horizontal ? (direction === 'left' ? frame.x : frame.x + frame.width) : along;
                 const y = horizontal ? along : (direction === 'up' ? frame.y : frame.y + frame.height);
                 hint.set_style(index === primary
-                    ? `color: #ffffff; background-color: ${accent}; border-color: ${accent};`
+                    ? `color: ${accentText}; background-color: ${accent}; border-color: ${accent};`
                     : `color: ${accent}; border-color: ${accent};`);
                 hint.set_position(Math.round(x - 13), Math.round(y - 13));
                 if (!hint.visible) hint.show();
