@@ -582,6 +582,34 @@ export async function run() {
     assert(!app.records.get(windows[0]).floating && app.groups.get(app.key(0))[0]===windows[0] &&
         !app.pinnedPlaceholders.has('0:0'),
         'clicking a floating pinned card retiles its window in the reserved slot');
+    // The launch is recorded instead of run: launchLayoutApps itself is covered
+    // by runtime.test.js and by the pending launch shell tests.
+    const originalLaunch=app.launchLayoutApps, launched=[];
+    const closedWorkspace=global.workspace_manager.get_active_workspace();
+    const closedKey=closedId.toLowerCase().replace(/\.desktop$/i,'');
+    app.launchLayoutApps=(...args)=>{ launched.push(args); return true; };
+    try {
+        app.updatePinnedPlaceholders();
+        assert(app.pinnedPlaceholders.get('0:4')?.state==='CLOSED','the closed pinned card is still shown');
+        app.pinnedPlaceholders.get('0:4').button.emit('clicked',1);
+        assert(launched.length===1 && launched[0][0].length===1 && launched[0][0][0]===closedId &&
+            launched[0][1]===0 && launched[0][2]===app.activeSpace(0) && launched[0][3]===closedWorkspace &&
+            JSON.stringify(launched[0][4])===JSON.stringify([null,null,null,null,closedId]),
+            'clicking a closed pinned card reopens its app for the reserved tile');
+        const pending={monitor:0,space:app.activeSpace(0),workspace:closedWorkspace,index:4,
+            createdAt:Date.now(),expired:false};
+        const hadKey=app.pendingLayoutApps.has(closedKey);
+        if (!hadKey) app.pendingLayoutApps.set(closedKey,[]);
+        app.pendingLayoutApps.get(closedKey).push(pending);
+        try {
+            app.pinnedPlaceholders.get('0:4').button.emit('clicked',1);
+            assert(launched.length===1,'a closed pinned card already opening its app does not launch it again');
+        } finally {
+            const requests=app.pendingLayoutApps.get(closedKey) ?? [];
+            requests.splice(requests.indexOf(pending),1);
+            if (!hadKey && !requests.length) app.pendingLayoutApps.delete(closedKey);
+        }
+    } finally { app.launchLayoutApps=originalLaunch; }
     if (previousProfile) app.profiles[profileKey]=previousProfile;
     else delete app.profiles[profileKey];
     app.appId=originalAppId;
