@@ -20,8 +20,8 @@
 .snaptess-window-action:hover, .snaptess-window-action:focus { background-color: #38464d; color: white; }
 .snaptess-window-action.selected { background-color: rgba(90,150,215,0.24); color: #ecf5ff; }
 .snaptess-window-action.danger:hover, .snaptess-window-action.danger:focus { background-color: #6b3038; color: #ffd7d7; }
-.snaptess-pin-placeholder { background-color: rgba(27,38,43,0.52); border: 1px solid rgba(116,191,142,0.55); border-radius: 12px; padding: 10px; color: #edf4ef; }
-.snaptess-pin-placeholder:hover, .snaptess-pin-placeholder:focus { background-color: rgba(37,68,53,0.74); border-color: #74bf8e; }
+.snaptess-pin-placeholder { background-color: rgba(27,38,43,0.85); border: 1px solid rgba(116,191,142,0.55); border-radius: 12px; padding: 10px; color: #edf4ef; }
+.snaptess-pin-placeholder:hover, .snaptess-pin-placeholder:focus { background-color: rgba(37,68,53,0.9); border-color: #74bf8e; }
 .snaptess-pin-placeholder.unavailable { opacity: 0.55; }
 .snaptess-pin-placeholder-content { spacing: 9px; }
 .snaptess-pin-placeholder-labels { spacing: 4px; }
