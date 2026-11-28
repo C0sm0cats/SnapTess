@@ -42,6 +42,8 @@ jobs:
         run: ./scripts/test-shell.sh tests/pending-launch-reload-shell.js
       - name: Loader reloads the runtime in place, without disabling extensions
         run: ./scripts/test-shell.sh tests/loader-reload-shell.js
+      - name: Locking the screen keeps tiling and Spaces
+        run: ./scripts/test-shell.sh tests/session-lock-shell.js
       - name: Shared windows across Spaces and displays
         run: SNAPTESS_TWO_MONITORS=1 ./scripts/test-shell.sh tests/shared-spaces-shell.js
       - name: Linked resizing with native windows and delayed clients

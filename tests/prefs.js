@@ -177,7 +177,7 @@ ratioReset.emit('clicked');
 if (Math.abs(settings.get_double('master-ratio') - settings.get_default_value('master-ratio').get_double()) > 0.001 || ratioReset.sensitive)
     throw new Error('Focus ratio did not reset to its default');
 settings.set_double('master-ratio', originalRatio);
-const toggle = shortcutEditor('Toggle tiling');
+const toggle = shortcutEditor('Start or stop tiling');
 const search = entries.find(row => row.title === 'Search applications');
 const appRow = apps.find(row => row.subtitle === appId);
 if (!appRow) throw new Error(`Installed application ${appId} is missing from selector`);

@@ -52,8 +52,11 @@ export async function run() {
     app.updateMenuSensitivity();
     assert(!app.arrangeItem.sensitive && !app.floatItem.sensitive && !app.swapItem.sensitive &&
         !app.undoItem.sensitive && !app.redoItem.sensitive && !app.spaceMenu.sensitive && !app.stopItem.sensitive,
-        'tray disables arrangement actions while SnapTess is paused');
+        'tray disables arrangement actions while SnapTess is off');
+    // Stopping forgets Spaces and Undo: the menu must not promise a pause.
+    assert(app.statusItem.label.text==='SnapTess  ·  OFF',`stopped status reads OFF: ${app.statusItem.label.text}`);
     app.setRunning(true); await pause();
+    assert(app.statusItem.label.text==='SnapTess  ·  ON',`running status reads ON: ${app.statusItem.label.text}`);
     assert(app.groups.get(app.key(0)).length===4,'four tiled slots');
     app.settings.set_boolean('independent-padding',true);
     for (const [edge,value] of [['top',7],['right',19],['bottom',31],['left',43]]) app.settings.set_int(`padding-${edge}`,value);
@@ -1266,7 +1269,12 @@ export async function run() {
     app.setRunning(true); await pause();
     const reloadLayoutId=app.saveLayout('Reload test','full',[windows[0]],[]);
     const firstRuntimeClass=app.constructor;
+    app.switchSpace(1,0); await pause();
+    assert(windows.every(w=>w.minimized),'empty Space parks the windows before disable');
     await Main.extensionManager.disableExtension(loader.uuid); await pause();
+    for (let i=0;i<20 && !(windows.every(w=>!w.minimized) && restoredOriginals());i++) await Scripting.sleep(100);
+    assert(windows.every(w=>!w.minimized) && restoredOriginals(),
+        `disable reveals parked windows and restores their original geometry: ${windows.map(geometry).join(' ')}`);
     assert(app.settings===null,'disabled runtime releases settings');
     assert(!Main.panel.statusArea[loader.uuid],'disable removes indicator');
     assert(!hotRoot.query_exists(null),'disable removes hot reload staging');

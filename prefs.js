@@ -477,7 +477,7 @@ export default class SnapTessPreferences extends ExtensionPreferences {
         const shortcuts = new Adw.PreferencesGroup({title: 'Keyboard shortcuts',
             description: 'Record a combination or use the pencil to edit it. Clear it to disable.'});
         page.add(shortcuts);
-        for (const [key, title] of [['toggle', 'Toggle tiling'], ['retile', 'Arrange again'], ['studio', 'Open Layout Studio'],
+        for (const [key, title] of [['toggle', 'Start or stop tiling'], ['retile', 'Arrange again'], ['studio', 'Open Layout Studio'],
             ['layout-switcher', 'Change layout'],
             ['floating', 'Float focused window'], ['swap', 'Swap mode'], ['undo', 'Undo'], ['redo', 'Redo'],
             ['focus-left', 'Focus window to the left'], ['focus-right', 'Focus window to the right'],

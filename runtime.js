@@ -225,13 +225,36 @@ export default class SnapTess extends Extension {
         this.connect(Main.overview, 'showing', () => { this.hideGuides(); this.clearPinnedPlaceholders(); });
         this.connect(Main.overview, 'hidden', () => { this.schedule(false); this.updateBorder(); });
         this.connect(this.settings, 'changed', (_s, key) => this.settingsChanged(key));
+        // metadata.json keeps SnapTess enabled on the lock screen, so locking
+        // keeps the arrangement and its Spaces; only the UI is put away.
+        this.locked = false;
+        this.connect(Main.sessionMode, 'updated', () => this.sessionModeChanged());
         for (const actor of global.get_window_actors()) {
             this.track(actor.meta_window);
             if (this.records.has(actor.meta_window)) this.claimLayoutWindow(actor.meta_window);
         }
         this.updatePanelStatus();
         this.refreshAccentStyles();
+        this.sessionModeChanged();
         this.writeRuntimeStatus();
+    }
+
+    sessionModeChanged() {
+        const locked = Boolean(Main.sessionMode.isLocked);
+        if (locked === this.locked) return;
+        this.locked = locked;
+        this.indicator.container.visible = !locked;
+        if (locked) {
+            this.indicator.menu.close();
+            this.layoutSwitcher?.dialog.destroy(); this.layoutSwitcher = null;
+            this.studio?.dialog.destroy(); this.studio = null;
+            this.exitSwap(false);
+            this.hideGuides(); this.clearPinnedPlaceholders();
+            this.clearMotionGuides();
+            return;
+        }
+        this.updateBorder();
+        this.updatePinnedPlaceholders();
     }
 
     connect(object, signal, callback) {
@@ -1739,7 +1762,8 @@ export default class SnapTess extends Extension {
     updatePinnedPlaceholders() {
         if (!this.pinnedPlaceholders) return;
         if (this.drag?.started) return;
-        if (!this.running || this.studio || this.layoutSwitcher || Main.overview.visible || this.spaceTransitions.size) {
+        if (!this.running || this.locked || this.studio || this.layoutSwitcher || Main.overview.visible ||
+            this.spaceTransitions.size) {
             this.clearPinnedPlaceholders();
             return;
         }
@@ -2288,7 +2312,7 @@ export default class SnapTess extends Extension {
     }
     updatePanelStatus() {
         if (!this.statusItem) return;
-        this.statusItem.label.text = `SnapTess  ·  ${this.running ? 'ON' : 'PAUSED'}`;
+        this.statusItem.label.text = `SnapTess  ·  ${this.running ? 'ON' : 'OFF'}`;
         for (const [monitor, {menu, spaces}] of (this.monitorMenus ?? []).entries()) {
             const space = this.activeSpace(monitor);
             const displayed = this.options(monitor, space).preset === 'custom' ? 'custom' :
@@ -2586,7 +2610,8 @@ export default class SnapTess extends Extension {
         const w = this.swapMode ? this.swapWindow : global.display.focus_window;
         const record = this.records.get(w);
         this.updateSwapHints();
-        if (!this.running || this.drag?.started || this.studio || this.layoutSwitcher || Main.overview.visible || !record || record.floating ||
+        if (!this.running || this.locked || this.drag?.started || this.studio || this.layoutSwitcher || Main.overview.visible ||
+            !record || record.floating ||
             w.minimized || w.fullscreen || w.get_maximize_flags() || (!this.swapMode && !this.settings.get_boolean('active-border')) ||
             !this.windows(w.get_monitor()).includes(w)) {
             this.border.hide(); this.borderFocusWindow = null; return;
@@ -2746,7 +2771,7 @@ export default class SnapTess extends Extension {
     }
     showWindowActionHandle(animate = false) {
         const w = global.display.focus_window, record = this.records.get(w);
-        if (!this.running || !record || this.drag || this.swapMode || this.studio || this.layoutSwitcher || Main.overview.visible || w.minimized ||
+        if (!this.running || this.locked || !record || this.drag || this.swapMode || this.studio || this.layoutSwitcher || Main.overview.visible || w.minimized ||
             w.fullscreen) {
             this.windowActionHandle.hide(); return;
         }
@@ -2786,7 +2811,7 @@ export default class SnapTess extends Extension {
     }
     showWindowActions() {
         const w = global.display.focus_window, record = this.records.get(w);
-        if (!this.running || !record || this.drag || this.swapMode || this.studio || this.layoutSwitcher || Main.overview.visible || w.minimized ||
+        if (!this.running || this.locked || !record || this.drag || this.swapMode || this.studio || this.layoutSwitcher || Main.overview.visible || w.minimized ||
             w.fullscreen) {
             this.hideWindowActions(); return;
         }
