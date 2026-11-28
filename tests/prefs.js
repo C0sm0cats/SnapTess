@@ -2,6 +2,7 @@ import Adw from 'gi://Adw?version=1';
 import Gtk from 'gi://Gtk?version=4.0';
 import Gdk from 'gi://Gdk?version=4.0';
 import Gio from 'gi://Gio';
+import GLib from 'gi://GLib';
 
 Gio.resources_register(Gio.Resource.load('/usr/share/gnome-shell/org.gnome.Shell.Extensions.src.gresource'));
 const {default: Preferences} = await import('../prefs.js');
@@ -122,6 +123,59 @@ if (!previewRow) throw new Error('Current space preview row is missing');
 if (!rows.some(row => row.title === 'Export layouts and profiles') ||
     !rows.some(row => row.title === 'Import layouts and profiles'))
     throw new Error('Layout archive actions are missing from preferences');
+{
+    // Export then import through the real buttons, with the file dialogs
+    // answering at once with a file in a temporary directory.
+    const archiveButton = label => {
+        let found;
+        const visitButtons = widget => {
+            if (widget instanceof Gtk.Button && widget.label === label) found = widget;
+            for (let child = widget.get_first_child(); child && !found; child = child.get_next_sibling()) visitButtons(child);
+        };
+        visitButtons(window);
+        if (!found) throw new Error(`Preferences have no ${label} button`);
+        return found;
+    };
+    const dir = Gio.File.new_for_path(GLib.dir_make_tmp('snaptess-prefs-XXXXXX'));
+    const archiveFile = dir.get_child('snaptess-layouts.json');
+    const dialog = Gtk.FileDialog.prototype;
+    const originalDialog = {save: dialog.save, open: dialog.open, save_finish: dialog.save_finish, open_finish: dialog.open_finish};
+    dialog.save = function (_parent, _cancellable, callback) { callback(this, null); };
+    dialog.open = function (_parent, _cancellable, callback) { callback(this, null); };
+    dialog.save_finish = () => archiveFile;
+    dialog.open_finish = () => archiveFile;
+    const archiveToasts = [];
+    const addToast = window.add_toast;
+    window.add_toast = toast => archiveToasts.push(toast.title);
+    const layout = {id: 'archive-test', name: 'Archive test', preset: 'split', slotCount: 2,
+        pinned: [null, null], apps: ['org.example.Editor.desktop', null]};
+    const profile = {preset: 'master', apps: ['org.example.Browser.desktop', null], slotCount: 2};
+    const profileKey = '0:archive-test-display:1';
+    try {
+        settings.set_string('saved-layouts', JSON.stringify([layout]));
+        settings.set_string('profiles', JSON.stringify({[profileKey]: profile}));
+        archiveButton('Export…').emit('clicked');
+        const [, exported] = archiveFile.load_contents(null);
+        const archive = JSON.parse(new TextDecoder().decode(exported));
+        if (JSON.stringify(archive.layouts) !== JSON.stringify([layout]) ||
+            JSON.stringify(archive.profiles) !== JSON.stringify({[profileKey]: profile}))
+            throw new Error(`Export did not write every saved layout and profile (${archiveToasts.join('; ')})`);
+        settings.set_string('saved-layouts', '[]');
+        settings.set_string('profiles', '{}');
+        archiveButton('Import…').emit('clicked');
+        if (settings.get_string('saved-layouts') !== JSON.stringify([layout]) ||
+            settings.get_string('profiles') !== JSON.stringify({[profileKey]: profile}))
+            throw new Error(`Import did not store the archive layouts and profiles (${archiveToasts.join('; ')})`);
+        if (archiveToasts.join('|') !== 'Exported 1 layouts and 1 profiles|Imported 1 layouts and 1 profiles')
+            throw new Error(`Archive actions reported ${archiveToasts.join('; ')}`);
+    } finally {
+        Object.assign(dialog, originalDialog);
+        window.add_toast = addToast;
+        settings.reset('saved-layouts'); settings.reset('profiles');
+        if (archiveFile.query_exists(null)) archiveFile.delete(null);
+        dir.delete(null);
+    }
+}
 settings.set_string('preview-state', JSON.stringify({running: true, workspace: 1, monitor: 0, space: 2,
     preset: 'auto', count: 3, occupied: [0, 2], focused: 0, width: 1920, height: 1080}));
 if (!previewRow.subtitle.includes('Workspace 2 · Display 1 · Space 3 · Focus'))
