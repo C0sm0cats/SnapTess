@@ -34,6 +34,8 @@ jobs:
         run: ./scripts/test-shell.sh tests/studio-escape-shell.js
       - name: Readable Studio, Change layout and panel menu in light and dark styles
         run: ./scripts/test-shell.sh tests/light-theme-shell.js
+      - name: Change layout list shows its whole content without scrolling
+        run: ./scripts/test-shell.sh tests/layout-switcher-shell.js
       - name: Live window catalog, independent drafts and saved-layout search
         run: ./scripts/test-shell.sh tests/studio-library-shell.js
       - name: Global Undo and Redo shortcuts and menu
